@@ -1,0 +1,17 @@
+# Environment
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Data — inputs and outputs are not versioned
+data/inputs/
+data/outputs/
+data/references/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# uv
+uv.lock
