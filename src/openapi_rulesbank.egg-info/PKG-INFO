@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: openapi-rulesbank
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.13
+Description-Content-Type: text/markdown
+Requires-Dist: jsonschema==4.17.3
+Requires-Dist: langchain==0.0.300
+Requires-Dist: langgraph==0.0.15
+Requires-Dist: markdown==3.4.1
+Requires-Dist: openai==0.27.8
+Requires-Dist: pydantic==1.10.2
+Requires-Dist: pytest==7.1.2
