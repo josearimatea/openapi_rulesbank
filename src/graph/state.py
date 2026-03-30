@@ -12,7 +12,7 @@
 #   state.py           → defines WHAT travels between them (shared memory)
 #
 # FIELD OWNERSHIP (which node writes each field):
-#   Reader    → parsed_sections, helper_context, openapi_spec_context
+#   Reader    → parsed_sections, helper_context, openapi_reference_context
 #   Planner   → extraction_plan
 #   Extractor → raw_rules
 #   Reflector → reflected_rules
@@ -51,9 +51,9 @@ class RuleBankState(TypedDict):
     helper_context: str
 
     # Content retrieved from the local snapshot of the OpenAPI/Swagger
-    # specification (data/references/openapi_spec/).
+    # specification (data/references/openapi_reference/).
     # Used by the Reflector node for RAG-grounded self-reflection.
-    openapi_spec_context: str
+    openapi_reference_context: str
 
     # -------------------------------------------------------------------------
     # PLANNER OUTPUT — produced by the Planner Node

@@ -96,7 +96,7 @@ Focus on sections that define:
   - Error codes and response structures
 
 The OpenAPI Specification overview below gives you context on the target format:
-{openapi_spec_overview}
+{openapi_reference_overview}
 """
 
 _USER = """\

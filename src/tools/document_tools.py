@@ -13,14 +13,14 @@ Functions:
                                      (release, series, spec). Supports single file or
                                      directory mode. Adapted from openapi_chatbotUI.
     load_openapi_reference()       — loads the OpenAPI reference document from
-                                     OPENAPI_SPEC_DIR saved by fetch_openapi_reference()
+                                     OPENAPI_REFERENCE_DIR saved by fetch_openapi_reference()
                                      in web_tools.py. Returns "" if missing.
 """
 
 import os
 from typing import List, Dict
 from config import get_logger
-from config.paths import OPENAPI_SPEC_DIR
+from config.paths import OPENAPI_REFERENCE_DIR
 
 logger = get_logger(__name__)
 
@@ -106,8 +106,8 @@ def discover_specs(path: str) -> List[Dict[str, str]]:
 
 def load_openapi_reference() -> str:
     """
-    Loads the local OpenAPI reference document from OPENAPI_SPEC_DIR
-    (data/references/openapi_spec/) and returns its content as a single string.
+    Loads the local OpenAPI reference document from OPENAPI_REFERENCE_DIR
+    (data/references/openapi_reference/) and returns its content as a single string.
 
     The file is saved by fetch_openapi_reference() in web_tools.py.
     Run it once to populate the directory before starting the pipeline.
@@ -116,16 +116,16 @@ def load_openapi_reference() -> str:
       - Directory does not exist or has no .md files → logs a warning, returns "".
       - Files found → loads each file, joins with blank line separator.
     """
-    entries = discover_specs(OPENAPI_SPEC_DIR)
+    entries = discover_specs(OPENAPI_REFERENCE_DIR)
 
     if not entries:
         logger.warning(
-            f"No OpenAPI reference file found in '{OPENAPI_SPEC_DIR}'. "
+            f"No OpenAPI reference file found in '{OPENAPI_REFERENCE_DIR}'. "
             "Run fetch_openapi_reference() from tools/web_tools.py to populate it. "
             "Continuing with empty OpenAPI context."
         )
         return ""
 
     parts = [load_markdown(entry["file_path"]) for entry in entries]
-    logger.debug(f"Loaded {len(parts)} OpenAPI reference file(s) from '{OPENAPI_SPEC_DIR}'.")
+    logger.debug(f"Loaded {len(parts)} OpenAPI reference file(s) from '{OPENAPI_REFERENCE_DIR}'.")
     return "\n\n".join(parts)

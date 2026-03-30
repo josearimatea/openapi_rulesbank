@@ -38,6 +38,15 @@ if not OPENAI_API_KEY:
 MODEL = "gpt-4.1-mini"
 TEMPERATURE = 0
 
+# RAG — OpenAPI reference collection
+# Same embedding model used in openapi_chatbotUI (free, local, no API key needed).
+OPENAPI_COLLECTION_NAME  = "openapi_reference"
+CHUNK_SIZE               = 1000  # characters per chunk
+CHUNK_OVERLAP            = 200   # overlap between consecutive chunks
+EMBEDDING_MODEL          = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_DIM            = 384   # output dimension for all-MiniLM-L6-v2
+OPENAPI_REFERENCE_RETRIEVE_CHUNKS = 5  # number of chunks returned by search_openapi_reference()
+
 # Pipeline flow control
 VALIDATION_ERROR_THRESHOLD = 0.10  # Loop back to Extractor if error rate exceeds 10%
 MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops before forcing forward

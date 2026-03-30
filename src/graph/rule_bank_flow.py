@@ -14,7 +14,7 @@ NODE DESCRIPTIONS:
 
   Reader   : Loads the main 3GPP document and auxiliary references.
              Filters sections relevant to OpenAPI (templates, NRM, mappings).
-             State output: parsed_sections, helper_context, openapi_spec_context.
+             State output: parsed_sections, helper_context, openapi_reference_context.
 
   Planner  : Reasons about the filtered sections using LLM.
              Defines extraction strategy: section priority, granularity, focus areas.

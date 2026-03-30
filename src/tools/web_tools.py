@@ -6,7 +6,7 @@ Tools for fetching external web content.
 Functions:
     fetch_openapi_reference() — fetches the latest OpenAPI Specification from the
                                 OAI GitHub repository and saves it locally as
-                                data/references/openapi_spec/openapi_reference.md
+                                data/references/openapi_reference/openapi_reference.md
                                 for offline use by the pipeline.
 """
 
@@ -15,13 +15,13 @@ import re
 import requests
 
 from config import get_logger
-from config.paths import OPENAPI_SPEC_DIR
+from config.paths import OPENAPI_REFERENCE_DIR
 
 logger = get_logger(__name__)
 
 GITHUB_API_VERSIONS = "https://api.github.com/repos/OAI/OpenAPI-Specification/contents/versions"
 RAW_BASE_URL        = "https://raw.githubusercontent.com/OAI/OpenAPI-Specification/main/versions"
-OUTPUT_FILE         = os.path.join(OPENAPI_SPEC_DIR, "openapi_reference.md")
+OUTPUT_FILE         = os.path.join(OPENAPI_REFERENCE_DIR, "openapi_reference.md")
 
 
 def _get_latest_version_url() -> str:
@@ -51,7 +51,7 @@ def _get_latest_version_url() -> str:
 def fetch_openapi_reference() -> None:
     """
     Fetches the latest OpenAPI Specification from the OAI GitHub repository
-    and saves it to OPENAPI_SPEC_DIR/openapi_reference.md for offline use.
+    and saves it to OPENAPI_REFERENCE_DIR/openapi_reference.md for offline use.
 
     Raises requests.RequestException if any HTTP request fails.
     Raises ValueError if no versioned files are found or content is empty.
@@ -72,7 +72,7 @@ def fetch_openapi_reference() -> None:
     if not content.strip():
         raise ValueError("Fetched content is empty.")
 
-    os.makedirs(OPENAPI_SPEC_DIR, exist_ok=True)
+    os.makedirs(OPENAPI_REFERENCE_DIR, exist_ok=True)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(content)
 

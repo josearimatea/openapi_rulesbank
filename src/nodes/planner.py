@@ -11,7 +11,7 @@ the token budget manageable. Full section text is passed to the Extractor.
 State reads:
     parsed_sections      (list[dict]) — sections from reader_node
     helper_context       (str)        — auxiliary 3GPP documents context
-    openapi_spec_context (str)        — local OpenAPI spec snapshot
+    openapi_reference_context (str)        — local OpenAPI spec snapshot
 
 State writes:
     extraction_plan      (dict)       — serialized ExtractionPlan with
@@ -51,7 +51,7 @@ def planner_node(state: RuleBankState) -> dict:
     logger.info("Planner Node started.")
 
     sections_summary    = _build_sections_summary(state["parsed_sections"])
-    openapi_overview    = state["openapi_spec_context"][:_OPENAPI_OVERVIEW_CHARS]
+    openapi_overview    = state["openapi_reference_context"][:_OPENAPI_OVERVIEW_CHARS]
     helper_context      = state.get("helper_context", "") or "No auxiliary context provided."
 
     logger.debug(f"Sending {len(state['parsed_sections'])} section(s) to Planner LLM.")
@@ -62,7 +62,7 @@ def planner_node(state: RuleBankState) -> dict:
 
     plan: ExtractionPlan = chain.invoke({
         "sections_summary":    sections_summary,
-        "openapi_spec_overview": openapi_overview,
+        "openapi_reference_overview": openapi_overview,
         "helper_context":      helper_context,
     })
 

@@ -54,7 +54,7 @@ openapi_rulesbank/
 │   │   ├── rules_bank/            # Generated rules bank JSON files
 │   │   └── reports/               # Validation reports
 │   └── references/
-│       └── openapi_spec/          # Local snapshot of the swagger.io OpenAPI spec
+│       └── openapi_reference/     # Local snapshot of the OAI OpenAPI specification
 │
 ├── src/
 │   │

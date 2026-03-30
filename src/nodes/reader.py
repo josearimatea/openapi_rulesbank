@@ -17,8 +17,8 @@ State writes:
                                         each with section_id, title, content
     helper_context       (str)        — auxiliary docs concatenated into one
                                         context string for downstream nodes
-    openapi_spec_context (str)        — content of the local OpenAPI spec
-                                        snapshot from data/references/openapi_spec/
+    openapi_reference_context (str)        — content of the local OpenAPI spec
+                                        snapshot from data/references/openapi_reference/
 """
 
 from config import get_logger
@@ -56,10 +56,10 @@ def reader_node(state: RuleBankState) -> dict:
     logger.debug(f"Loaded {len(helper_parts)} auxiliary document(s).")
 
     # --- Local OpenAPI spec snapshot ---
-    # load_openapi_spec_context() reads from OPENAPI_SPEC_DIR using discover_specs().
+    # load_openapi_reference_context() reads from OPENAPI_REFERENCE_DIR using discover_specs().
     # Returns "" with a warning if the directory is missing or empty — in that case
     # the pipeline continues without OpenAPI context (guard is inside the function).
-    openapi_spec_context = load_openapi_reference()
+    openapi_reference_context = load_openapi_reference()
 
     logger.info("Reader Node complete.")
 
@@ -68,5 +68,5 @@ def reader_node(state: RuleBankState) -> dict:
     return {
         "parsed_sections": parsed_sections,
         "helper_context": helper_context,
-        "openapi_spec_context": openapi_spec_context,
+        "openapi_reference_context": openapi_reference_context,
     }
