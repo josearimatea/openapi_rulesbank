@@ -37,3 +37,15 @@ if not OPENAI_API_KEY:
 # LLM Settings
 MODEL = "gpt-4.1-mini"
 TEMPERATURE = 0
+
+# Pipeline flow control
+VALIDATION_ERROR_THRESHOLD = 0.10  # Loop back to Extractor if error rate exceeds 10%
+MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops before forcing forward
+
+# Section parsing — title validity filter
+# When True, parse_sections() discards sections whose title contains no real words
+# (i.e., titles made up entirely of symbols like table borders: "+---+---+").
+# This safely removes 3GPP document cover-page tables that pass the keyword filter
+# because their cell content contains relevant keywords (e.g. "NRM", "mapping").
+# Set to False to disable and keep all sections regardless of title format.
+FILTER_SYMBOLIC_TITLES = True

@@ -1,77 +1,87 @@
-# src/flows/rule_bank_flow.py
-# Defines the LangGraph flow for building the Rule Bank.
-# Nodes: reader -> extractor -> validator (loop if fails) -> builder.
+# src/graph/rule_bank_flow.py
 
-# Educational Flow Diagram (as comment):
-# This section explains the flow step-by-step with arrows.
-# It shows how data moves through the agents to build the Rule Bank JSON.
-#
-# Initial State: Empty dict {} (or with input_file/output_file from main.py)
-#                ↓ (Entry Point)
-# Reader Agent: Loads and parses DOC_TEST (main 3GPP doc, e.g., 28.312-i11.md) 
-#               and DOC_HELPER (OpenAPI specs + TS 32.160).
-#               - Filters relevant sections (templates, NRM, mappings to JSON/YANG/OpenAPI).
-#               - Handles chunking to avoid token limits.
-#               - Updates state: Adds 'parsed_main' (filtered text/summaries) Use LLM for optional summarization if prompt exists and debug mode is on.
-#                 and 'helper_context' (helper summaries).
-#                ↓ (Fixed Edge)
-# Extractor Agent: Extracts raw rules from 'parsed_main' using LLM.
-#                  - Processes in chunks: For each chunk, prompt LLM to find rules 
-#                    (e.g., "Extract mappings for OpenAPI from {chunk} using {helper_context}").
-#                  - Outputs list of dicts: [{'section': '6.2', 'rule': 'Attribute maps to YANG leaf', ...}].
-#                  - Updates state: Adds 'extracted_rules'.
-#                ↓ (Fixed Edge)
-# Validator Agent: Validates 'extracted_rules' against helpers.
-#                  - Structural: Uses Pydantic to check format.
-#                  - Semantic: LLM checks alignment (e.g., "Validate {rule} vs. OpenAPI schemas").
-#                  - Processes in batches to manage tokens.
-#                  - Updates state: Adds 'validated_rules' and 'validation_errors' (error rate).
-#                ↓ (Conditional Edge: Checks should_loop)
-#                  - If validation_errors > 10% threshold: ← Loop back to Extractor 
-#                    (with feedback in state, e.g., 'feedback': 'Refine YANG mappings').
-#                  - Else: Proceed forward.
-#                ↓ (Fixed Edge if no loop)
-# Builder Agent: Builds final JSON from 'validated_rules'.
-#                - Structures: Categorizes rules (e.g., by stage/category), adds metadata 
-#                  (doc source, generation date).
-#                - Saves to output_file as JSON (e.g., {'rules': [...], 'metadata': {...}}).
-#                - Updates state: Adds 'final_output' (path to JSON).
-#                ↓ (Finish Point)
-# End: Flow complete, result in state.
+"""
+Constructs and compiles the LangGraph StateGraph for the Rule Bank pipeline.
 
-from langgraph.graph import Graph, END
+FLOW DIAGRAM:
+
+  [Reader] → [Planner] → [Extractor] → [Reflector] → [Validator] → [Builder]
+                                                           ↑             |
+                                            error > threshold            |
+                                            └──── loop back ─────────────┘
+
+NODE DESCRIPTIONS:
+
+  Reader   : Loads the main 3GPP document and auxiliary references.
+             Filters sections relevant to OpenAPI (templates, NRM, mappings).
+             State output: parsed_sections, helper_context, openapi_spec_context.
+
+  Planner  : Reasons about the filtered sections using LLM.
+             Defines extraction strategy: section priority, granularity, focus areas.
+             State output: extraction_plan.
+
+  Extractor: Iterates over parsed_sections guided by extraction_plan.
+             Uses LLM to extract raw OpenAPI rules section by section.
+             State output: raw_rules.
+
+  Reflector: Applies Chain-of-Thought self-reflection over raw_rules.
+             Retrieves relevant context from Qdrant (swagger.io + 3GPP) via RAG.
+             Flags uncertain rules for priority validation.
+             State output: reflected_rules (with confidence scores and reasoning).
+
+  Validator: Validates reflected_rules in two steps:
+             1. Structural — Pydantic schema check.
+             2. Semantic   — LLM alignment check against helper context.
+             State output: validated_rules, validation_errors.
+             Conditional: if error rate > threshold and iterations < max → loop to Extractor.
+
+  Builder  : Assembles the final rules bank JSON from validated_rules.
+             Adds metadata (source document, generation date, model used, statistics).
+             Saves result to data/outputs/rules_bank/.
+             State output: final_output_path.
+"""
+
+from langgraph.graph import StateGraph, END
 from config import get_logger
-from agents.reader_agent import reader_agent
-from agents.extractor_agent import extractor_agent
-from agents.validator_agent import validator_agent
-from agents.builder_agent import builder_agent
+from graph.state import RuleBankState
+from graph.conditions import should_loop_or_build
+from nodes.reader import reader_node
+from nodes.planner import planner_node
+from nodes.extractor import extractor_node
+from nodes.reflector import reflector_node
+from nodes.validator import validator_node
+from nodes.builder import builder_node
 
 logger = get_logger(__name__)
 
-def should_loop(state: dict) -> str:
-    """Conditional function: Loop back to extractor if validation fails > threshold."""
-    if state.get("validation_errors", 0) > 0.1 * len(state.get("extracted_rules", [])):  # Example: 10% error threshold
-        logger.warning("Validation failed threshold - looping back to extractor.")
-        return "extractor"
-    return "builder"
 
-def get_compiled_graph(llm):
-    """Builds and returns the compiled LangGraph graph."""
-    graph = Graph()
+def get_compiled_graph():
+    """Builds and returns the compiled LangGraph StateGraph."""
+    graph = StateGraph(RuleBankState)
 
-    # Add nodes (agents)
-    graph.add_node("reader", lambda state: reader_agent(state, llm))
-    graph.add_node("extractor", lambda state: extractor_agent(state, llm))
-    graph.add_node("validator", lambda state: validator_agent(state, llm))
-    graph.add_node("builder", lambda state: builder_agent(state, llm))
+    # Add nodes
+    graph.add_node("reader", reader_node)
+    graph.add_node("planner", planner_node)
+    graph.add_node("extractor", extractor_node)
+    graph.add_node("reflector", reflector_node)
+    graph.add_node("validator", validator_node)
+    graph.add_node("builder", builder_node)
 
-    # Add edges
-    graph.add_edge("reader", "extractor")
-    graph.add_conditional_edges("validator", should_loop, {"extractor": "extractor", "builder": "builder"})
+    # Fixed edges
+    graph.add_edge("reader", "planner")
+    graph.add_edge("planner", "extractor")
+    graph.add_edge("extractor", "reflector")
+    graph.add_edge("reflector", "validator")
     graph.add_edge("builder", END)
 
-    # Set entry point
+    # Conditional edge: after Validator, loop back or proceed to Builder
+    graph.add_conditional_edges(
+        "validator",
+        should_loop_or_build,
+        {"extractor": "extractor", "builder": "builder"}
+    )
+
+    # Entry point
     graph.set_entry_point("reader")
 
-    # Compile and return
     return graph.compile()
