@@ -55,15 +55,16 @@ A rule is a specific, actionable statement that describes how a 3GPP NRM element
 attribute, operation, or constraint maps to an OpenAPI construct (path, schema,
 operation, parameter, response, etc.).
 
-Guidelines:
-  - Extract only rules that are explicitly stated or clearly implied by the text.
+SOURCE OF RULES — read carefully:
+  - Rules must be extracted ONLY from the "Section content" provided in the user message.
+  - Do NOT extract rules from the OpenAPI reference below — it is reference material only.
   - Do NOT infer or hallucinate rules that are not grounded in the section content.
   - Each rule must have a clear mapping to a specific OpenAPI object and field.
   - If the section contains a table, extract one rule per relevant row.
   - If the section defines multiple attributes, extract one rule per attribute.
   - Ignore introductory or background text that does not contain mappable rules.
 
-OpenAPI Specification reference (for mapping guidance):
+OpenAPI reference (use ONLY to understand valid OpenAPI constructs and field names):
 {openapi_reference_overview}
 """
 
@@ -74,14 +75,13 @@ Section Title: {section_title}
 Extraction focus (defined by the Planner):
 {extraction_focus}
 
-Section content:
+Section content (the ONLY source from which rules must be extracted):
 {section_content}
 
 Auxiliary context from supporting 3GPP documents (if relevant):
 {helper_context}
 
-Extract all OpenAPI rules present in this section.
-Return an empty list if no concrete rules are found.
+{correction_task}
 """
 
 extractor_prompt = ChatPromptTemplate.from_messages([

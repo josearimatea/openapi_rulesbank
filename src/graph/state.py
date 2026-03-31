@@ -20,6 +20,7 @@
 #   Builder   → final_output_path
 #   (flow control fields are managed by the graph itself)
 
+import operator
 from typing import TypedDict, Annotated
 from langgraph.graph.message import add_messages
 
@@ -87,7 +88,9 @@ class RuleBankState(TypedDict):
     # -------------------------------------------------------------------------
 
     # Rules that passed both structural (Pydantic) and semantic (LLM) validation.
-    validated_rules: list[dict]
+    # Uses operator.add so LangGraph appends new validated rules on each iteration
+    # instead of overwriting — preserving rules that passed in earlier loop iterations.
+    validated_rules: Annotated[list[dict], operator.add]
 
     # Rules that failed validation, with failure reasons attached.
     # Used to compute the error rate and decide whether to loop back to Extractor.

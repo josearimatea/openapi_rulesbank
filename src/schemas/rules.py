@@ -114,8 +114,10 @@ class ValidationError(BaseModel):
     Consumed by: conditions.should_loop_or_build() and Extractor (on loop-back)
     """
 
-    rule: RawRule = Field(
-        description="The original rule that failed validation."
+    rule: dict = Field(
+        description="The original rule dict that failed validation. "
+                    "Stored as dict (not RawRule) so structurally invalid rules "
+                    "can also be captured without triggering a second Pydantic error."
     )
     reason: str = Field(
         description="Description of why the rule failed validation. "

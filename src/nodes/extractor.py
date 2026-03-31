@@ -8,8 +8,9 @@ This is the second LLM call in the pipeline. It processes one section at a
 time, retrieving relevant OpenAPI reference chunks from Qdrant via RAG before
 each call to keep the context focused and token-efficient.
 
-On loop-back (Validator → Extractor), previously failed rules are injected
-as feedback so the LLM can correct or replace them.
+On loop-back (Validator → Extractor), only sections with failing rules are
+re-processed. The LLM receives a correction task listing the specific failed
+rules to fix — it must not re-extract all rules from the section.
 
 State reads:
     parsed_sections    (list[dict]) — full section content from reader_node
@@ -39,24 +40,40 @@ def _build_sections_index(parsed_sections: list[dict]) -> dict[str, dict]:
     return {s["section_id"]: s for s in parsed_sections}
 
 
-def _build_error_feedback(validation_errors: list[dict]) -> str:
+def _get_sections_to_reprocess(
+    plan_sections: list[dict],
+    validation_errors: list[dict],
+) -> list[dict]:
     """
-    Formats validation errors from the previous iteration into a feedback
-    string to inject into the prompt on loop-back.
+    On loop-back, returns only the plan sections that had validation errors.
+    Preserves original plan order.
+    """
+    failed_ids = {err.get("rule", {}).get("section_id") for err in validation_errors}
+    return [s for s in plan_sections if s["section_id"] in failed_ids]
 
-    Returns "" on first iteration (no errors yet).
+
+def _build_correction_task(validation_errors: list[dict]) -> str:
+    """
+    Returns a correction instruction for loop-back iterations.
+    Lists only the failed rules so the LLM corrects them specifically.
+    Returns "" on first iteration.
     """
     if not validation_errors:
         return ""
 
-    lines = ["The following rules from the previous extraction failed validation:"]
+    lines = [
+        "CORRECTION TASK — do NOT extract all rules from this section.",
+        "ONLY correct and re-extract the specific rules listed below that failed validation.",
+        "Return exactly one corrected rule per entry. Do not add new rules.",
+        "",
+        "Failed rules to correct:",
+    ]
     for i, err in enumerate(validation_errors, start=1):
         rule = err.get("rule", {})
         lines.append(
-            f"  {i}. [{rule.get('section_id', '?')}] {rule.get('rule_text', '?')!r} "
-            f"— Reason: {err.get('reason', '?')}"
+            f"  {i}. rule_text: {rule.get('rule_text', '?')!r}\n"
+            f"     Reason it failed: {err.get('reason', '?')}"
         )
-    lines.append("Avoid repeating these errors in your new extraction.")
     return "\n".join(lines)
 
 
@@ -66,23 +83,33 @@ def extractor_node(state: RuleBankState) -> dict:
 
     For each section:
       1. Retrieves RAG chunks from the OpenAPI reference collection.
-      2. Calls the LLM with the section content + RAG context + error feedback.
+      2. Calls the LLM with the section content + RAG context.
       3. Collects RawRule objects into raw_rules.
+
+    On loop-back (validation_errors not empty):
+      - Only re-processes sections that had failing rules.
+      - Instructs the LLM to correct only the specific failed rules.
     """
     logger.info("Extractor Node started.")
 
     sections_index    = _build_sections_index(state["parsed_sections"])
-    plan_sections     = state["extraction_plan"]["sections_to_extract"]
+    all_plan_sections = state["extraction_plan"]["sections_to_extract"]
     helper_context    = state.get("helper_context", "") or "No auxiliary context provided."
     validation_errors = state.get("validation_errors", []) or []
     iteration_count   = state.get("iteration_count", 0) or 0
-    error_feedback    = _build_error_feedback(validation_errors)
 
-    if error_feedback:
+    # On loop-back: restrict to sections with errors and build correction instruction
+    if validation_errors:
+        plan_sections   = _get_sections_to_reprocess(all_plan_sections, validation_errors)
+        correction_task = _build_correction_task(validation_errors)
         logger.info(
             f"Loop-back iteration {iteration_count + 1} — "
-            f"{len(validation_errors)} error(s) fed back to Extractor."
+            f"{len(validation_errors)} error(s), re-processing "
+            f"{len(plan_sections)} section(s)."
         )
+    else:
+        plan_sections   = all_plan_sections
+        correction_task = ""
 
     structured_llm = llm.with_structured_output(SectionRules)
     chain = extractor_prompt | structured_llm
@@ -109,18 +136,14 @@ def extractor_node(state: RuleBankState) -> dict:
             f"Extracting [{section_id}] '{section_title}' (priority={plan_section['priority']})."
         )
 
-        # On loop-back, append error feedback to helper context
-        section_helper = helper_context
-        if error_feedback:
-            section_helper = f"{helper_context}\n\n{error_feedback}"
-
         result: SectionRules = chain.invoke({
             "section_id":                 section_id,
             "section_title":              section_title,
             "extraction_focus":           focus,
             "section_content":            section["content"],
             "openapi_reference_overview": openapi_reference_overview,
-            "helper_context":             section_helper,
+            "helper_context":             helper_context,
+            "correction_task":            correction_task,
         })
 
         section_rules = result.rules
