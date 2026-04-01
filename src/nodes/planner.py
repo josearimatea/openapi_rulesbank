@@ -4,18 +4,32 @@
 Planner Node: analyzes the parsed 3GPP sections from the Reader and produces
 an extraction plan that guides the Extractor Node.
 
-This is the first LLM call in the pipeline. It performs structured reasoning
-over section titles and content previews — not full section text — to keep
-the token budget manageable. Full section text is passed to the Extractor.
+LLM call: yes (1 call). No RAG.
+
+HOW IT WORKS:
+    Receives all sections parsed by the Reader and builds a compact summary
+    table (section_id | title | first 200 chars of content) to avoid sending
+    the full document text. The LLM reasons over this table and the first
+    3000 chars of the OpenAPI spec overview to decide which sections are
+    relevant, their extraction priority (high/medium/low), and the extraction
+    focus for each section.
+
+    Uses with_structured_output(ExtractionPlan) to return a validated Pydantic
+    object serialized to dict for the state.
 
 State reads:
-    parsed_sections      (list[dict]) — sections from reader_node
-    helper_context       (str)        — auxiliary 3GPP documents context
-    openapi_reference_context (str)        — local OpenAPI spec snapshot
+    parsed_sections           (list[dict]) — sections from reader_node
+    helper_context            (str)        — auxiliary 3GPP documents context
+    openapi_reference_context (str)        — first 3000 chars used as OpenAPI overview
 
 State writes:
-    extraction_plan      (dict)       — serialized ExtractionPlan with
-                                        document_summary and sections_to_extract
+    extraction_plan (dict) — serialized ExtractionPlan containing:
+        document_summary       (str)        — brief summary of the document's purpose
+        sections_to_extract    (list[dict]) — each entry has:
+            section_id         (str)  — matches a section_id from parsed_sections
+            title              (str)  — section title
+            priority           (str)  — "high" | "medium" | "low"
+            extraction_focus   (str)  — what the Extractor should focus on
 """
 
 from config import get_logger

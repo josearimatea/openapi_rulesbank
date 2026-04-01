@@ -4,21 +4,34 @@
 Reader Node: loads all source documents and populates the shared state
 with filtered sections ready for the Planner and Extractor nodes.
 
-This node is purely deterministic — it does not call any LLM.
-Its only job is to load, split, and filter text. All reasoning about
-what to extract happens in the Planner Node.
+No LLM call. No RAG. Purely deterministic text loading and filtering.
+
+HOW IT WORKS:
+    1. Loads the main 3GPP document from a local file path or HTTP URL.
+    2. Splits the document into sections using utils.parsers.parse_sections(),
+       which splits on '## ' headers and keeps only sections that contain
+       OpenAPI-relevant keywords (mapping, yang, template, attribute, openapi, etc.).
+    3. Loads each auxiliary 3GPP document and truncates to 2000 chars each,
+       joining them into a single helper_context string.
+    4. Reads the local OpenAPI specification snapshot from
+       data/references/openapi_reference/ via tools.document_tools.load_openapi_reference().
 
 State reads:
-    main_doc_path        (str)       — path or URL to the main 3GPP spec
-    auxiliary_doc_paths  (list[str]) — paths or URLs to auxiliary 3GPP specs
+    main_doc_path        (str)       — local file path or HTTP URL to the main 3GPP spec
+    auxiliary_doc_paths  (list[str]) — local paths or HTTP URLs to auxiliary 3GPP specs
+                                       (empty list if none provided)
 
 State writes:
-    parsed_sections      (list[dict]) — relevant sections from the main doc,
-                                        each with section_id, title, content
-    helper_context       (str)        — auxiliary docs concatenated into one
-                                        context string for downstream nodes
-    openapi_reference_context (str)        — content of the local OpenAPI spec
-                                        snapshot from data/references/openapi_reference/
+    parsed_sections           (list[dict]) — relevant sections from the main doc.
+                                             Each dict: {section_id, title, content}.
+                                             Only sections with OpenAPI keywords are kept.
+    helper_context            (str)        — auxiliary docs concatenated into one string
+                                             (2000 chars per doc, max). Used by Planner
+                                             and Extractor for background context.
+    openapi_reference_context (str)        — full text of the local OpenAPI spec snapshot.
+                                             Used by Planner as overview reference.
+                                             Empty string if data/references/openapi_reference/
+                                             is missing or empty.
 """
 
 from config import get_logger

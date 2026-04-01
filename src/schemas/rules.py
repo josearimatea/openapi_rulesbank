@@ -3,13 +3,39 @@
 """
 Pydantic data models for the rules extracted by the pipeline.
 
-These models define the structure of a single OpenAPI rule at each stage
-of the pipeline. The same rule evolves as it passes through nodes:
-    Extractor  → produces RawRule
-    Reflector  → enriches to ReflectedRule (adds confidence, reasoning, flagged)
-    Validator  → promotes to ValidatedRule or ValidationError
+The same rule evolves as it passes through nodes:
 
-All models inherit from RawRule so fields are consistent across stages.
+    Extractor  → RawRule
+    Reflector  → ReflectedRule    (+ confidence, reasoning, flagged, rag_context)
+    Validator  → ValidatedRule    (+ validation_notes)
+                 ValidationError  (rules that failed, stored for loop-back)
+
+MODEL HIERARCHY
+───────────────
+  RawRule
+    ├── section_id      str   — section_id from parsed_sections
+    ├── section_title   str   — section title, for traceability
+    ├── rule_type       str   — path_operation | schema_property | path_parameter |
+    │                           query_parameter | response | request_body | security_scheme
+    ├── rule_text       str   — full rule statement extracted from the 3GPP document
+    └── openapi_mapping OpenAPIMapping
+          ├── openapi_object  str   — OpenAPI object/schema (e.g. "NrCellDu", "paths./nrCellDu/{id}")
+          ├── openapi_field   str   — field or keyword     (e.g. "type", "format", "get")
+          └── openapi_value   str   — value or constraint  (e.g. "string", "int64", "200")
+
+  ReflectedRule(RawRule)
+    ├── confidence   float  — 0.0–1.0; how grounded the rule is in the spec
+    ├── reasoning    str    — CoT explanation from the Reflector
+    ├── flagged      bool   — True if the rule should receive priority validation
+    └── rag_context  str    — Qdrant chunks used to ground the self-reflection
+
+  ValidatedRule(ReflectedRule)
+    └── validation_notes  str  — optional corrections noted during semantic validation
+
+  ValidationError  (standalone, not in the inheritance chain)
+    ├── rule   dict  — original rule dict that failed (dict to capture structural failures too)
+    ├── reason str   — why the rule failed; fed back to Extractor on loop-back
+    └── stage  str   — "structural" (Stage 1a/1b) or "semantic" (Stage 2)
 """
 
 from pydantic import BaseModel, Field
@@ -51,6 +77,14 @@ class RawRule(BaseModel):
     )
     section_title: str = Field(
         description="The section title, for traceability and reporting."
+    )
+    rule_type: str = Field(
+        description=(
+            "Category of OpenAPI construct this rule describes. "
+            "Must be exactly one of: "
+            "path_operation | schema_property | path_parameter | query_parameter | "
+            "response | request_body | security_scheme"
+        )
     )
     rule_text: str = Field(
         description="The full rule statement as extracted from the 3GPP document. "

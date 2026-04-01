@@ -4,24 +4,38 @@
 Extractor Node: extracts raw OpenAPI rules from each 3GPP section guided
 by the Planner's extraction plan.
 
-This is the second LLM call in the pipeline. It processes one section at a
-time, retrieving relevant OpenAPI reference chunks from Qdrant via RAG before
-each call to keep the context focused and token-efficient.
+LLM call: yes (1 call per section). RAG: yes (1 query per section via Qdrant).
 
-On loop-back (Validator → Extractor), only sections with failing rules are
-re-processed. The LLM receives a correction task listing the specific failed
-rules to fix — it must not re-extract all rules from the section.
+HOW IT WORKS:
+    Iterates over sections in extraction_plan["sections_to_extract"]. For each:
+      1. Retrieves relevant OpenAPI reference chunks from Qdrant via RAG
+         (query: section_title — extraction_focus).
+      2. Invokes the LLM with the section content, RAG context, and helper context.
+      3. The LLM extracts RawRule objects, each with a rule_type that categorizes
+         the OpenAPI construct (path_operation, schema_property, path_parameter,
+         query_parameter, response, request_body, security_scheme).
+
+    The prompt enforces: one rule per HTTP method (never combined), extract ONLY
+    from section content (not from the OpenAPI reference), and use the OpenAPI
+    reference chunks ONLY to understand valid construct names and field formats.
+
+ON LOOP-BACK (validation_errors not empty):
+    Only sections whose section_id appears in validation_errors are re-processed
+    (not all sections). The LLM receives a CORRECTION TASK listing the specific
+    failed rules and their reasons, instructing it to return exactly one corrected
+    rule per failed entry. New rules must not be added.
 
 State reads:
-    parsed_sections    (list[dict]) — full section content from reader_node
-    extraction_plan    (dict)       — sections_to_extract from planner_node
-    helper_context     (str)        — auxiliary 3GPP documents context
-    validation_errors  (list[dict]) — failed rules from previous iteration (may be empty)
-    iteration_count    (int)        — current loop iteration number
+    parsed_sections   (list[dict]) — full section content from reader_node
+    extraction_plan   (dict)       — sections_to_extract from planner_node
+    helper_context    (str)        — auxiliary 3GPP documents context
+    validation_errors (list[dict]) — failed rules from previous iteration (empty on iter 1)
+    iteration_count   (int)        — current loop iteration number
 
 State writes:
-    raw_rules          (list[dict]) — RawRule objects serialized as dicts
-    iteration_count    (int)        — incremented by 1
+    raw_rules       (list[dict]) — RawRule dicts (section_id, section_title, rule_type,
+                                   rule_text, openapi_mapping{object, field, value})
+    iteration_count (int)        — incremented by 1
 """
 
 from config import get_logger

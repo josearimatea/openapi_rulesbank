@@ -1,11 +1,18 @@
 # src/nodes/validator.py
 
 """
-Validator Node: applies two-stage validation to each ReflectedRule.
+Validator Node: applies three-stage validation to each ReflectedRule.
 
-Stage 1 — Structural (Pydantic, no LLM call):
+Stage 1a — Structural / Pydantic (no LLM call):
     Attempts to construct a ValidatedRule from the rule dict.
     Any missing field or wrong type produces a ValidationError immediately.
+
+Stage 1b — Mapping consistency / rules_check (no LLM call):
+    Calls utils.rules_check.check_mapping_for_type() to verify that
+    openapi_object, openapi_field, and openapi_value are consistent with
+    the rule's rule_type (e.g. a path_operation must have a single lowercase
+    HTTP method as openapi_field, never "put, patch").
+    This is a deterministic check that runs only if Stage 1a passes.
 
 Stage 2 — Semantic (LLM):
     For each structurally valid rule, the LLM checks whether the rule_text is
@@ -13,8 +20,8 @@ Stage 2 — Semantic (LLM):
     Flagged rules (from the Reflector) are explicitly noted in the prompt so the
     LLM applies extra scrutiny.
 
-Rules that pass both stages are added to validated_rules.
-Rules that fail either stage are added to validation_errors.
+Rules that pass all three stages are added to validated_rules.
+Rules that fail any stage are added to validation_errors.
 conditions.should_loop_or_build() then decides whether to loop or proceed.
 
 State reads:
@@ -33,6 +40,7 @@ from config.llm_config import llm
 from graph.state import RuleBankState
 from prompts.validator_prompts import ValidationVerdict, validator_prompt
 from schemas.rules import ValidatedRule, ValidationError
+from utils.rules_check import check_mapping_for_type
 
 logger = get_logger(__name__)
 
@@ -44,22 +52,40 @@ def _build_sections_index(parsed_sections: list[dict]) -> dict[str, dict]:
 
 def _validate_structurally(rule: dict) -> tuple[dict | None, dict | None]:
     """
-    Attempts to construct a ValidatedRule from the rule dict.
+    Validates a rule structurally in two steps:
+
+    Stage 1a — Pydantic:
+        Verifies all required fields exist with correct Python types.
+        Failure means the rule is malformed and cannot be processed further.
+
+    Stage 1b — Mapping consistency (rules_check):
+        Verifies that openapi_object/field/value match the rule's rule_type.
+        E.g. a path_operation must have a single lowercase HTTP method as
+        openapi_field. Runs only if Stage 1a passes.
 
     Returns:
-        (validated_rule_dict, None)  if the rule passes structural validation.
-        (None, validation_error_dict) if it fails Pydantic validation.
+        (validated_rule_dict, None)   if both stages pass.
+        (None, validation_error_dict) if either stage fails.
     """
+    # Stage 1a — Pydantic structural check
     try:
         validated = ValidatedRule(**rule)
-        return validated.model_dump(), None
     except PydanticValidationError as e:
-        error = ValidationError(
+        return None, ValidationError(rule=rule, reason=str(e), stage="structural").model_dump()
+
+    # Stage 1b — rule_type / mapping consistency check
+    mapping_errors = check_mapping_for_type(
+        rule.get("rule_type", ""),
+        rule.get("openapi_mapping", {}),
+    )
+    if mapping_errors:
+        return None, ValidationError(
             rule=rule,
-            reason=str(e),
+            reason="; ".join(mapping_errors),
             stage="structural",
-        )
-        return None, error.model_dump()
+        ).model_dump()
+
+    return validated.model_dump(), None
 
 
 def _validate_semantically(
@@ -79,6 +105,7 @@ def _validate_semantically(
     verdict: ValidationVerdict = chain.invoke({
         "section_id":     rule.get("section_id", ""),
         "section_title":  rule.get("section_title", ""),
+        "rule_type":      rule.get("rule_type", ""),
         "rule_text":      rule.get("rule_text", ""),
         "openapi_object": mapping.get("openapi_object", ""),
         "openapi_field":  mapping.get("openapi_field", ""),
@@ -133,7 +160,7 @@ def validator_node(state: RuleBankState) -> dict:
             f"{rule.get('rule_text', '')[:60]}"
         )
 
-        # Stage 1 — Structural validation (Pydantic, free)
+        # Stage 1a + 1b — Structural validation (Pydantic + mapping consistency, no LLM)
         valid_dict, error_dict = _validate_structurally(rule)
         if error_dict:
             logger.debug(f"  → FAIL (structural): {error_dict['reason'][:80]}")

@@ -36,6 +36,7 @@ if not OPENAI_API_KEY:
 
 # LLM Settings
 MODEL = "gpt-4.1-mini"
+# MODEL = "gpt-5-mini"
 TEMPERATURE = 0
 
 # RAG — OpenAPI reference collection

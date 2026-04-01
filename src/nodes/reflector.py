@@ -4,18 +4,34 @@
 Reflector Node: applies Chain-of-Thought self-reflection over each raw rule
 produced by the Extractor before passing them to the Validator.
 
-For each RawRule, the Reflector:
-  1. Builds a RAG query from the rule text and openapi_object.
-  2. Retrieves relevant OpenAPI reference chunks via search_openapi_reference().
-  3. Invokes the LLM to assess confidence, produce reasoning, and flag uncertain rules.
-  4. Merges the reflection result into the rule → ReflectedRule.
+LLM call: yes (1 call per rule). RAG: yes (1 query per rule via Qdrant).
+
+HOW IT WORKS:
+    For each RawRule:
+      1. Builds a RAG query from rule_text + openapi_object + openapi_field.
+      2. Retrieves relevant OpenAPI reference chunks from Qdrant via
+         search_openapi_reference() to ground the assessment.
+      3. Invokes the LLM with the rule fields (including rule_type) and the
+         retrieved context. The LLM answers 4 CoT questions:
+           - Is the rule grounded in the section content?
+           - Is the openapi_mapping (object, field, value) correct?
+           - Does the OpenAPI reference context confirm or contradict it?
+           - How confident is the model in this rule?
+      4. Merges the ReflectionResult (confidence, reasoning, flagged) into
+         the rule dict to produce a ReflectedRule.
+
+    Rules with confidence < 0.7 or ambiguous mappings should be flagged by
+    the LLM for priority scrutiny in the Validator (enforced via prompt).
 
 State reads:
-    raw_rules   (list[dict]) — RawRule objects from extractor_node
+    raw_rules (list[dict]) — RawRule dicts from extractor_node
 
 State writes:
-    reflected_rules (list[dict]) — ReflectedRule objects with confidence,
-                                   reasoning, flagged, and rag_context fields
+    reflected_rules (list[dict]) — ReflectedRule dicts, extending each RawRule with:
+                                   confidence  (float 0.0–1.0)
+                                   reasoning   (str — CoT explanation)
+                                   flagged     (bool — True = priority validation)
+                                   rag_context (str — retrieved OpenAPI chunks)
 """
 
 from config import get_logger
@@ -76,6 +92,7 @@ def reflector_node(state: RuleBankState) -> dict:
             "openapi_reference_context": rag_context or "No relevant context retrieved.",
             "section_id":    rule.get("section_id", ""),
             "section_title": rule.get("section_title", ""),
+            "rule_type":     rule.get("rule_type", ""),
             "rule_text":     rule.get("rule_text", ""),
             "openapi_object": mapping.get("openapi_object", ""),
             "openapi_field":  mapping.get("openapi_field", ""),
