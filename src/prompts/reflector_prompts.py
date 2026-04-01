@@ -85,6 +85,7 @@ Rule to assess:
 
   Section ID     : {section_id}
   Section title  : {section_title}
+  Rule type      : {rule_type}
   Rule text      : {rule_text}
   OpenAPI object : {openapi_object}
   OpenAPI field  : {openapi_field}

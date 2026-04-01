@@ -50,19 +50,62 @@ _SYSTEM = """\
 You are an expert in 3GPP technical specifications and OpenAPI design.
 
 Your task is to extract concrete OpenAPI rules from a section of a 3GPP document.
+Each rule must have a rule_type, a clear rule_text, and a precise openapi_mapping.
 
-A rule is a specific, actionable statement that describes how a 3GPP NRM element,
-attribute, operation, or constraint maps to an OpenAPI construct (path, schema,
-operation, parameter, response, etc.).
-
-SOURCE OF RULES — read carefully:
-  - Rules must be extracted ONLY from the "Section content" provided in the user message.
+SOURCE OF RULES:
+  - Extract rules ONLY from the "Section content" in the user message.
   - Do NOT extract rules from the OpenAPI reference below — it is reference material only.
-  - Do NOT infer or hallucinate rules that are not grounded in the section content.
-  - Each rule must have a clear mapping to a specific OpenAPI object and field.
-  - If the section contains a table, extract one rule per relevant row.
-  - If the section defines multiple attributes, extract one rule per attribute.
-  - Ignore introductory or background text that does not contain mappable rules.
+  - Do NOT infer or hallucinate rules not explicitly stated or clearly implied by the text.
+  - If a section contains a table, extract one rule per relevant row.
+  - If a section defines multiple attributes, extract one rule per attribute.
+  - Ignore introductory or background text with no concrete mappable content.
+
+RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapping accordingly:
+
+1. path_operation  — one rule per HTTP method on a resource path
+   rule_type      : "path_operation"
+   openapi_object : the path template as written in the spec, prefixed with "paths."
+                    e.g. "paths./ProvMnS/{{MnSVersion}}/{{className}}/{{id}}"
+   openapi_field  : exactly one HTTP method in lowercase: get | put | post | delete | patch
+                    NEVER combine two methods (e.g. never "put, patch") — create two rules.
+   openapi_value  : the HTTP method in uppercase: GET | PUT | POST | DELETE | PATCH
+
+2. schema_property — one rule per attribute or field in a data model
+   rule_type      : "schema_property"
+   openapi_object : the schema path, e.g. "components/schemas/NrCellDu"
+   openapi_field  : "properties.<propertyName>"  e.g. "properties.nrCellDuId"
+   openapi_value  : the JSON Schema type: "string" | "integer" | "boolean" | "array" |
+                    "object" | "$ref: '#/components/schemas/<Name>'"
+
+3. path_parameter  — one rule per path variable in a URI template
+   rule_type      : "path_parameter"
+   openapi_object : the path template, e.g. "paths./ProvMnS/{{MnSVersion}}/{{id}}"
+   openapi_field  : "parameters[in=path,name=<paramName>]"
+   openapi_value  : the parameter schema type: "string" | "integer" | etc.
+
+4. query_parameter — one rule per query string parameter
+   rule_type      : "query_parameter"
+   openapi_object : the path template, e.g. "paths./ProvMnS/{{MnSVersion}}/{{id}}"
+   openapi_field  : "parameters[in=query,name=<paramName>]"
+   openapi_value  : the parameter schema type: "string" | "integer" | etc.
+
+5. response        — one rule per HTTP response code for an operation
+   rule_type      : "response"
+   openapi_object : "paths.<path>.<method>.responses"
+   openapi_field  : the HTTP status code as string: "200" | "201" | "204" | "400" | "404" | "500"
+   openapi_value  : "$ref: '#/components/responses/<Name>'" or a brief schema description
+
+6. request_body    — one rule per operation that accepts a request body
+   rule_type      : "request_body"
+   openapi_object : "paths.<path>.<method>.requestBody"
+   openapi_field  : "content"
+   openapi_value  : the media type: "application/json" | "application/merge-patch+json" | etc.
+
+7. security_scheme — one rule per security/authentication requirement
+   rule_type      : "security_scheme"
+   openapi_object : "components/securitySchemes/<SchemeName>"
+   openapi_field  : "type"
+   openapi_value  : "oauth2" | "http" | "apiKey" | "openIdConnect"
 
 OpenAPI reference (use ONLY to understand valid OpenAPI constructs and field names):
 {openapi_reference_overview}

@@ -55,13 +55,28 @@ You are an expert in 3GPP technical specifications and OpenAPI design.
 Your task is to perform semantic validation on an OpenAPI rule that was automatically
 extracted from a 3GPP document and reviewed by a self-reflection step.
 
-Verify:
+Verify all four points:
   1. Is the rule_text grounded in the section content (not hallucinated)?
-  2. Is the openapi_object a valid OpenAPI construct (path, schema, operation, parameter, etc.)?
-  3. Is the openapi_field a valid field within that OpenAPI object?
-  4. Is the openapi_value correct and consistent with the OpenAPI specification?
+  2. Is the openapi_object a valid OpenAPI construct for the given rule_type?
+  3. Is the openapi_field valid and specific for that construct?
+  4. Is the openapi_value correct and concrete for the rule_type?
 
-Return valid=False if any of the above checks fail.
+Validation rules by rule_type:
+  path_operation  : openapi_field must be a single lowercase HTTP method (get/put/post/delete/patch).
+                    openapi_value must be the uppercase HTTP method (GET/PUT/POST/DELETE/PATCH).
+                    Reject if multiple methods are combined in one field (e.g. "put, patch").
+                    IMPORTANT: if the section assigns multiple HTTP methods to the same operation,
+                    the correct extraction behavior is one separate rule per method. Do NOT reject
+                    a rule for covering only one method when the section lists multiple methods for
+                    the same operation — each single-method rule is valid and complete on its own.
+  schema_property : openapi_field must be "properties.<name>". openapi_value must be a JSON Schema type.
+  path_parameter  : openapi_field must be "parameters[in=path,name=<name>]".
+  query_parameter : openapi_field must be "parameters[in=query,name=<name>]".
+  response        : openapi_field must be an HTTP status code string ("200", "201", "400", etc.).
+  request_body    : openapi_field must be "content". openapi_value must be a media type.
+  security_scheme : openapi_field must be "type". openapi_value must be a valid OAuth2/http/apiKey value.
+
+Return valid=False if any check fails.
 """
 
 _USER = """\
@@ -69,6 +84,7 @@ Rule to validate:
 
   Section ID     : {section_id}
   Section title  : {section_title}
+  Rule type      : {rule_type}
   Rule text      : {rule_text}
   OpenAPI object : {openapi_object}
   OpenAPI field  : {openapi_field}
