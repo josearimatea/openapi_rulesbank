@@ -80,11 +80,24 @@ def planner_node(state: RuleBankState) -> dict:
         "helper_context":      helper_context,
     })
 
+    selected_ids = {s.section_id for s in plan.sections_to_extract}
+
+    # Sections the Planner did not select — computed here so the accounting
+    # is always accurate regardless of test limitations applied outside the node.
+    excluded_sections_planner = [
+        {"section_id": s["section_id"], "title": s["title"]}
+        for s in state["parsed_sections"]
+        if s["section_id"] not in selected_ids
+    ]
+
     selected = len(plan.sections_to_extract)
-    logger.info(f"Planner Node complete — {selected} section(s) selected for extraction.")
+    excluded = len(excluded_sections_planner)
+    logger.info(
+        f"Planner Node complete — {selected} section(s) selected, {excluded} excluded."
+    )
     logger.debug(f"Document summary: {plan.document_summary}")
 
-    # Serialize to dict so LangGraph can merge it into the state cleanly
     return {
-        "extraction_plan": plan.model_dump(),
+        "extraction_plan":          plan.model_dump(),
+        "excluded_sections_planner": excluded_sections_planner,
     }

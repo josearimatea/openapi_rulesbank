@@ -19,22 +19,23 @@ HOW IT WORKS:
     from section content (not from the OpenAPI reference), and use the OpenAPI
     reference chunks ONLY to understand valid construct names and field formats.
 
-ON LOOP-BACK (validation_errors not empty):
-    Only sections whose section_id appears in validation_errors are re-processed
-    (not all sections). The LLM receives a CORRECTION TASK listing the specific
-    failed rules and their reasons, instructing it to return exactly one corrected
-    rule per failed entry. New rules must not be added.
+ON LOOP-BACK (validation_errors or section_feedback not empty):
+    Only sections that appear in validation_errors or section_feedback are
+    re-processed (not all sections). The LLM receives a CORRECTION TASK listing:
+      - Failed rules with their error_type and instruction (correction/split/discard)
+      - Missing rules from section_feedback to extract from scratch
 
 State reads:
     parsed_sections   (list[dict]) — full section content from reader_node
     extraction_plan   (dict)       — sections_to_extract from planner_node
     helper_context    (str)        — auxiliary 3GPP documents context
     validation_errors (list[dict]) — failed rules from previous iteration (empty on iter 1)
+    section_feedback  (list[dict]) — missing-rules feedback from Validator (empty on iter 1)
     iteration_count   (int)        — current loop iteration number
 
 State writes:
     raw_rules       (list[dict]) — RawRule dicts (section_id, section_title, rule_type,
-                                   rule_text, openapi_mapping{object, field, value})
+                                   source_name, rule_text, openapi_mapping{object, field, value})
     iteration_count (int)        — incremented by 1
 """
 
@@ -57,37 +58,62 @@ def _build_sections_index(parsed_sections: list[dict]) -> dict[str, dict]:
 def _get_sections_to_reprocess(
     plan_sections: list[dict],
     validation_errors: list[dict],
+    section_feedback: list[dict],
 ) -> list[dict]:
     """
-    On loop-back, returns only the plan sections that had validation errors.
+    On loop-back, returns only the plan sections that had validation errors
+    or that appear in section_feedback (missing rules to extract).
     Preserves original plan order.
     """
-    failed_ids = {err.get("rule", {}).get("section_id") for err in validation_errors}
-    return [s for s in plan_sections if s["section_id"] in failed_ids]
+    failed_ids   = {
+        err.get("section_id") or err.get("rule", {}).get("section_id")
+        for err in validation_errors
+    }
+    feedback_ids = {sf.get("section_id") for sf in section_feedback}
+    reprocess_ids = failed_ids | feedback_ids
+    return [s for s in plan_sections if s["section_id"] in reprocess_ids]
 
 
-def _build_correction_task(validation_errors: list[dict]) -> str:
+def _build_correction_task(
+    validation_errors: list[dict],
+    section_feedback: list[dict],
+) -> str:
     """
     Returns a correction instruction for loop-back iterations.
-    Lists only the failed rules so the LLM corrects them specifically.
-    Returns "" on first iteration.
+    Lists failed rules and missing rules so the LLM can act on each specifically.
+    Returns "" on first iteration (both inputs empty).
     """
-    if not validation_errors:
+    if not validation_errors and not section_feedback:
         return ""
 
     lines = [
-        "CORRECTION TASK — do NOT extract all rules from this section.",
-        "ONLY correct and re-extract the specific rules listed below that failed validation.",
-        "Return exactly one corrected rule per entry. Do not add new rules.",
+        "CORRECTION TASK — this is a loop-back iteration.",
+        "Re-extract ONLY what is listed below. Follow each instruction exactly.",
+        "You may produce more or fewer rules than before — quality over quantity.",
+        "Do NOT re-extract rules that were already validated successfully.",
         "",
-        "Failed rules to correct:",
     ]
-    for i, err in enumerate(validation_errors, start=1):
-        rule = err.get("rule", {})
-        lines.append(
-            f"  {i}. rule_text: {rule.get('rule_text', '?')!r}\n"
-            f"     Reason it failed: {err.get('reason', '?')}"
-        )
+
+    if validation_errors:
+        lines.append("RULES TO CORRECT (existing rules that failed):")
+        for i, err in enumerate(validation_errors, start=1):
+            rule = err.get("rule", {})
+            lines.append(
+                f"  {i}. [{err.get('section_id', rule.get('section_id', '?'))}] "
+                f"{err.get('error_type', 'correction').upper()}\n"
+                f"     original rule_text : {rule.get('rule_text', '?')!r}\n"
+                f"     rule_type          : {rule.get('rule_type', '?')}\n"
+                f"     source_name        : {rule.get('source_name', '?')!r}\n"
+                f"     instruction        : {err.get('instruction', '?')}"
+            )
+
+    if section_feedback:
+        lines.append("")
+        lines.append("RULES TO EXTRACT FROM SCRATCH (missing rules identified by Validator):")
+        for sf in section_feedback:
+            for j, missing in enumerate(sf.get("missing_rules", []), start=1):
+                lines.append(f"  [{sf['section_id']}] {j}. {missing}")
+
     return "\n".join(lines)
 
 
@@ -100,9 +126,10 @@ def extractor_node(state: RuleBankState) -> dict:
       2. Calls the LLM with the section content + RAG context.
       3. Collects RawRule objects into raw_rules.
 
-    On loop-back (validation_errors not empty):
-      - Only re-processes sections that had failing rules.
-      - Instructs the LLM to correct only the specific failed rules.
+    On loop-back (validation_errors or section_feedback not empty):
+      - Only re-processes sections that had failing rules or missing-rules feedback.
+      - Instructs the LLM to correct/split/discard specific failed rules and
+        extract any rules identified as missing.
     """
     logger.info("Extractor Node started.")
 
@@ -110,16 +137,20 @@ def extractor_node(state: RuleBankState) -> dict:
     all_plan_sections = state["extraction_plan"]["sections_to_extract"]
     helper_context    = state.get("helper_context", "") or "No auxiliary context provided."
     validation_errors = state.get("validation_errors", []) or []
+    section_feedback  = state.get("section_feedback",  []) or []
     iteration_count   = state.get("iteration_count", 0) or 0
 
-    # On loop-back: restrict to sections with errors and build correction instruction
-    if validation_errors:
-        plan_sections   = _get_sections_to_reprocess(all_plan_sections, validation_errors)
-        correction_task = _build_correction_task(validation_errors)
+    # On loop-back: restrict to sections with errors or missing-rules feedback
+    if validation_errors or section_feedback:
+        plan_sections   = _get_sections_to_reprocess(
+            all_plan_sections, validation_errors, section_feedback
+        )
+        correction_task = _build_correction_task(validation_errors, section_feedback)
         logger.info(
             f"Loop-back iteration {iteration_count + 1} — "
-            f"{len(validation_errors)} error(s), re-processing "
-            f"{len(plan_sections)} section(s)."
+            f"{len(validation_errors)} error(s), "
+            f"{sum(len(sf.get('missing_rules', [])) for sf in section_feedback)} missing rule(s), "
+            f"re-processing {len(plan_sections)} section(s)."
         )
     else:
         plan_sections   = all_plan_sections
@@ -160,9 +191,8 @@ def extractor_node(state: RuleBankState) -> dict:
             "correction_task":            correction_task,
         })
 
-        section_rules = result.rules
-        logger.debug(f"  → {len(section_rules)} rule(s) extracted from [{section_id}].")
-        raw_rules.extend([rule.model_dump() for rule in section_rules])
+        logger.debug(f"  → {len(result.rules)} rule(s) extracted from [{section_id}].")
+        raw_rules.extend([rule.model_dump() for rule in result.rules])
 
     logger.info(
         f"Extractor Node complete — {len(raw_rules)} raw rule(s) from "

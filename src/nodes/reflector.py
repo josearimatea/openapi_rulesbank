@@ -28,10 +28,10 @@ State reads:
 
 State writes:
     reflected_rules (list[dict]) — ReflectedRule dicts, extending each RawRule with:
-                                   confidence  (float 0.0–1.0)
-                                   reasoning   (str — CoT explanation)
-                                   flagged     (bool — True = priority validation)
-                                   rag_context (str — retrieved OpenAPI chunks)
+                                   reflection_confidence  (float 0.0–1.0)
+                                   reflection_reasoning   (str — CoT explanation)
+                                   reflection_flagged     (bool — True = priority validation)
+                                   reflection_rag_context (str — retrieved OpenAPI chunks)
 """
 
 from config import get_logger
@@ -71,6 +71,11 @@ def reflector_node(state: RuleBankState) -> dict:
         logger.warning("Reflector received no raw_rules — returning empty reflected_rules.")
         return {"reflected_rules": []}
 
+    sections_index = {
+        s["section_id"]: s
+        for s in (state.get("parsed_sections", []) or [])
+    }
+
     structured_llm = llm.with_structured_output(ReflectionResult)
     chain = reflector_prompt | structured_llm
 
@@ -78,6 +83,10 @@ def reflector_node(state: RuleBankState) -> dict:
 
     for i, rule in enumerate(raw_rules):
         mapping = rule.get("openapi_mapping", {})
+        section_id = rule.get("section_id", "")
+        section_content = sections_index.get(section_id, {}).get(
+            "content", "Section content not available."
+        )
 
         # Retrieve relevant OpenAPI reference chunks for this rule
         rag_query   = _build_rag_query(rule)
@@ -85,38 +94,50 @@ def reflector_node(state: RuleBankState) -> dict:
 
         logger.debug(
             f"Reflecting rule {i + 1}/{len(raw_rules)} "
-            f"[{rule.get('section_id', '?')}]: {rule.get('rule_text', '')[:60]}"
+            f"[{section_id}]: {rule.get('rule_text', '')[:60]}"
         )
 
         result: ReflectionResult = chain.invoke({
             "openapi_reference_context": rag_context or "No relevant context retrieved.",
-            "section_id":    rule.get("section_id", ""),
+            "section_id":    section_id,
             "section_title": rule.get("section_title", ""),
             "rule_type":     rule.get("rule_type", ""),
             "rule_text":     rule.get("rule_text", ""),
             "openapi_object": mapping.get("openapi_object", ""),
             "openapi_field":  mapping.get("openapi_field", ""),
             "openapi_value":  mapping.get("openapi_value", ""),
+            "section_content": section_content,
         })
 
         # Merge reflection fields into the rule dict → ReflectedRule
         reflected_rule = {
             **rule,
-            "confidence": result.confidence,
-            "reasoning":  result.reasoning,
-            "flagged":    result.flagged,
-            "rag_context": rag_context,
+            "reflection_confidence":  result.reflection_confidence,
+            "reflection_reasoning":   result.reflection_reasoning,
+            "reflection_flagged":     result.reflection_flagged,
+            "reflection_rag_context": rag_context,
+            "split_suggestion":       result.split_suggestion,
+            "discard_suggestion":     result.discard_suggestion,
+            "missing_rules":          result.missing_rules,
         }
         reflected_rules.append(reflected_rule)
 
         logger.debug(
-            f"  → confidence={result.confidence:.2f}  flagged={result.flagged}"
+            f"  → confidence={result.reflection_confidence:.2f}  "
+            f"flagged={result.reflection_flagged}  "
+            f"split={bool(result.split_suggestion)}  "
+            f"discard={result.discard_suggestion}  "
+            f"missing={len(result.missing_rules)}"
         )
 
-    flagged_count = sum(1 for r in reflected_rules if r["flagged"])
+    flagged_count  = sum(1 for r in reflected_rules if r["reflection_flagged"])
+    split_count    = sum(1 for r in reflected_rules if r["split_suggestion"])
+    discard_count  = sum(1 for r in reflected_rules if r["discard_suggestion"])
+    missing_count  = sum(len(r["missing_rules"]) for r in reflected_rules)
     logger.info(
         f"Reflector Node complete — {len(reflected_rules)} rule(s) reflected, "
-        f"{flagged_count} flagged for priority validation."
+        f"{flagged_count} flagged, {split_count} split suggestions, "
+        f"{discard_count} discard suggestions, {missing_count} missing rule(s) identified."
     )
 
     return {"reflected_rules": reflected_rules}

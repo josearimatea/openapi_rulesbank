@@ -7,18 +7,18 @@ with filtered sections ready for the Planner and Extractor nodes.
 No LLM call. No RAG. Purely deterministic text loading and filtering.
 
 HOW IT WORKS:
-    1. Loads the main 3GPP document from a local file path or HTTP URL.
+    1. Loads the main 3GPP document from a local file path.
     2. Splits the document into sections using utils.parsers.parse_sections(),
-       which splits on '## ' headers and keeps only sections that contain
-       OpenAPI-relevant keywords (mapping, yang, template, attribute, openapi, etc.).
+       which splits on '## ' headers and optionally filters sections by keywords
+       (see FILTER_SYMBOLIC_TITLES and FILTER_BY_KEYWORDS in settings.py).
     3. Loads each auxiliary 3GPP document and truncates to 2000 chars each,
        joining them into a single helper_context string.
     4. Reads the local OpenAPI specification snapshot from
        data/references/openapi_reference/ via tools.document_tools.load_openapi_reference().
 
 State reads:
-    main_doc_path        (str)       — local file path or HTTP URL to the main 3GPP spec
-    auxiliary_doc_paths  (list[str]) — local paths or HTTP URLs to auxiliary 3GPP specs
+    main_doc_path        (str)       — local file path to the main 3GPP spec
+    auxiliary_doc_paths  (list[str]) — local file paths to auxiliary 3GPP specs
                                        (empty list if none provided)
 
 State writes:
@@ -48,14 +48,21 @@ def reader_node(state: RuleBankState) -> dict:
 
     # --- Main 3GPP document ---
     # Reads from state["main_doc_path"], set by main.py before the graph runs.
-    # Supports both local file paths and HTTP URLs.
     main_doc = state["main_doc_path"]
-    raw_main = fetch_url(main_doc) if main_doc.startswith("http") else load_markdown(main_doc)
+    raw_main = load_markdown(main_doc)
 
-    # parse_sections() splits by ## headers and keeps only sections that
-    # contain keywords relevant to OpenAPI (mapping, yang, template, etc.)
-    parsed_sections = parse_sections(raw_main)
-    logger.debug(f"Parsed {len(parsed_sections)} relevant sections from main doc.")
+    # parse_sections() splits by ## headers and filters sections (see parsers.py).
+    # Returns both the kept sections and those excluded by the reader-level filters.
+    parsed_sections, excluded_sections_reader = parse_sections(raw_main)
+
+    # Deterministic accounting: total = kept + excluded (verified here, carried to Builder)
+    sections_total = len(parsed_sections) + len(excluded_sections_reader)
+    assert sections_total > 0, "Document produced no sections after splitting."
+    logger.info(
+        f"Reader sections: {sections_total} total = "
+        f"{len(parsed_sections)} for planner + "
+        f"{len(excluded_sections_reader)} excluded by reader"
+    )
 
     # --- Auxiliary 3GPP documents ---
     # Each auxiliary doc is loaded and truncated to 2000 characters to avoid
@@ -63,8 +70,7 @@ def reader_node(state: RuleBankState) -> dict:
     # All docs are joined into a single string separated by a divider.
     helper_parts = []
     for path in state.get("auxiliary_doc_paths", []):
-        content = fetch_url(path) if path.startswith("http") else load_markdown(path)
-        helper_parts.append(content[:2000])
+        helper_parts.append(load_markdown(path)[:2000])
     helper_context = "\n\n---\n\n".join(helper_parts)
     logger.debug(f"Loaded {len(helper_parts)} auxiliary document(s).")
 
@@ -79,7 +85,8 @@ def reader_node(state: RuleBankState) -> dict:
     # Return only the fields this node is responsible for writing.
     # LangGraph merges these into the full shared state automatically.
     return {
-        "parsed_sections": parsed_sections,
-        "helper_context": helper_context,
+        "parsed_sections":          parsed_sections,
+        "excluded_sections_reader": excluded_sections_reader,
+        "helper_context":           helper_context,
         "openapi_reference_context": openapi_reference_context,
     }

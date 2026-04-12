@@ -41,16 +41,18 @@ def should_loop_or_build(state: RuleBankState) -> str:
         reflected_rules   (list[dict]) — total rules entering the validator
         iteration_count   (int)        — how many loops have run so far
     """
-    errors = state.get("validation_errors", [])
-    total = len(state.get("reflected_rules", []))
+    errors    = state.get("validation_errors", [])
+    total     = len(state.get("reflected_rules", []))
     iteration = state.get("iteration_count", 0)
 
-    # Avoid division by zero if no rules were produced
+    # Error rate measures: of the rules attempted this iteration, how many failed?
+    # Denominator is reflected_rules only (not cumulative validated_rules) so the
+    # rate reflects current-iteration quality, not accumulated history.
     error_rate = len(errors) / total if total > 0 else 0.0
 
     logger.info(
         f"Validator result — error rate: {error_rate:.1%} "
-        f"({len(errors)}/{total} rules), iteration: {iteration}/{MAX_ITERATIONS}"
+        f"({len(errors)}/{total} rules this iteration), iteration: {iteration}/{MAX_ITERATIONS}"
     )
 
     if error_rate > VALIDATION_ERROR_THRESHOLD and iteration < MAX_ITERATIONS:

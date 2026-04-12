@@ -11,14 +11,29 @@ Functions:
 """
 
 import re
-from config.settings import FILTER_SYMBOLIC_TITLES
+from config.settings import FILTER_SYMBOLIC_TITLES, FILTER_BY_KEYWORDS
 
 # Keywords used to filter sections relevant to OpenAPI rule extraction.
-# Sections whose text (title + content) does not contain any of these keywords
-# are discarded — they are unlikely to contain mappable OpenAPI rules.
+# Used only when FILTER_BY_KEYWORDS = True in settings.py.
+# Organized by the rule_type each group targets. Add terms after reviewing
+# the target document to avoid discarding valid sections.
 RELEVANT_KEYWORDS = [
-    'template', 'nrm', 'mapping', 'stage',
-    'json', 'yang', 'openapi', 'attribute', 'class'
+    # path_operation — HTTP method mappings to IS operations
+    'operation', 'http', 'method', 'put', 'get', 'post', 'patch', 'delete',
+    'resource', 'uri', 'url', 'path',
+    # schema_property — NRM attribute/data model definitions
+    'attribute', 'property', 'schema', 'type', 'integer', 'string', 'boolean',
+    'nrm', 'class', 'yang', 'template',
+    # path_parameter / query_parameter — URI variables and query string params
+    'parameter', 'query', 'filter', 'scope', 'version',
+    # response — HTTP response codes and payloads
+    'response', 'status',
+    # request_body — payload definitions
+    'request', 'body', 'payload', 'content',
+    # security_scheme — authentication and authorization
+    'security', 'oauth', 'authentication', 'authorization', 'bearer', 'token',
+    # General OpenAPI / 3GPP terms
+    'openapi', 'mapping', 'stage', 'json', 'api',
 ]
 
 
@@ -32,10 +47,9 @@ def _has_real_words(title: str) -> bool:
     return bool(re.search(r'[a-zA-Z]{3,}', title))
 
 
-def parse_sections(md_text: str) -> list[dict]:
+def parse_sections(md_text: str) -> tuple[list[dict], list[dict]]:
     """
-    Splits a Markdown document into sections and returns only those relevant
-    to OpenAPI rule extraction.
+    Splits a Markdown document into sections and separates relevant from excluded.
 
     HOW IT WORKS:
         1. Splits the full document text on '## ' (level-2 headers), which is
@@ -43,18 +57,27 @@ def parse_sections(md_text: str) -> list[dict]:
         2. For each section, separates the first line (title) from the rest (content).
         3. If FILTER_SYMBOLIC_TITLES is True, discards sections whose title contains
            no real words (e.g. cover-page table borders like '+------+---+').
-        4. Filters out sections that contain none of the RELEVANT_KEYWORDS.
-        5. Returns the surviving sections as a list of dicts.
+        4. If FILTER_BY_KEYWORDS is True, discards sections that contain none of the
+           RELEVANT_KEYWORDS. Disabled by default — enable only after validating the
+           keyword list covers all relevant terminology in the target document.
+        5. Returns both the surviving sections and the excluded ones (with reasons).
 
     Returns:
-        list[dict] — each dict has:
+        tuple(kept, excluded) where each element is a list[dict]:
+          kept:
             section_id (str) — sequential index of the section in the document
             title      (str) — the section header text (first line after '## ')
             content    (str) — the body text of the section
+          excluded:
+            section_id (str) — sequential index
+            title      (str) — section header text
+            reason     (str) — "symbolic_title" | "keyword_filter"
     """
     raw_sections = [s.strip() for s in md_text.split('## ') if s.strip()]
 
-    sections = []
+    sections: list[dict] = []
+    excluded: list[dict] = []
+
     for i, section in enumerate(raw_sections):
         lines = section.splitlines()
 
@@ -66,14 +89,18 @@ def parse_sections(md_text: str) -> list[dict]:
 
         # Discard sections with symbolic/non-word titles (e.g. cover-page tables)
         if FILTER_SYMBOLIC_TITLES and not _has_real_words(title):
+            excluded.append({"section_id": str(i), "title": title, "reason": "symbolic_title"})
             continue
 
-        # Keep only sections relevant to OpenAPI rule extraction
-        if any(kw in section.lower() for kw in RELEVANT_KEYWORDS):
-            sections.append({
-                "section_id": str(i),
-                "title": title,
-                "content": content,
-            })
+        # Optionally filter by keywords (disabled by default — see settings.py)
+        if FILTER_BY_KEYWORDS and not any(kw in section.lower() for kw in RELEVANT_KEYWORDS):
+            excluded.append({"section_id": str(i), "title": title, "reason": "keyword_filter"})
+            continue
 
-    return sections
+        sections.append({
+            "section_id": str(i),
+            "title": title,
+            "content": content,
+        })
+
+    return sections, excluded
