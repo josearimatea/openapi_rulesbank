@@ -36,7 +36,9 @@ VALIDATION RULES BY rule_type:
         openapi_field   must contain "in=query"
 
     response:
-        openapi_field   must be a valid HTTP status code string (100–599)
+        openapi_field   must be a 3-digit status code ("200", "404", etc.) or an
+                        OpenAPI wildcard ("1XX"–"5XX"). Rejects combined forms like
+                        "4XX/5XX", "4xx", or "n/a".
 
     request_body:
         openapi_field   must be "content"
@@ -50,9 +52,13 @@ Functions:
     check_mapping_for_type(rule_type, mapping) → list[str]
 """
 
+import re
+
 _VALID_HTTP_METHODS   = {"get", "put", "post", "delete", "patch"}
 _VALID_SECURITY_TYPES = {"oauth2", "http", "apiKey", "openIdConnect"}
-_VALID_STATUS_CODES   = {str(c) for c in range(100, 600)}
+# Accepts 3-digit codes ("200", "404") and OpenAPI wildcards ("1XX"–"5XX").
+# Rejects combined forms ("4XX/5XX"), lowercase wildcards ("4xx"), and "n/a".
+_RESPONSE_FIELD_RE    = re.compile(r"^(\d{3}|[1-5]XX)$")
 
 
 def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
@@ -109,10 +115,10 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
             )
 
     elif rule_type == "response":
-        if field not in _VALID_STATUS_CODES:
+        if not _RESPONSE_FIELD_RE.match(field):
             errors.append(
-                f"openapi_field must be an HTTP status code string "
-                f"('200', '201', '404', etc.), got '{field}'."
+                f"openapi_field must be a 3-digit HTTP status code ('200', '404', etc.) "
+                f"or an OpenAPI wildcard ('1XX'–'5XX'), got '{field}'."
             )
 
     elif rule_type == "request_body":

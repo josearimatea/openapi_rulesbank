@@ -16,7 +16,7 @@
 #   Planner   → extraction_plan
 #   Extractor → raw_rules
 #   Reflector → reflected_rules
-#   Validator → validated_rules, validation_errors
+#   Validator → validated_rules, validation_errors, section_feedback
 #   Builder   → final_output_path
 #   (flow control fields are managed by the graph itself)
 
@@ -46,6 +46,17 @@ class RuleBankState(TypedDict):
     # Each entry is a dict with keys: "section_id", "title", "content".
     # Only sections that match OpenAPI-relevant keywords are kept.
     parsed_sections: list[dict]
+
+    # Sections removed by the reader-level filters (symbolic titles, keyword filter).
+    # Each entry: {section_id, title, reason: "symbolic_title" | "keyword_filter"}.
+    # Carried to the Builder to include in the output for traceability.
+    excluded_sections_reader: list[dict]
+
+    # Sections the Planner received but did not select for extraction.
+    # Each entry: {section_id, title}.
+    # Written by planner_node so the count is always accurate — even in tests
+    # where the extraction_plan is manually overridden after the Planner runs.
+    excluded_sections_planner: list[dict]
 
     # Concatenated summary of auxiliary 3GPP documents.
     # Used as background context by the Planner and Extractor nodes.
@@ -93,9 +104,16 @@ class RuleBankState(TypedDict):
     validated_rules: Annotated[list[dict], operator.add]
 
     # Rules that failed validation, with failure reasons attached.
-    # Used to compute the error rate and decide whether to loop back to Extractor.
-    # Each entry is a dict with keys: "rule" (original rule dict), "reason" (str).
+    # Overwritten each iteration — only the latest iteration's errors are here.
+    # Carry-forward logic in validator_node ensures unaddressed errors are preserved.
+    # Each entry is a ValidationError dict: error_type, stage, section_id, rule, instruction.
     validation_errors: list[dict]
+
+    # Section-level feedback produced by the Validator when it agrees with the
+    # Reflector's missing_rules suggestions. Not tied to any specific failed rule.
+    # Each entry is a SectionFeedback dict: section_id, missing_rules (list[str]).
+    # Overwritten each iteration.
+    section_feedback: list[dict]
 
     # -------------------------------------------------------------------------
     # BUILDER OUTPUT — produced by the Builder Node

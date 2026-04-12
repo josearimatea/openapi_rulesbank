@@ -17,6 +17,14 @@ MODEL HIERARCHY
     ├── section_title   str   — section title, for traceability
     ├── rule_type       str   — path_operation | schema_property | path_parameter |
     │                           query_parameter | response | request_body | security_scheme
+    ├── source_name     str   — name of the specific source element this rule covers:
+    │                           path_operation  → IS operation name  (e.g. "createMOI")
+    │                           schema_property → NRM attribute name (e.g. "nrCellDuId")
+    │                           path_parameter  → path param name    (e.g. "MnSVersion")
+    │                           query_parameter → query param name   (e.g. "scope")
+    │                           response        → IS operation name  (e.g. "getMOIAttributes")
+    │                           request_body    → IS operation name  (e.g. "createMOI")
+    │                           security_scheme → scheme name        (e.g. "OAuth2")
     ├── rule_text       str   — full rule statement extracted from the 3GPP document
     └── openapi_mapping OpenAPIMapping
           ├── openapi_object  str   — OpenAPI object/schema (e.g. "NrCellDu", "paths./nrCellDu/{id}")
@@ -24,18 +32,28 @@ MODEL HIERARCHY
           └── openapi_value   str   — value or constraint  (e.g. "string", "int64", "200")
 
   ReflectedRule(RawRule)
-    ├── confidence   float  — 0.0–1.0; how grounded the rule is in the spec
-    ├── reasoning    str    — CoT explanation from the Reflector
-    ├── flagged      bool   — True if the rule should receive priority validation
-    └── rag_context  str    — Qdrant chunks used to ground the self-reflection
+    ├── reflection_confidence   float      — 0.0–1.0; how grounded the rule is in the spec
+    ├── reflection_reasoning    str        — CoT explanation from the Reflector
+    ├── reflection_flagged      bool       — True if the rule should receive priority validation
+    ├── reflection_rag_context  str        — Qdrant chunks used to ground the self-reflection
+    ├── split_suggestion        str        — suggested split description; empty if none
+    ├── discard_suggestion      bool       — True if Reflector believes the rule should not exist
+    └── missing_rules           list[str]  — rules apparently missing from this section
 
   ValidatedRule(ReflectedRule)
-    └── validation_notes  str  — optional corrections noted during semantic validation
+    ├── validation_notes   str   — optional corrections noted during semantic validation
+    └── validation_passed  bool  — True if Validator approved; False if force-included by Builder
 
   ValidationError  (standalone, not in the inheritance chain)
-    ├── rule   dict  — original rule dict that failed (dict to capture structural failures too)
-    ├── reason str   — why the rule failed; fed back to Extractor on loop-back
-    └── stage  str   — "structural" (Stage 1a/1b) or "semantic" (Stage 2)
+    ├── error_type  str   — 'correction' | 'split' | 'discard'
+    ├── stage       str   — 'structural' | 'semantic'
+    ├── section_id  str   — section this error belongs to
+    ├── rule        dict  — original rule dict that failed
+    └── instruction str   — actionable command for the Extractor
+
+  SectionFeedback  (standalone, not in the inheritance chain)
+    ├── section_id    str        — section that needs additional rules extracted
+    └── missing_rules list[str]  — actionable instructions for rules to extract
 """
 
 from pydantic import BaseModel, Field
@@ -86,6 +104,19 @@ class RawRule(BaseModel):
             "response | request_body | security_scheme"
         )
     )
+    source_name: str = Field(
+        description=(
+            "Name of the specific source element this rule covers. "
+            "Depends on rule_type:\n"
+            "  path_operation  → IS operation name  (e.g. 'createMOI', 'modifyMOIAttributes')\n"
+            "  schema_property → NRM attribute name (e.g. 'nrCellDuId', 'cellLocalId')\n"
+            "  path_parameter  → path param name    (e.g. 'MnSVersion', 'id')\n"
+            "  query_parameter → query param name   (e.g. 'scope', 'filter')\n"
+            "  response        → IS operation name  (e.g. 'getMOIAttributes')\n"
+            "  request_body    → IS operation name  (e.g. 'createMOI')\n"
+            "  security_scheme → scheme name        (e.g. 'OAuth2', 'BearerAuth')"
+        )
+    )
     rule_text: str = Field(
         description="The full rule statement as extracted from the 3GPP document. "
                     "Should be a clear, actionable statement."
@@ -104,23 +135,46 @@ class ReflectedRule(RawRule):
     Consumed by: Validator Node
     """
 
-    confidence: float = Field(
+    reflection_confidence: float = Field(
         ge=0.0, le=1.0,
-        description="Confidence score between 0 and 1. "
+        description="Confidence score between 0 and 1 assigned by the Reflector. "
                     "1.0 = fully grounded in the spec, 0.0 = uncertain or hallucinated."
     )
-    reasoning: str = Field(
-        description="Chain-of-Thought explanation of why the rule was extracted "
-                    "and how confident the model is in its correctness."
+    reflection_reasoning: str = Field(
+        description="Chain-of-Thought explanation produced by the Reflector: why the "
+                    "rule was extracted and how confident the model is in its correctness."
     )
-    flagged: bool = Field(
-        description="True if this rule should receive priority validation, "
-                    "e.g. low confidence, ambiguous mapping, or conflicting signals."
+    reflection_flagged: bool = Field(
+        description="Set by the Reflector. True if this rule should receive priority "
+                    "validation, e.g. low confidence, ambiguous mapping, or conflicting signals."
     )
-    rag_context: str = Field(
+    reflection_rag_context: str = Field(
         default="",
-        description="Relevant context retrieved from Qdrant (3GPP + OpenAPI spec) "
-                    "used to ground the self-reflection."
+        description="Relevant context retrieved from Qdrant (OpenAPI spec) "
+                    "used by the Reflector to ground the self-reflection."
+    )
+    split_suggestion: str = Field(
+        default="",
+        description=(
+            "Reflector suggestion that this rule should be split into multiple rules. "
+            "Empty string if no split is needed. "
+            "Example: 'Split into two rules: one for 400 and one for 500 response codes.'"
+        )
+    )
+    discard_suggestion: bool = Field(
+        default=False,
+        description=(
+            "True if the Reflector believes this rule should not exist — "
+            "e.g. it maps an absence of a construct, which is not a valid OpenAPI rule."
+        )
+    )
+    missing_rules: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Rules that appear to be missing from this section based on its content. "
+            "Each entry is a short actionable description of what should be extracted. "
+            "Example: ['Extract rule for 201 Created response', 'Extract rule for 404 response']"
+        )
     )
 
 
@@ -134,29 +188,75 @@ class ValidatedRule(ReflectedRule):
 
     validation_notes: str = Field(
         default="",
-        description="Optional notes from the validator, e.g. minor corrections "
+        description="Optional notes from the Validator, e.g. minor corrections "
                     "applied during semantic validation."
+    )
+    validation_passed: bool = Field(
+        default=True,
+        description="True if the rule was approved by the Validator Node. "
+                    "False if it was force-included by the Builder at MAX_ITERATIONS "
+                    "after failing validation in every loop-back iteration."
     )
 
 
 class ValidationError(BaseModel):
     """
-    A rule that failed validation, with the failure reason attached.
-    Stored in state['validation_errors'] for loop-back feedback to the Extractor.
+    Feedback from the Validator to the Extractor for a single rule that failed.
+
+    error_type drives what the Extractor must do:
+      'correction' — fix the rule's mapping or rule_text
+      'split'      — break this rule into multiple more specific rules
+      'discard'    — remove this rule entirely (not a valid OpenAPI construct)
 
     Produced by: Validator Node
     Consumed by: conditions.should_loop_or_build() and Extractor (on loop-back)
     """
 
-    rule: dict = Field(
-        description="The original rule dict that failed validation. "
-                    "Stored as dict (not RawRule) so structurally invalid rules "
-                    "can also be captured without triggering a second Pydantic error."
-    )
-    reason: str = Field(
-        description="Description of why the rule failed validation. "
-                    "Passed back to the Extractor as feedback on loop-back."
+    error_type: str = Field(
+        description="'correction' | 'split' | 'discard'"
     )
     stage: str = Field(
-        description="Which validation stage caught the error: 'structural' or 'semantic'."
+        description="'structural' | 'semantic'"
+    )
+    section_id: str = Field(
+        description="section_id this error belongs to. Always populated."
+    )
+    rule: dict = Field(
+        description=(
+            "The original rule dict that failed validation. "
+            "Stored as dict so structurally invalid rules can also be captured."
+        )
+    )
+    instruction: str = Field(
+        description=(
+            "Actionable instruction for the Extractor. Always written as a direct command. "
+            "Examples:\n"
+            "  correction: 'Fix openapi_field to use format parameters[in=query,name=scope]'\n"
+            "  split: 'Split into three rules: one for 400, one for 404, one for 500'\n"
+            "  discard: 'Discard — absence of query parameters is not a valid OpenAPI rule'"
+        )
+    )
+
+
+class SectionFeedback(BaseModel):
+    """
+    Feedback from the Validator about rules that are missing from a section entirely.
+
+    Not tied to any specific rule — instructs the Extractor to extract new rules
+    from scratch for the given section.
+    Produced when the Validator agrees with the Reflector's missing_rules suggestions.
+
+    Produced by: Validator Node
+    Consumed by: Extractor (on loop-back)
+    """
+
+    section_id: str = Field(
+        description="The section that needs additional rules extracted."
+    )
+    missing_rules: list[str] = Field(
+        description=(
+            "List of actionable instructions for rules that should be extracted "
+            "but were not. Each entry is a direct command to the Extractor. "
+            "Example: ['Extract rule for HTTP 201 Created response for PUT operation']"
+        )
     )
