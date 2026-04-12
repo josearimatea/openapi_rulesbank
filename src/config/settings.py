@@ -59,3 +59,16 @@ MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops befo
 # because their cell content contains relevant keywords (e.g. "NRM", "mapping").
 # Set to False to disable and keep all sections regardless of title format.
 FILTER_SYMBOLIC_TITLES = True
+
+# Section parsing — keyword relevance filter
+# When True, parse_sections() keeps only sections whose text contains at least one
+# keyword from RELEVANT_KEYWORDS in parsers.py. Disabled by default because the
+# keyword list may not cover all relevant terminology in a given spec.
+# Enable only after reviewing and validating the keyword list for the target document.
+FILTER_BY_KEYWORDS = False
+
+# Diagnostic mode — when True, the Validator records per-iteration details
+# (reflected rules, validation errors, section feedback, error rate) and the
+# Builder writes a full JSON report to data/outputs/diagnostic/.
+# Set to False in production to avoid the overhead.
+DIAGNOSTIC_MODE = False
