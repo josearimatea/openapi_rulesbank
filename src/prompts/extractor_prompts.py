@@ -121,7 +121,7 @@ RULES ABOUT WHAT NOT TO EXTRACT:
     be mapped in OpenAPI.
   - Do NOT combine multiple HTTP status codes in a single rule.
     Wrong: one rule for "4xx/5xx responses".
-    Right: one rule per code (400, 404, 500, etc.).
+    Right: one rule per code (400, 404, 500, etc.) or one wildcard rule (4XX, 5XX).
   - Do NOT duplicate rules already validated in previous iterations.
 
 OpenAPI reference (use ONLY to understand valid OpenAPI constructs and field names):

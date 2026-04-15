@@ -58,7 +58,13 @@ class ReflectionResult(BaseModel):
         description=(
             "If this rule should be split into multiple more specific rules, "
             "describe exactly how. Empty string if no split needed. "
-            "Example: 'Split into two rules: one for 400 and one for 500'"
+            "Example: 'Split into two rules: one for 400 and one for 500'. "
+            "For a path_operation rule: a split is only valid if the rule combines "
+            "multiple HTTP methods in one field (e.g. 'put, patch'). In that case "
+            "each split target must also be a path_operation, one per method. "
+            "Do NOT suggest splitting a path_operation into request_body, response, "
+            "or other rule_types — those are separate complementary rules, not a "
+            "decomposition of path_operation."
         )
     )
     discard_suggestion: bool = Field(
@@ -66,14 +72,6 @@ class ReflectionResult(BaseModel):
         description=(
             "True if this rule should not exist — e.g. it describes the absence "
             "of a construct, which cannot be mapped to OpenAPI."
-        )
-    )
-    missing_rules: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Rules that appear to be missing from this section. "
-            "Each entry is a short description of what should be extracted. "
-            "Only populate if you can clearly identify missing rules from the section content."
         )
     )
 
@@ -99,9 +97,6 @@ For each rule, reason through the following questions:
   6. Should this rule be discarded entirely?
      Discard if: the rule describes the absence of a construct (e.g. 'no query
      parameters'), or if the rule_text contains no mappable OpenAPI information.
-  7. Are there rules missing from this section that were not extracted?
-     Look at the full section content and identify OpenAPI constructs that should
-     have generated rules but didn't. Only report concrete missing rules, not vague ones.
 
 Then produce:
   - A confidence score (0.0 to 1.0)
@@ -109,7 +104,6 @@ Then produce:
   - A flag indicating whether the rule needs priority validation
   - A split suggestion if the rule should be broken into multiple rules
   - A discard suggestion if the rule should not exist at all
-  - A list of missing rules visible in the section content
 
 Relevant OpenAPI Specification context (retrieved for this rule):
 {openapi_reference_context}
@@ -135,4 +129,114 @@ Apply Chain-of-Thought reasoning and return your assessment.
 reflector_prompt = ChatPromptTemplate.from_messages([
     ("system", _SYSTEM),
     ("human",  _USER),
+])
+
+
+# ---------------------------------------------------------------------------
+# Section-level completeness assessment (Fase 2)
+# Invoked once per section after all individual rules have been reflected.
+# ---------------------------------------------------------------------------
+
+class SectionReflection(BaseModel):
+    """
+    Completeness assessment for a full section — produced once per section
+    after all individual rules have been reflected (Fase 2).
+    """
+
+    missing_rules: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Rules genuinely missing from this section. "
+            "Each entry is a direct instruction for the Extractor. "
+            "Example: 'Extract rule for HTTP 201 Created response for PUT operation'. "
+            "Do NOT include rules already present in current_rules or already_validated_rules."
+        )
+    )
+    reasoning: str = Field(
+        description=(
+            "Why these rules are missing and what in the section content "
+            "supports their existence."
+        )
+    )
+
+
+_SECTION_SYSTEM = """\
+You are an expert in 3GPP technical specifications and OpenAPI design.
+
+Your task is to assess whether all OpenAPI rules have been extracted from a 3GPP section.
+
+You will receive:
+  - The full section content
+  - Rules just extracted and reflected in this iteration (current_rules)
+  - Rules already validated in previous iterations (already_validated_rules)
+  - Rules identified as missing in the previous iteration (previous_missing_rules)
+
+SYSTEMATIC COMPLETENESS CHECK:
+For each rule_type below, check whether the section content implies it should exist.
+If yes, verify that at least one rule of that type is present in current_rules OR
+already_validated_rules. If not present, report it as missing.
+
+  path_operation  → Did the section define an HTTP method (GET, PUT, POST, DELETE, PATCH)
+                    on a resource path? If yes → must have one path_operation rule per method.
+
+  request_body    → Did the section describe a request body, input data structure, or
+                    mandatory payload? If yes → must have at least one request_body rule.
+
+  response        → Did the section describe response codes or response data structures?
+                    If yes → must have one rule per response code or wildcard range (4XX, 5XX).
+                    Check each code mentioned: 200, 201, 204, 4xx/5xx, etc.
+
+  path_parameter  → Did the section describe path variables (e.g. {{id}}, {{version}}, {{className}})?
+                    If yes → must have one path_parameter rule per variable.
+
+  query_parameter → Did the section describe named query parameters (not their absence)?
+                    If yes → must have one query_parameter rule per named parameter.
+
+  schema_property → Did the section describe data model attributes or fields?
+                    If yes → must have one schema_property rule per attribute.
+
+  security_scheme → Did the section describe authentication or security requirements?
+                    If yes → must have at least one security_scheme rule.
+
+Go through this checklist for every rule_type. Do not skip any.
+
+A rule is MISSING if ALL of the following are true:
+  1. The section content clearly implies it should exist as an OpenAPI construct
+  2. It is NOT present in current_rules
+  3. It is NOT present in already_validated_rules
+
+Do NOT suggest:
+  - Rules already covered by current_rules or already_validated_rules
+  - Rules about the absence of a construct (e.g. 'no query parameters')
+  - Vague or non-actionable rules
+  - Rules that duplicate what is already extracted under a different phrasing
+
+For previous_missing_rules: check whether each one was resolved by current_rules.
+Only carry forward what is genuinely still absent.
+
+Be specific and actionable. Each missing rule must be a direct instruction
+to the Extractor describing exactly what to extract and how to map it.
+"""
+
+_SECTION_USER = """\
+Section ID: {section_id}
+
+Section content:
+{section_content}
+
+Rules extracted and reflected in this iteration:
+{current_rules}
+
+Rules already validated in previous iterations (do NOT suggest these as missing):
+{already_validated_rules}
+
+Rules identified as missing in the previous iteration (check if now resolved):
+{previous_missing_rules}
+
+What is still genuinely missing from this section?
+"""
+
+reflector_section_prompt = ChatPromptTemplate.from_messages([
+    ("system", _SECTION_SYSTEM),
+    ("human",  _SECTION_USER),
 ])

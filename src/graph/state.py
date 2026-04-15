@@ -15,8 +15,8 @@
 #   Reader    → parsed_sections, helper_context, openapi_reference_context
 #   Planner   → extraction_plan
 #   Extractor → raw_rules
-#   Reflector → reflected_rules
-#   Validator → validated_rules, validation_errors, section_feedback
+#   Reflector → reflected_rules, section_reflection
+#   Validator → validated_rules, validation_errors, validated_rules_by_section
 #   Builder   → final_output_path
 #   (flow control fields are managed by the graph itself)
 
@@ -105,15 +105,26 @@ class RuleBankState(TypedDict):
 
     # Rules that failed validation, with failure reasons attached.
     # Overwritten each iteration — only the latest iteration's errors are here.
-    # Carry-forward logic in validator_node ensures unaddressed errors are preserved.
     # Each entry is a ValidationError dict: error_type, stage, section_id, rule, instruction.
     validation_errors: list[dict]
 
-    # Section-level feedback produced by the Validator when it agrees with the
-    # Reflector's missing_rules suggestions. Not tied to any specific failed rule.
-    # Each entry is a SectionFeedback dict: section_id, missing_rules (list[str]).
+    # Validator summary keyed by section_id — used by Reflector (Fase 2) to avoid
+    # suggesting as missing rules that were already validated in previous iterations.
+    # Each value: list of compact rule dicts {section_id, rule_type, source_name, rule_text}.
     # Overwritten each iteration.
-    section_feedback: list[dict]
+    validated_rules_by_section: dict[str, list[dict]]
+
+    # Completeness analysis produced by the Reflector (Fase 2), once per section.
+    # Each entry: {section_id, missing_rules: list[str], reasoning: str}.
+    # Written by Reflector. Read by Validator (Stage 3) as analysis input only.
+    # Reset to [] by Builder when advancing to the next section.
+    section_reflection: list[dict]
+
+    # Final missing-rules instruction produced by the Validator after its 3-stage process.
+    # Each entry: {section_id, missing_rules: list[str]}.
+    # Written by Validator. Read by Extractor (on loop-back) and conditions.py.
+    # Reset to [] by Builder when advancing to the next section.
+    validator_section_reflection: list[dict]
 
     # -------------------------------------------------------------------------
     # BUILDER OUTPUT — produced by the Builder Node
@@ -126,12 +137,17 @@ class RuleBankState(TypedDict):
     # FLOW CONTROL — managed by the graph (conditions.py) and main.py
     # -------------------------------------------------------------------------
 
-    # Counts how many times the Extractor → Reflector → Validator loop has run.
-    # Prevents infinite loops if the error rate never drops below the threshold.
-    iteration_count: int
-
-    # Maximum number of allowed loop iterations before forcing forward to Builder.
+    # Maximum number of allowed retry iterations per section before forcing to Builder.
     max_iterations: int
+
+    # Index of the section currently being processed in extraction_plan["sections_to_extract"].
+    # Starts at 0. Advanced by the Builder after each section completes.
+    current_section_idx: int
+
+    # How many times the Extractor has run for the current section.
+    # Incremented by Extractor. Reset to 0 by Builder when advancing to the next section.
+    # Compared against max_iterations by conditions.py to decide whether to retry.
+    section_iteration_count: int
 
     # -------------------------------------------------------------------------
     # TRACEABILITY — reasoning and message history

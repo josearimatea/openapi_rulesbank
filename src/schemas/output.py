@@ -9,11 +9,59 @@ ensuring metadata, summary, and rules are well-formed.
 Classes:
     RulesBankMetadata — provenance and run configuration
     RulesBankSummary  — statistics computed from the validated rules
+    RuleOutput        — clean representation of one rule for the output file
     RulesBank         — top-level model wrapping metadata, summary and rules
+
+Constants:
+    RULE_OUTPUT_FIELDS — set of ValidatedRule fields written to the final JSON;
+                         internal pipeline fields (rag_context, etc.) are excluded
 """
 
 from pydantic import BaseModel, Field
-from schemas.rules import ValidatedRule
+
+
+# ---------------------------------------------------------------------------
+# Fields of ValidatedRule that appear in the rules bank output.
+# Internal pipeline fields (reflection_rag_context, etc.) are intentionally
+# omitted — they are only used within the pipeline, not in the final artifact.
+# ---------------------------------------------------------------------------
+
+RULE_OUTPUT_FIELDS = {
+    "section_id",
+    "section_title",
+    "rule_type",
+    "source_name",
+    "rule_text",
+    "openapi_mapping",
+    "reflection_confidence",
+    "reflection_reasoning",
+    "reflection_flagged",
+    "split_suggestion",
+    "discard_suggestion",
+    "validation_notes",
+    "validation_passed",
+}
+
+
+class RuleOutput(BaseModel):
+    """
+    Representation of a validated rule in the final rules bank JSON.
+    Contains only fields relevant to the user — internal pipeline fields are excluded.
+    """
+
+    section_id:            str   = Field(...)
+    section_title:         str   = Field(...)
+    rule_type:             str   = Field(...)
+    source_name:           str   = Field(...)
+    rule_text:             str   = Field(...)
+    openapi_mapping:       dict  = Field(...)
+    reflection_confidence: float = Field(...)
+    reflection_reasoning:  str   = Field(default="")
+    reflection_flagged:    bool  = Field(default=False)
+    split_suggestion:      str   = Field(default="")
+    discard_suggestion:    bool  = Field(default=False)
+    validation_notes:      str   = Field(default="")
+    validation_passed:     bool  = Field(default=True)
 
 
 class RulesBankMetadata(BaseModel):
@@ -35,7 +83,6 @@ class RulesBankMetadata(BaseModel):
     generated_at:     str = Field(description="ISO-8601 UTC timestamp of generation.")
     model:            str = Field(description="LLM model identifier used for extraction.")
     total_rules:      int = Field(description="Number of validated rules in this file.")
-    iterations_run:   int = Field(description="Number of Extractor→Validator loop iterations.")
 
     # --- Section accounting (integers for easy verification) ---
     sections_total:            int = Field(description="Total sections split from the document before any filtering.")
@@ -68,8 +115,8 @@ class RulesBankSummary(BaseModel):
     Embedded in the output file to give a quick overview of the extraction run.
     """
 
-    total_validated:   int = Field(description="Total number of rules that passed all validation stages.")
-    final_error_count: int = Field(description="Number of rules still failing after the last iteration.")
+    rules_validated_count: int = Field(description="Rules that passed all validation stages (validation_passed=True).")
+    rules_error_count:     int = Field(description="Rules force-included at max iterations with validation_passed=False.")
     rules_by_type:     dict[str, int] = Field(
         description="Count of validated rules per rule_type, sorted by count descending."
     )
@@ -88,9 +135,9 @@ class RulesBank(BaseModel):
     Structure:
         metadata — source document, model, timestamps, section counts
         summary  — rule counts broken down by type and section
-        rules    — full list of ValidatedRule objects
+        rules    — list of RuleOutput objects (user-facing fields only)
     """
 
     metadata: RulesBankMetadata
     summary:  RulesBankSummary
-    rules:    list[ValidatedRule]
+    rules:    list[RuleOutput]

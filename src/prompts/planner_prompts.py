@@ -65,8 +65,10 @@ class ExtractionPlan(BaseModel):
     )
     sections_to_extract: list[SectionPlan] = Field(
         description=(
-            "Ordered list of sections selected for rule extraction. "
-            "Include only sections with priority 'high' or 'medium'. "
+            "Ordered list of ALL sections selected for rule extraction, "
+            "including 'low' priority ones. Exclude only sections that are "
+            "clearly irrelevant (e.g. cover page, table of contents, list of "
+            "abbreviations, normative references). "
             "Ordered from highest to lowest priority."
         )
     )

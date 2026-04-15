@@ -32,13 +32,12 @@ MODEL HIERARCHY
           └── openapi_value   str   — value or constraint  (e.g. "string", "int64", "200")
 
   ReflectedRule(RawRule)
-    ├── reflection_confidence   float      — 0.0–1.0; how grounded the rule is in the spec
-    ├── reflection_reasoning    str        — CoT explanation from the Reflector
-    ├── reflection_flagged      bool       — True if the rule should receive priority validation
-    ├── reflection_rag_context  str        — Qdrant chunks used to ground the self-reflection
-    ├── split_suggestion        str        — suggested split description; empty if none
-    ├── discard_suggestion      bool       — True if Reflector believes the rule should not exist
-    └── missing_rules           list[str]  — rules apparently missing from this section
+    ├── reflection_confidence   float — 0.0–1.0; how grounded the rule is in the spec
+    ├── reflection_reasoning    str   — CoT explanation from the Reflector
+    ├── reflection_flagged      bool  — True if the rule should receive priority validation
+    ├── reflection_rag_context  str   — Qdrant chunks used to ground the self-reflection
+    ├── split_suggestion        str   — suggested split description; empty if none
+    └── discard_suggestion      bool  — True if Reflector believes the rule should not exist
 
   ValidatedRule(ReflectedRule)
     ├── validation_notes   str   — optional corrections noted during semantic validation
@@ -53,7 +52,8 @@ MODEL HIERARCHY
 
   SectionFeedback  (standalone, not in the inheritance chain)
     ├── section_id    str        — section that needs additional rules extracted
-    └── missing_rules list[str]  — actionable instructions for rules to extract
+    ├── missing_rules list[str]  — actionable instructions for rules to extract
+    └── reasoning     str        — why these rules are missing (default: "")
 """
 
 from pydantic import BaseModel, Field
@@ -168,14 +168,6 @@ class ReflectedRule(RawRule):
             "e.g. it maps an absence of a construct, which is not a valid OpenAPI rule."
         )
     )
-    missing_rules: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Rules that appear to be missing from this section based on its content. "
-            "Each entry is a short actionable description of what should be extracted. "
-            "Example: ['Extract rule for 201 Created response', 'Extract rule for 404 response']"
-        )
-    )
 
 
 class ValidatedRule(ReflectedRule):
@@ -240,14 +232,13 @@ class ValidationError(BaseModel):
 
 class SectionFeedback(BaseModel):
     """
-    Feedback from the Validator about rules that are missing from a section entirely.
+    Per-section completeness feedback produced by the Reflector (Fase 2).
+    Instructs the Extractor to extract rules that are missing from a section.
+    Not tied to any specific rule.
 
-    Not tied to any specific rule — instructs the Extractor to extract new rules
-    from scratch for the given section.
-    Produced when the Validator agrees with the Reflector's missing_rules suggestions.
-
-    Produced by: Validator Node
-    Consumed by: Extractor (on loop-back)
+    Produced by: Reflector Node (Fase 2 — section-level completeness check)
+    Consumed by: Validator Node (decides whether to forward to Extractor)
+    Forwarded by: Validator Node → section_feedback state field
     """
 
     section_id: str = Field(
@@ -255,8 +246,12 @@ class SectionFeedback(BaseModel):
     )
     missing_rules: list[str] = Field(
         description=(
-            "List of actionable instructions for rules that should be extracted "
-            "but were not. Each entry is a direct command to the Extractor. "
-            "Example: ['Extract rule for HTTP 201 Created response for PUT operation']"
+            "Actionable instructions for rules to extract. "
+            "Each entry is a direct command to the Extractor. "
+            "Example: 'Extract rule for HTTP 201 Created response for PUT operation'"
         )
+    )
+    reasoning: str = Field(
+        default="",
+        description="Why these rules are missing based on the section content."
     )

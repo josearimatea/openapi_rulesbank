@@ -58,7 +58,7 @@ _VALID_HTTP_METHODS   = {"get", "put", "post", "delete", "patch"}
 _VALID_SECURITY_TYPES = {"oauth2", "http", "apiKey", "openIdConnect"}
 # Accepts 3-digit codes ("200", "404") and OpenAPI wildcards ("1XX"–"5XX").
 # Rejects combined forms ("4XX/5XX"), lowercase wildcards ("4xx"), and "n/a".
-_RESPONSE_FIELD_RE    = re.compile(r"^(\d{3}|[1-5]XX)$")
+_VALID_RESPONSE_FIELD = re.compile(r"^(\d{3}|[1-5]XX)$")
 
 
 def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
@@ -115,9 +115,9 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
             )
 
     elif rule_type == "response":
-        if not _RESPONSE_FIELD_RE.match(field):
+        if not _VALID_RESPONSE_FIELD.match(field):
             errors.append(
-                f"openapi_field must be a 3-digit HTTP status code ('200', '404', etc.) "
+                f"openapi_field must be an HTTP status code string ('200', '404', etc.) "
                 f"or an OpenAPI wildcard ('1XX'–'5XX'), got '{field}'."
             )
 
