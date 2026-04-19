@@ -7,18 +7,16 @@
 #   of the next node to execute. That string must match a key in the routing
 #   map defined in rule_bank_flow.py when add_conditional_edges() is called.
 #
-#   Example in rule_bank_flow.py:
-#       graph.add_conditional_edges(
-#           "validator",
-#           should_loop_or_build,               # ← function defined here
-#           {"extractor": "extractor",           # ← routing map
-#            "builder": "builder"}
-#       )
+# ROUTING LOGIC (per-section loop):
 #
-# ADDING NEW CONDITIONS:
-#   If the pipeline grows (e.g., Planner deciding to skip sections, Reflector
-#   requesting re-extraction), add new routing functions here and wire them
-#   in rule_bank_flow.py.
+#   After Validator → should_retry_section_or_build:
+#       If the current section still has errors (above threshold) or missing rules,
+#       AND the section has not yet exhausted its retry budget → "extractor" (retry).
+#       Otherwise → "builder" (write section results and advance).
+#
+#   After Builder → should_next_section_or_end:
+#       If there are more sections to process → "extractor" (next section).
+#       Otherwise → "end" (pipeline complete).
 
 from config import get_logger
 from config.settings import VALIDATION_ERROR_THRESHOLD, MAX_ITERATIONS
@@ -27,46 +25,96 @@ from graph.state import RuleBankState
 logger = get_logger(__name__)
 
 
-def should_loop_or_build(state: RuleBankState) -> str:
+def should_retry_section_or_build(state: RuleBankState) -> str:
     """
     Called after the Validator Node.
 
-    Computes the validation error rate and decides:
-      - "extractor" → loop back if too many rules failed validation and
-                       the iteration limit has not been reached yet.
-      - "builder"   → proceed to build the final output.
+    Decides whether to retry the current section or pass to the Builder:
+      - "extractor" → retry if error rate exceeds threshold OR missing rules exist,
+                      AND the section has not yet used all its retry attempts.
+      - "builder"   → proceed to write this section's results and advance.
 
     State fields read:
-        validation_errors (list[dict]) — rules that failed validation
-        reflected_rules   (list[dict]) — total rules entering the validator
-        iteration_count   (int)        — how many loops have run so far
+        validation_errors       (list[dict]) — rules that failed validation this attempt
+        reflected_rules         (list[dict]) — rules that entered the validator
+        section_reflection      (list[dict]) — sections with missing rules (Reflector Fase 2)
+        section_iteration_count (int)        — how many times this section has been attempted
+        current_section_idx     (int)        — for logging the current section id
     """
-    errors    = state.get("validation_errors", [])
-    total     = len(state.get("reflected_rules", []))
-    iteration = state.get("iteration_count", 0)
+    # Only correction errors count toward the retry threshold.
+    # Split/discard outcomes are handled via validator_section_reflection.
+    errors             = [
+        e for e in (state.get("validation_errors", []) or [])
+        if e.get("error_type") == "correction"
+    ]
+    section_reflection = state.get("validator_section_reflection", [])
+    total              = len(state.get("reflected_rules", []))
+    section_iter       = state.get("section_iteration_count", 0)
+    current_idx        = state.get("current_section_idx", 0)
 
-    # Error rate measures: of the rules attempted this iteration, how many failed?
-    # Denominator is reflected_rules only (not cumulative validated_rules) so the
-    # rate reflects current-iteration quality, not accumulated history.
-    error_rate = len(errors) / total if total > 0 else 0.0
-
-    logger.info(
-        f"Validator result — error rate: {error_rate:.1%} "
-        f"({len(errors)}/{total} rules this iteration), iteration: {iteration}/{MAX_ITERATIONS}"
+    plan_sections = state.get("extraction_plan", {}).get("sections_to_extract", [])
+    section_id = (
+        plan_sections[current_idx]["section_id"]
+        if current_idx < len(plan_sections) else "?"
     )
 
-    if error_rate > VALIDATION_ERROR_THRESHOLD and iteration < MAX_ITERATIONS:
+    error_rate        = len(errors) / total if total > 0 else 0.0
+    has_missing       = bool(section_reflection)
+    exceeds_threshold = error_rate > VALIDATION_ERROR_THRESHOLD
+
+    logger.info(
+        f"[{section_id}] Attempt {section_iter}/{MAX_ITERATIONS} — "
+        f"error rate: {error_rate:.1%} ({len(errors)}/{total} rules), "
+        f"missing-rule sections: {len(section_reflection)}"
+    )
+
+    if (exceeds_threshold or has_missing) and section_iter < MAX_ITERATIONS:
+        reasons = []
+        if exceeds_threshold:
+            reasons.append(
+                f"error rate {error_rate:.1%} exceeds threshold {VALIDATION_ERROR_THRESHOLD:.0%}"
+            )
+        if has_missing:
+            missing_count = sum(len(sr.get("missing_rules", [])) for sr in section_reflection)
+            reasons.append(f"{missing_count} missing rule(s) identified by Validator")
         logger.warning(
-            f"Error rate {error_rate:.1%} exceeds threshold "
-            f"{VALIDATION_ERROR_THRESHOLD:.0%}. "
-            f"Looping back to Extractor (iteration {iteration + 1})."
+            f"[{section_id}] Retrying ({'; '.join(reasons)}) — attempt {section_iter + 1}."
         )
         return "extractor"
 
-    if iteration >= MAX_ITERATIONS:
+    if section_iter >= MAX_ITERATIONS:
         logger.warning(
-            f"Max iterations ({MAX_ITERATIONS}) reached. "
-            "Proceeding to Builder with current validated rules."
+            f"[{section_id}] Max attempts ({MAX_ITERATIONS}) reached. "
+            "Proceeding to Builder with current results."
         )
 
     return "builder"
+
+
+def should_next_section_or_end(state: RuleBankState) -> str:
+    """
+    Called after the Builder Node.
+
+    Decides whether to process the next section or end the pipeline:
+      - "extractor" → there are more sections to process (current_section_idx was
+                      advanced by Builder and is still within bounds).
+      - "end"       → all sections have been processed.
+
+    State fields read:
+        current_section_idx (int)  — already advanced by Builder
+        extraction_plan     (dict) — sections_to_extract list
+    """
+    current_idx   = state.get("current_section_idx", 0)
+    plan_sections = state.get("extraction_plan", {}).get("sections_to_extract", [])
+    total         = len(plan_sections)
+
+    if current_idx < total:
+        next_section = plan_sections[current_idx]
+        logger.info(
+            f"Advancing to section [{next_section['section_id']}] "
+            f"({current_idx + 1}/{total})."
+        )
+        return "extractor"
+
+    logger.info(f"All {total} section(s) processed. Pipeline complete.")
+    return "end"

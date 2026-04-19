@@ -6,10 +6,11 @@ Constructs and compiles the LangGraph StateGraph for the Rule Bank pipeline.
 FLOW DIAGRAM:
 
   [Reader] → [Planner] → [Extractor] → [Reflector] → [Validator] ──→ [Builder] → END
-                              ↑                            │
-                              │       error rate > threshold
-                              │       AND iterations < max
-                              └──────────── loop back ─────┘
+                              ↑                            │               │
+                              │  error rate > threshold    │    next section available
+                              │  AND section retries < max │               │
+                              └──────── retry section ─────┘               │
+                              └──────────────────── next section ──────────┘
 
 ═══════════════════════════════════════════════════════════════════════════════════
 NODE DESCRIPTIONS
@@ -74,9 +75,9 @@ NODE DESCRIPTIONS
   │ to return one corrected rule per entry without adding new rules.            │
   │                                                                             │
   │ Input  (state):  parsed_sections, extraction_plan, helper_context,          │
-  │                  validation_errors (empty on iter 1), iteration_count       │
+  │                  validation_errors, section_reflection, current_section_idx │
   │ Output (state):  raw_rules — list[RawRule dicts]                            │
-  │                  iteration_count — incremented by 1                         │
+  │                  section_iteration_count — incremented by 1                 │
   └─────────────────────────────────────────────────────────────────────────────┘
 
   ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -125,10 +126,10 @@ NODE DESCRIPTIONS
   │ Output (state):  validated_rules   — list[ValidatedRule dicts] (accumulated)│
   │                  validation_errors — list[ValidationError dicts]            │
   │                                                                             │
-  │ Conditional routing (conditions.should_loop_or_build):                     │
+  │ Conditional routing (conditions.should_retry_section_or_build):            │
   │   error_rate = len(validation_errors) / len(reflected_rules)               │
   │   if error_rate > VALIDATION_ERROR_THRESHOLD (10%)                          │
-  │      AND iteration_count < MAX_ITERATIONS (3) → loop to Extractor           │
+  │      AND section_iteration_count < MAX_ITERATIONS (3) → retry section       │
   │   otherwise → proceed to Builder                                            │
   └─────────────────────────────────────────────────────────────────────────────┘
 
@@ -149,7 +150,8 @@ NODE DESCRIPTIONS
   │               rules    (list of full ValidatedRule dicts)                   │
   │                                                                             │
   │ Input  (state):  validated_rules, validation_errors, main_doc_path,         │
-  │                  iteration_count, extraction_plan                            │
+  │                  section_iteration_count, current_section_idx,              │
+  │                  extraction_plan, parsed_sections                            │
   │ Output (state):  final_output_path — absolute path to the saved JSON file  │
   └─────────────────────────────────────────────────────────────────────────────┘
 """
@@ -157,7 +159,7 @@ NODE DESCRIPTIONS
 from langgraph.graph import StateGraph, END
 from config import get_logger
 from graph.state import RuleBankState
-from graph.conditions import should_loop_or_build
+from graph.conditions import should_retry_section_or_build, should_next_section_or_end
 from nodes.reader import reader_node
 from nodes.planner import planner_node
 from nodes.extractor import extractor_node
@@ -168,33 +170,54 @@ from nodes.builder import builder_node
 logger = get_logger(__name__)
 
 
-def get_compiled_graph():
-    """Builds and returns the compiled LangGraph StateGraph."""
+def _build_graph(entry_point: str):
+    """Shared graph builder used by both get_compiled_graph variants."""
     graph = StateGraph(RuleBankState)
 
     # Add nodes
-    graph.add_node("reader", reader_node)
-    graph.add_node("planner", planner_node)
+    graph.add_node("reader",    reader_node)
+    graph.add_node("planner",   planner_node)
     graph.add_node("extractor", extractor_node)
     graph.add_node("reflector", reflector_node)
     graph.add_node("validator", validator_node)
-    graph.add_node("builder", builder_node)
+    graph.add_node("builder",   builder_node)
 
     # Fixed edges
-    graph.add_edge("reader", "planner")
-    graph.add_edge("planner", "extractor")
+    graph.add_edge("reader",    "planner")
+    graph.add_edge("planner",   "extractor")
     graph.add_edge("extractor", "reflector")
     graph.add_edge("reflector", "validator")
-    graph.add_edge("builder", END)
 
-    # Conditional edge: after Validator, loop back or proceed to Builder
+    # After Validator: retry the current section or proceed to Builder
     graph.add_conditional_edges(
         "validator",
-        should_loop_or_build,
-        {"extractor": "extractor", "builder": "builder"}
+        should_retry_section_or_build,
+        {"extractor": "extractor", "builder": "builder"},
+    )
+
+    # After Builder: process next section or end the pipeline
+    graph.add_conditional_edges(
+        "builder",
+        should_next_section_or_end,
+        {"extractor": "extractor", "end": END},
     )
 
     # Entry point
-    graph.set_entry_point("reader")
+    graph.set_entry_point(entry_point)
 
     return graph.compile()
+
+
+def get_compiled_graph():
+    """Full pipeline starting at the Reader."""
+    return _build_graph("reader")
+
+
+def get_compiled_graph_from_planner():
+    """
+    Pipeline starting at the Planner — Reader is skipped.
+
+    Use when parsed_sections is already populated (e.g. scoped tests that
+    pre-filter sections before invoking the graph).
+    """
+    return _build_graph("planner")

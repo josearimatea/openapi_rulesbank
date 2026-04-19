@@ -80,12 +80,15 @@ def main() -> None:
     # Fields written by nodes (parsed_sections, extraction_plan, etc.) are
     # populated automatically as the graph runs — only inputs are set here.
     initial_state = {
-        "main_doc_path":       main_doc_path,
-        "auxiliary_doc_paths": aux_doc_paths,
-        "validated_rules":     [],   # accumulated via operator.add across iterations
-        "validation_errors":   [],   # reset each iteration by the Validator
-        "iteration_count":     0,    # incremented by the Extractor each loop
-        "messages":            [],   # LLM message history across all nodes
+        "main_doc_path":           main_doc_path,
+        "auxiliary_doc_paths":     aux_doc_paths,
+        "validated_rules":              [],  # accumulated via operator.add across all sections
+        "validation_errors":            [],  # cleared by Builder after each section
+        "section_reflection":           [],  # Reflector Fase 2 output; reset by Builder
+        "validator_section_reflection": [],  # Validator final missing-rules; reset by Builder
+        "current_section_idx":          0,   # advanced by Builder after each section
+        "section_iteration_count":      0,   # reset by Builder after each section
+        "messages":                     [],  # LLM message history across all nodes
     }
 
     # Compile and run the full Reader→Planner→Extractor→Reflector→Validator→Builder graph

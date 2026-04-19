@@ -1,13 +1,15 @@
 # src/nodes/extractor.py
 
 """
-Extractor Node: extracts raw OpenAPI rules from each 3GPP section guided
+Extractor Node: extracts raw OpenAPI rules from the current section guided
 by the Planner's extraction plan.
 
-LLM call: yes (1 call per section). RAG: yes (1 query per section via Qdrant).
+LLM call: yes (1 call per section attempt). RAG: yes (1 query per section via Qdrant).
 
 HOW IT WORKS:
-    Iterates over sections in extraction_plan["sections_to_extract"]. For each:
+    Processes ONE section per call — the one at current_section_idx in the plan.
+
+    First attempt (section_iteration_count == 0):
       1. Retrieves relevant OpenAPI reference chunks from Qdrant via RAG
          (query: section_title — extraction_focus).
       2. Invokes the LLM with the section content, RAG context, and helper context.
@@ -15,28 +17,26 @@ HOW IT WORKS:
          the OpenAPI construct (path_operation, schema_property, path_parameter,
          query_parameter, response, request_body, security_scheme).
 
-    The prompt enforces: one rule per HTTP method (never combined), extract ONLY
-    from section content (not from the OpenAPI reference), and use the OpenAPI
-    reference chunks ONLY to understand valid construct names and field formats.
+    Retry (section_iteration_count > 0, validation_errors or section_reflection not empty):
+      - LLM receives a CORRECTION TASK listing failed rules and missing rules.
+      - Only acts on what is listed — does not re-extract already-validated rules.
 
-ON LOOP-BACK (validation_errors or section_feedback not empty):
-    Only sections that appear in validation_errors or section_feedback are
-    re-processed (not all sections). The LLM receives a CORRECTION TASK listing:
-      - Failed rules with their error_type and instruction (correction/split/discard)
-      - Missing rules from section_feedback to extract from scratch
+    The prompt enforces: one rule per HTTP method (never combined), extract ONLY
+    from section content (not from the OpenAPI reference).
 
 State reads:
-    parsed_sections   (list[dict]) — full section content from reader_node
-    extraction_plan   (dict)       — sections_to_extract from planner_node
-    helper_context    (str)        — auxiliary 3GPP documents context
-    validation_errors (list[dict]) — failed rules from previous iteration (empty on iter 1)
-    section_feedback  (list[dict]) — missing-rules feedback from Validator (empty on iter 1)
-    iteration_count   (int)        — current loop iteration number
+    parsed_sections         (list[dict]) — full section content from reader_node
+    extraction_plan         (dict)       — sections_to_extract from planner_node
+    helper_context          (str)        — auxiliary 3GPP documents context
+    validation_errors             (list[dict]) — correction errors from Validator (empty on first)
+    validator_section_reflection  (list[dict]) — missing-rules decided by Validator (empty on first)
+    current_section_idx     (int)        — index of the section to process
+    section_iteration_count (int)        — how many times this section has been attempted
 
 State writes:
-    raw_rules       (list[dict]) — RawRule dicts (section_id, section_title, rule_type,
-                                   source_name, rule_text, openapi_mapping{object, field, value})
-    iteration_count (int)        — incremented by 1
+    raw_rules               (list[dict]) — RawRule dicts (section_id, section_title, rule_type,
+                                          source_name, rule_text, openapi_mapping{object, field, value})
+    section_iteration_count (int)        — incremented by 1
 """
 
 from config import get_logger
@@ -55,39 +55,20 @@ def _build_sections_index(parsed_sections: list[dict]) -> dict[str, dict]:
     return {s["section_id"]: s for s in parsed_sections}
 
 
-def _get_sections_to_reprocess(
-    plan_sections: list[dict],
-    validation_errors: list[dict],
-    section_feedback: list[dict],
-) -> list[dict]:
-    """
-    On loop-back, returns only the plan sections that had validation errors
-    or that appear in section_feedback (missing rules to extract).
-    Preserves original plan order.
-    """
-    failed_ids   = {
-        err.get("section_id") or err.get("rule", {}).get("section_id")
-        for err in validation_errors
-    }
-    feedback_ids = {sf.get("section_id") for sf in section_feedback}
-    reprocess_ids = failed_ids | feedback_ids
-    return [s for s in plan_sections if s["section_id"] in reprocess_ids]
-
-
 def _build_correction_task(
     validation_errors: list[dict],
-    section_feedback: list[dict],
+    section_reflection: list[dict],
 ) -> str:
     """
-    Returns a correction instruction for loop-back iterations.
+    Returns a correction instruction for retry attempts on a section.
     Lists failed rules and missing rules so the LLM can act on each specifically.
-    Returns "" on first iteration (both inputs empty).
+    Returns "" on the first attempt (both inputs empty).
     """
-    if not validation_errors and not section_feedback:
+    if not validation_errors and not section_reflection:
         return ""
 
     lines = [
-        "CORRECTION TASK — this is a loop-back iteration.",
+        "CORRECTION TASK — this is a retry attempt for this section.",
         "Re-extract ONLY what is listed below. Follow each instruction exactly.",
         "You may produce more or fewer rules than before — quality over quantity.",
         "Do NOT re-extract rules that were already validated successfully.",
@@ -107,99 +88,106 @@ def _build_correction_task(
                 f"     instruction        : {err.get('instruction', '?')}"
             )
 
-    if section_feedback:
+    if section_reflection:
         lines.append("")
-        lines.append("RULES TO EXTRACT FROM SCRATCH (missing rules identified by Validator):")
-        for sf in section_feedback:
-            for j, missing in enumerate(sf.get("missing_rules", []), start=1):
-                lines.append(f"  [{sf['section_id']}] {j}. {missing}")
+        lines.append("RULES TO EXTRACT FROM SCRATCH (missing rules identified by Reflector):")
+        for sr in section_reflection:
+            for j, missing in enumerate(sr.get("missing_rules", []), start=1):
+                lines.append(f"  [{sr['section_id']}] {j}. {missing}")
 
     return "\n".join(lines)
 
 
 def extractor_node(state: RuleBankState) -> dict:
     """
-    Iterates over sections in the extraction plan and extracts raw OpenAPI rules.
+    Processes the current section (current_section_idx) from the extraction plan.
 
-    For each section:
-      1. Retrieves RAG chunks from the OpenAPI reference collection.
-      2. Calls the LLM with the section content + RAG context.
-      3. Collects RawRule objects into raw_rules.
+    First attempt (section_iteration_count == 0): fresh extraction.
+    Retry (section_iteration_count > 0): correction extraction with CORRECTION TASK prompt.
 
-    On loop-back (validation_errors or section_feedback not empty):
-      - Only re-processes sections that had failing rules or missing-rules feedback.
-      - Instructs the LLM to correct/split/discard specific failed rules and
-        extract any rules identified as missing.
+    After the section's retry loop ends, the Builder advances current_section_idx
+    and resets section_iteration_count so the next call here starts a fresh section.
     """
     logger.info("Extractor Node started.")
 
-    sections_index    = _build_sections_index(state["parsed_sections"])
-    all_plan_sections = state["extraction_plan"]["sections_to_extract"]
-    helper_context    = state.get("helper_context", "") or "No auxiliary context provided."
-    validation_errors = state.get("validation_errors", []) or []
-    section_feedback  = state.get("section_feedback",  []) or []
-    iteration_count   = state.get("iteration_count", 0) or 0
+    sections_index          = _build_sections_index(state["parsed_sections"])
+    all_plan_sections       = state["extraction_plan"]["sections_to_extract"]
+    helper_context          = state.get("helper_context", "") or "No auxiliary context provided."
+    # correction + split only — discard errors need no Extractor action
+    validation_errors  = [
+        e for e in (state.get("validation_errors", []) or [])
+        if e.get("error_type") != "discard"
+    ]
+    # Final missing-rules decided by the Validator (written to validator_section_reflection)
+    section_reflection = state.get("validator_section_reflection", []) or []
+    section_iteration_count = state.get("section_iteration_count", 0) or 0
+    current_section_idx     = state.get("current_section_idx", 0) or 0
 
-    # On loop-back: restrict to sections with errors or missing-rules feedback
-    if validation_errors or section_feedback:
-        plan_sections   = _get_sections_to_reprocess(
-            all_plan_sections, validation_errors, section_feedback
+    if current_section_idx >= len(all_plan_sections):
+        logger.error(
+            f"current_section_idx={current_section_idx} out of bounds "
+            f"(plan has {len(all_plan_sections)} sections). Returning empty raw_rules."
         )
-        correction_task = _build_correction_task(validation_errors, section_feedback)
+        return {
+            "raw_rules":               [],
+            "section_iteration_count": section_iteration_count + 1,
+        }
+
+    plan_section = all_plan_sections[current_section_idx]
+    section_id   = plan_section["section_id"]
+
+    if validation_errors or section_reflection:
+        correction_task = _build_correction_task(validation_errors, section_reflection)
         logger.info(
-            f"Loop-back iteration {iteration_count + 1} — "
+            f"Retry {section_iteration_count + 1} for [{section_id}] — "
             f"{len(validation_errors)} error(s), "
-            f"{sum(len(sf.get('missing_rules', [])) for sf in section_feedback)} missing rule(s), "
-            f"re-processing {len(plan_sections)} section(s)."
+            f"{sum(len(sr.get('missing_rules', [])) for sr in section_reflection)} missing rule(s)."
         )
     else:
-        plan_sections   = all_plan_sections
         correction_task = ""
 
     structured_llm = llm.with_structured_output(SectionRules)
     chain = extractor_prompt | structured_llm
 
-    raw_rules: list[dict] = []
-
-    for plan_section in plan_sections:
-        section_id    = plan_section["section_id"]
-        section_title = plan_section["title"]
-        focus         = plan_section["extraction_focus"]
-
-        section = sections_index.get(section_id)
-        if section is None:
-            logger.warning(
-                f"Section '{section_id}' in plan not found in parsed_sections — skipping."
-            )
-            continue
-
-        # Retrieve relevant OpenAPI spec chunks for this section via RAG
-        rag_query = f"{section_title} — {focus}"
-        openapi_reference_overview = search_openapi_reference(rag_query)
-
-        logger.debug(
-            f"Extracting [{section_id}] '{section_title}' (priority={plan_section['priority']})."
+    section = sections_index.get(section_id)
+    if section is None:
+        logger.warning(
+            f"Section '{section_id}' not found in parsed_sections — returning empty raw_rules."
         )
+        return {
+            "raw_rules":               [],
+            "section_iteration_count": section_iteration_count + 1,
+        }
 
-        result: SectionRules = chain.invoke({
-            "section_id":                 section_id,
-            "section_title":              section_title,
-            "extraction_focus":           focus,
-            "section_content":            section["content"],
-            "openapi_reference_overview": openapi_reference_overview,
-            "helper_context":             helper_context,
-            "correction_task":            correction_task,
-        })
+    section_title = plan_section["title"]
+    focus         = plan_section["extraction_focus"]
 
-        logger.debug(f"  → {len(result.rules)} rule(s) extracted from [{section_id}].")
-        raw_rules.extend([rule.model_dump() for rule in result.rules])
+    # Retrieve relevant OpenAPI spec chunks for this section via RAG
+    rag_query = f"{section_title} — {focus}"
+    openapi_reference_overview = search_openapi_reference(rag_query)
 
+    logger.debug(
+        f"Extracting [{section_id}] '{section_title}' "
+        f"(priority={plan_section['priority']}, attempt={section_iteration_count + 1})."
+    )
+
+    result: SectionRules = chain.invoke({
+        "section_id":                 section_id,
+        "section_title":              section_title,
+        "extraction_focus":           focus,
+        "section_content":            section["content"],
+        "openapi_reference_overview": openapi_reference_overview,
+        "helper_context":             helper_context,
+        "correction_task":            correction_task,
+    })
+
+    raw_rules = [rule.model_dump() for rule in result.rules]
     logger.info(
-        f"Extractor Node complete — {len(raw_rules)} raw rule(s) from "
-        f"{len(plan_sections)} section(s)."
+        f"Extractor Node complete — {len(raw_rules)} raw rule(s) from [{section_id}] "
+        f"(section attempt {section_iteration_count + 1})."
     )
 
     return {
-        "raw_rules":       raw_rules,
-        "iteration_count": iteration_count + 1,
+        "raw_rules":               raw_rules,
+        "section_iteration_count": section_iteration_count + 1,
     }

@@ -4,40 +4,49 @@
 Reflector Node: applies Chain-of-Thought self-reflection over each raw rule
 produced by the Extractor before passing them to the Validator.
 
-LLM call: yes (1 call per rule). RAG: yes (1 query per rule via Qdrant).
+LLM call: yes (1 call per rule + 1 per section for Fase 2). RAG: yes (1 query per rule).
 
 HOW IT WORKS:
-    For each RawRule:
-      1. Builds a RAG query from rule_text + openapi_object + openapi_field.
-      2. Retrieves relevant OpenAPI reference chunks from Qdrant via
-         search_openapi_reference() to ground the assessment.
-      3. Invokes the LLM with the rule fields (including rule_type) and the
-         retrieved context. The LLM answers 4 CoT questions:
-           - Is the rule grounded in the section content?
-           - Is the openapi_mapping (object, field, value) correct?
-           - Does the OpenAPI reference context confirm or contradict it?
-           - How confident is the model in this rule?
-      4. Merges the ReflectionResult (confidence, reasoning, flagged) into
-         the rule dict to produce a ReflectedRule.
+    Fase 1 — Per-rule reflection:
+      For each RawRule:
+        1. Builds a RAG query from rule_text + openapi_object + openapi_field.
+        2. Retrieves relevant OpenAPI reference chunks from Qdrant via
+           search_openapi_reference() to ground the assessment.
+        3. Invokes the LLM with the rule fields (including rule_type) and the
+           retrieved context. The LLM answers 6 CoT questions and returns
+           confidence, reasoning, flagged, split_suggestion, discard_suggestion.
+        4. Merges the ReflectionResult into the rule dict → ReflectedRule.
+
+    Fase 2 — Section-level completeness:
+      After all rules are reflected, one LLM call per section checks whether
+      any rules are genuinely missing from the section content. Produces a
+      section_reflection list that the Extractor uses on loop-back.
 
     Rules with confidence < 0.7 or ambiguous mappings should be flagged by
     the LLM for priority scrutiny in the Validator (enforced via prompt).
 
 State reads:
-    raw_rules (list[dict]) — RawRule dicts from extractor_node
+    raw_rules                  (list[dict]) — RawRule dicts from extractor_node
+    parsed_sections            (list[dict]) — used to retrieve section content
+    validated_rules_by_section (dict)       — already-validated rules per section
+    section_reflection         (list[dict]) — previous iteration's missing rules
 
 State writes:
-    reflected_rules (list[dict]) — ReflectedRule dicts, extending each RawRule with:
-                                   reflection_confidence  (float 0.0–1.0)
-                                   reflection_reasoning   (str — CoT explanation)
-                                   reflection_flagged     (bool — True = priority validation)
-                                   reflection_rag_context (str — retrieved OpenAPI chunks)
+    reflected_rules   (list[dict]) — ReflectedRule dicts extending each RawRule with:
+                                     reflection_confidence, reflection_reasoning,
+                                     reflection_flagged, reflection_rag_context,
+                                     split_suggestion, discard_suggestion
+    section_reflection (list[dict]) — SectionFeedback dicts for sections with
+                                      genuinely missing rules (Fase 2 output)
 """
 
 from config import get_logger
 from config.llm_config import llm
 from graph.state import RuleBankState
-from prompts.reflector_prompts import ReflectionResult, reflector_prompt
+from prompts.reflector_prompts import (
+    ReflectionResult, SectionReflection,
+    reflector_prompt, reflector_section_prompt,
+)
 from tools.rag_tools import search_openapi_reference
 
 logger = get_logger(__name__)
@@ -58,10 +67,11 @@ def _build_rag_query(rule: dict) -> str:
 
 def reflector_node(state: RuleBankState) -> dict:
     """
-    Applies CoT self-reflection to each raw rule and produces reflected_rules.
+    Fase 1: CoT self-reflection for each raw rule → reflected_rules.
+    Fase 2: section-level completeness check → section_reflection.
 
-    One LLM call is made per rule. Rules with confidence < 0.7 or ambiguous
-    mappings are automatically flagged for priority validation.
+    One LLM call is made per rule (Fase 1), then one call per section (Fase 2).
+    Rules with confidence < 0.7 or ambiguous mappings are flagged for priority validation.
     """
     logger.info("Reflector Node started.")
 
@@ -69,13 +79,16 @@ def reflector_node(state: RuleBankState) -> dict:
 
     if not raw_rules:
         logger.warning("Reflector received no raw_rules — returning empty reflected_rules.")
-        return {"reflected_rules": []}
+        return {"reflected_rules": [], "section_reflection": []}
 
     sections_index = {
         s["section_id"]: s
         for s in (state.get("parsed_sections", []) or [])
     }
 
+    # -------------------------------------------------------------------------
+    # Fase 1 — Per-rule reflection
+    # -------------------------------------------------------------------------
     structured_llm = llm.with_structured_output(ReflectionResult)
     chain = reflector_prompt | structured_llm
 
@@ -118,7 +131,6 @@ def reflector_node(state: RuleBankState) -> dict:
             "reflection_rag_context": rag_context,
             "split_suggestion":       result.split_suggestion,
             "discard_suggestion":     result.discard_suggestion,
-            "missing_rules":          result.missing_rules,
         }
         reflected_rules.append(reflected_rule)
 
@@ -126,18 +138,81 @@ def reflector_node(state: RuleBankState) -> dict:
             f"  → confidence={result.reflection_confidence:.2f}  "
             f"flagged={result.reflection_flagged}  "
             f"split={bool(result.split_suggestion)}  "
-            f"discard={result.discard_suggestion}  "
-            f"missing={len(result.missing_rules)}"
+            f"discard={result.discard_suggestion}"
         )
 
-    flagged_count  = sum(1 for r in reflected_rules if r["reflection_flagged"])
-    split_count    = sum(1 for r in reflected_rules if r["split_suggestion"])
-    discard_count  = sum(1 for r in reflected_rules if r["discard_suggestion"])
-    missing_count  = sum(len(r["missing_rules"]) for r in reflected_rules)
+    flagged_count = sum(1 for r in reflected_rules if r["reflection_flagged"])
+    split_count   = sum(1 for r in reflected_rules if r["split_suggestion"])
+    discard_count = sum(1 for r in reflected_rules if r["discard_suggestion"])
     logger.info(
-        f"Reflector Node complete — {len(reflected_rules)} rule(s) reflected, "
+        f"Reflector Fase 1 complete — {len(reflected_rules)} rule(s) reflected, "
         f"{flagged_count} flagged, {split_count} split suggestions, "
-        f"{discard_count} discard suggestions, {missing_count} missing rule(s) identified."
+        f"{discard_count} discard suggestions."
     )
 
-    return {"reflected_rules": reflected_rules}
+    # -------------------------------------------------------------------------
+    # Fase 2 — Section-level completeness check
+    # -------------------------------------------------------------------------
+    already_validated_by_section: dict[str, list[dict]] = (
+        state.get("validated_rules_by_section", {}) or {}
+    )
+    previous_section_reflection: list[dict] = (
+        state.get("section_reflection", []) or []
+    )
+    previous_missing_by_section: dict[str, list[str]] = {
+        sr["section_id"]: sr.get("missing_rules", [])
+        for sr in previous_section_reflection
+    }
+
+    # Build compact summaries of rules reflected in this iteration, per section
+    sections_in_this_iteration: dict[str, list[str]] = {}
+    for r in reflected_rules:
+        sid   = r.get("section_id", "")
+        entry = f"[{r['rule_type']}] {r.get('source_name', '')}: {r.get('rule_text', '')[:80]}"
+        sections_in_this_iteration.setdefault(sid, []).append(entry)
+
+    section_chain = reflector_section_prompt | llm.with_structured_output(SectionReflection)
+
+    section_reflection: list[dict] = []
+
+    for section_id, current_rule_lines in sections_in_this_iteration.items():
+        section = sections_index.get(section_id, {})
+        section_content = section.get("content", "Section content not available.")
+
+        already_validated = already_validated_by_section.get(section_id, [])
+        already_validated_str = "\n".join(
+            f"  [{r.get('rule_type', '?')}] {r.get('source_name', '')}: {r.get('rule_text', '')[:80]}"
+            for r in already_validated
+        ) or "None"
+
+        previous_missing = previous_missing_by_section.get(section_id, [])
+        previous_missing_str = "\n".join(
+            f"  - {m}" for m in previous_missing
+        ) or "None"
+
+        logger.debug(f"Reflector Fase 2 — section [{section_id}]")
+
+        result: SectionReflection = section_chain.invoke({
+            "section_id":            section_id,
+            "section_content":       section_content,
+            "current_rules":         "\n".join(current_rule_lines),
+            "already_validated_rules": already_validated_str,
+            "previous_missing_rules":  previous_missing_str,
+        })
+
+        if result.missing_rules:
+            logger.debug(
+                f"  → {len(result.missing_rules)} missing rule(s) identified in [{section_id}]"
+            )
+            section_reflection.append({
+                "section_id":    section_id,
+                "missing_rules": result.missing_rules,
+                "reasoning":     result.reasoning,
+            })
+
+    logger.info(
+        f"Reflector Fase 2 complete — "
+        f"{len(section_reflection)} section(s) with missing rules identified."
+    )
+
+    return {"reflected_rules": reflected_rules, "section_reflection": section_reflection}
