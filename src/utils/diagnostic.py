@@ -34,25 +34,31 @@ class DiagnosticCollector:
 
     def record_iteration(
         self,
-        iteration_num: int,
-        reflected_rules: list[dict],
-        validation_errors: list[dict],
-        validated_rules: list[dict],
-        section_feedback: list[dict],
-        error_rate: float,
+        iteration_num:                  int,
+        reflected_rules:                list[dict],
+        validation_errors:              list[dict],
+        validated_rules:                list[dict],
+        section_feedback:               list[dict],
+        reflector_section_reflection:   list[dict],
+        validator_section_reflection:   list[dict],
+        error_rate:                     float,
     ) -> None:
         """
         Records a snapshot of one Validator run.
 
         Args:
-            iteration_num    : current iteration number (state["iteration_count"])
-            reflected_rules  : rules entering the Validator this iteration
-            validation_errors: rules that failed (ValidationError dicts)
-            validated_rules  : rules that passed (ValidatedRule dicts)
-            section_feedback : SectionFeedback dicts produced this iteration
-            error_rate       : fraction of reflected_rules that failed
+            iteration_num                : section_iteration_count for this attempt
+            reflected_rules              : rules entering the Validator this iteration
+            validation_errors            : rules that failed (ValidationError dicts)
+            validated_rules              : rules that passed (ValidatedRule dicts)
+            section_feedback             : unused legacy field (always [])
+            reflector_section_reflection : Reflector Fase 2 missing-rules analysis (input to Validator)
+            validator_section_reflection : Validator final missing-rules decision (output to Extractor)
+            error_rate                   : fraction of reflected_rules that failed
         """
-        # Build an index so each rule can be matched to its error (if any)
+        # Build an error index keyed by (section_id, rule_type, source_name, openapi_field)
+        # to correctly distinguish rules with same type but different fields
+        # (e.g. response 200 vs response 4XX — same type/source but different field).
         errors_by_key: dict[tuple, dict] = {}
         for err in validation_errors:
             rule = err.get("rule", {})
@@ -60,24 +66,32 @@ class DiagnosticCollector:
                 err.get("section_id") or rule.get("section_id", ""),
                 rule.get("rule_type", ""),
                 rule.get("source_name", ""),
+                rule.get("openapi_mapping", {}).get("openapi_field", ""),
             )
             errors_by_key[key] = err
 
         rules_detail = []
         for rule in reflected_rules:
-            key = (rule.get("section_id", ""), rule.get("rule_type", ""), rule.get("source_name", ""))
+            key = (
+                rule.get("section_id", ""),
+                rule.get("rule_type", ""),
+                rule.get("source_name", ""),
+                rule.get("openapi_mapping", {}).get("openapi_field", ""),
+            )
             err = errors_by_key.get(key)
             rules_detail.append({
-                "section_id":  rule.get("section_id"),
-                "rule_type":   rule.get("rule_type"),
-                "source_name": rule.get("source_name"),
-                "rule_text":   rule.get("rule_text", "")[:120],
+                "section_id":    rule.get("section_id"),
+                "rule_type":     rule.get("rule_type"),
+                "source_name":   rule.get("source_name"),
+                "openapi_field": rule.get("openapi_mapping", {}).get("openapi_field", ""),
+                "rule_text":     rule.get("rule_text", "")[:120],
                 "reflector": {
                     "confidence":         rule.get("reflection_confidence"),
                     "flagged":            rule.get("reflection_flagged"),
+                    "reasoning":          rule.get("reflection_reasoning", ""),
+                    "rag_context":        rule.get("reflection_rag_context", "")[:200],
                     "split_suggestion":   rule.get("split_suggestion", ""),
                     "discard_suggestion": rule.get("discard_suggestion", False),
-                    "missing_rules":      rule.get("missing_rules", []),
                 },
                 "validator": {
                     "passed":      err is None,
@@ -88,13 +102,14 @@ class DiagnosticCollector:
             })
 
         self.iterations.append({
-            "iteration":        iteration_num,
-            "total_reflected":  len(reflected_rules),
-            "total_validated":  len(validated_rules),
-            "total_errors":     len(validation_errors),
-            "error_rate":       round(error_rate, 4),
-            "section_feedback": section_feedback,
-            "rules":            rules_detail,
+            "iteration":                    iteration_num,
+            "total_reflected":              len(reflected_rules),
+            "total_validated":              len(validated_rules),
+            "total_errors":                 len(validation_errors),
+            "error_rate":                   round(error_rate, 4),
+            "reflector_section_reflection": reflector_section_reflection,
+            "validator_section_reflection": validator_section_reflection,
+            "rules":                        rules_detail,
         })
 
     def save(self, doc_stem: str) -> str:

@@ -23,18 +23,23 @@ from graph.rule_bank_flow import get_compiled_graph
 
 
 @pytest.fixture(scope="module")
-def pipeline_output():
+def pipeline_output(qdrant):
     """
     Runs the full pipeline once and returns the parsed output JSON.
     scope="module" ensures the pipeline runs only once for all tests in this file.
+    Depends on the session-scoped `qdrant` fixture (tests/conftest.py) which
+    ensures the Qdrant container is running before the pipeline is invoked.
     """
     initial_state = {
-        "main_doc_path":       os.path.abspath(TSPEC_DATA_TEST_FILE),
-        "auxiliary_doc_paths": [],
-        "validated_rules":     [],
-        "validation_errors":   [],
-        "iteration_count":     0,
-        "messages":            [],
+        "main_doc_path":           os.path.abspath(TSPEC_DATA_TEST_FILE),
+        "auxiliary_doc_paths":     [],
+        "validated_rules":              [],
+        "validation_errors":            [],
+        "section_reflection":           [],
+        "validator_section_reflection": [],
+        "current_section_idx":          0,
+        "section_iteration_count":      0,
+        "messages":                     [],
     }
 
     pipeline = get_compiled_graph()
@@ -60,7 +65,7 @@ def test_metadata_fields(pipeline_output):
     """All required metadata fields are present."""
     meta = pipeline_output["metadata"]
     required = (
-        "source_document", "generated_at", "model", "total_rules", "iterations_run",
+        "source_document", "generated_at", "model", "total_rules",
         "sections_total", "sections_for_planner", "sections_planned", "sections_with_rules",
         "excluded_by_reader_count", "excluded_by_planner_count",
         "excluded_by_reader", "excluded_by_planner",
@@ -100,7 +105,7 @@ def test_produces_rules(pipeline_output):
 
     assert len(rules) > 0, "Pipeline produced no rules."
     assert meta["total_rules"]          == len(rules)
-    assert summary["total_validated"]   == len(rules)
+    assert summary["rules_validated_count"] + summary["rules_error_count"] == len(rules)
 
 
 @pytest.mark.integration
