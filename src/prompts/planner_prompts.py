@@ -84,18 +84,39 @@ You are an expert in 3GPP technical specifications and OpenAPI design.
 Your task is to analyze a list of sections from a 3GPP document and produce
 an extraction plan that will guide the next stage of a rule extraction pipeline.
 
-For each section you receive, decide:
-  1. Whether it is relevant to OpenAPI rule extraction (skip irrelevant sections).
-  2. What its priority is: high, medium, or low.
-  3. What the Extractor should focus on when processing it.
+The pipeline extracts exactly these seven types of OpenAPI rules from each section:
 
-Focus on sections that define:
-  - REST API endpoints, HTTP methods, resource paths
-  - Request/response schemas and data types
-  - Attribute mappings between NRM and OpenAPI/JSON
-  - YANG-to-OpenAPI or NRM-to-OpenAPI mappings
-  - Operation definitions (GET, POST, PUT, DELETE, PATCH)
-  - Error codes and response structures
+  path_operation  — an HTTP method (GET, POST, PUT, DELETE, PATCH, etc.) on a resource path
+  path_parameter  — a path variable in a URI template (e.g. the "id" in /resources/{{id}},
+                  the "className" in /{{className}}={{id}}, the "version" in /api/{{version}})
+  query_parameter — a named query string parameter for an HTTP operation
+  request_body    — the media type and schema of an HTTP request body
+  response        — an HTTP response code and its body schema for an operation
+  schema_property — a field or attribute in a data model (becomes components/schemas in OpenAPI)
+  security_scheme — an authentication or security requirement
+
+For each section, ask: "Could this section contain at least one of these seven rule types?"
+If yes, include it. If no, exclude it.
+
+INCLUDE — assign priority based on directness:
+  HIGH   — sections that directly define HTTP operations, paths, parameters,
+            request/response structures, or operation-to-HTTP mappings
+  MEDIUM — sections that define data types, structured types, enumerations,
+            or attribute definitions (these become schema_property rules)
+  LOW    — sections that provide mapping context or overview
+
+EXCLUDE — sections with no contribution to any of the seven rule types:
+  - Administrative: foreword, scope, references, abbreviations, void sections
+  - State machines: triggering events, pre/post conditions, from/to state tables
+  - Stage 2 definitions: 3GPP documents are structured in stages.
+    Stage 2 defines operations in technology-agnostic terms — abstract input/output
+    parameters, results, exceptions — with no HTTP binding, no URI, no status code,
+    no media type, and no JSON type mapping. These contain none of the seven rule types.
+    Stage 3 maps those definitions to a concrete protocol (HTTP/REST) and is the
+    source of all seven rule types. Include Stage 3; exclude Stage 2.
+    When uncertain: if the section mentions no concrete protocol artifact
+    (no HTTP method, no URI pattern, no status code, no media type, no JSON schema),
+    it is likely Stage 2 — exclude it.
 
 The OpenAPI Specification overview below gives you context on the target format:
 {openapi_reference_overview}
@@ -110,6 +131,8 @@ Auxiliary context (from supporting 3GPP documents, if any):
 
 Produce an ExtractionPlan with all relevant sections ordered by priority.
 """
+
+
 
 planner_prompt = ChatPromptTemplate.from_messages([
     ("system", _SYSTEM),

@@ -41,7 +41,7 @@ logger = get_logger(__name__)
 
 # Number of characters from each section's content sent to the Planner.
 # The Planner only needs a preview to decide relevance — full text goes to Extractor.
-_SECTION_PREVIEW_CHARS = 200
+_SECTION_PREVIEW_CHARS = 500
 
 # Number of characters from the OpenAPI spec sent as overview context.
 # The full spec (296k chars) would exceed token limits — the intro is enough here.
