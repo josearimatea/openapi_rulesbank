@@ -15,11 +15,16 @@ Do NOT include in regular test runs to avoid unintended token usage.
 
 import json
 import os
+from datetime import datetime
 
 import pytest
 
-from config.paths import TSPEC_DATA_TEST_FILE
-from graph.rule_bank_flow import get_compiled_graph
+from openapi_rulesbank.config.paths import OUTPUTS_RULES_DIR, TSPEC_DATA_TEST_FILE
+from openapi_rulesbank.graph.rule_bank_flow import get_compiled_graph
+
+# Full-document runs are saved under rules_bank/Final_rules/ to keep them
+# separated from scoped/exploratory runs that land directly in rules_bank/.
+FINAL_RULES_DIR = os.path.join(OUTPUTS_RULES_DIR, "Final_rules")
 
 
 @pytest.fixture(scope="module")
@@ -30,6 +35,16 @@ def pipeline_output(qdrant):
     Depends on the session-scoped `qdrant` fixture (tests/conftest.py) which
     ensures the Qdrant container is running before the pipeline is invoked.
     """
+    # Pre-compute the output path so the Builder writes directly into Final_rules/
+    # instead of the default rules_bank/ root. Builder reuses final_output_path
+    # if it is already set in state — see src/nodes/builder.py.
+    os.makedirs(FINAL_RULES_DIR, exist_ok=True)
+    doc_stem  = os.path.splitext(os.path.basename(TSPEC_DATA_TEST_FILE))[0]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = os.path.join(
+        FINAL_RULES_DIR, f"rules_bank_{doc_stem}_full_{timestamp}.json"
+    )
+
     initial_state = {
         "main_doc_path":           os.path.abspath(TSPEC_DATA_TEST_FILE),
         "auxiliary_doc_paths":     [],
@@ -40,6 +55,7 @@ def pipeline_output(qdrant):
         "current_section_idx":          0,
         "section_iteration_count":      0,
         "messages":                     [],
+        "final_output_path":            output_file,
     }
 
     pipeline = get_compiled_graph()
