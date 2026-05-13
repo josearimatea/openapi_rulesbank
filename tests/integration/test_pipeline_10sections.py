@@ -22,9 +22,9 @@ import os
 
 import pytest
 
-from config.paths import TSPEC_DATA_TEST_FILE
-from nodes.reader import reader_node
-from graph.rule_bank_flow import get_compiled_graph_from_planner
+from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE
+from openapi_rulesbank.nodes.reader import reader_node
+from openapi_rulesbank.graph.rule_bank_flow import get_compiled_graph_from_planner
 
 TARGET_IDS = {"323", "325", "326", "327", "328", "346", "347", "348", "349", "356"}
 

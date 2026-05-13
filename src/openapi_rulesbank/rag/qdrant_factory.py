@@ -8,7 +8,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 
-from config.settings import QDRANT_HOST, QDRANT_PORT, COLLECTION_NAME
+from openapi_rulesbank.config.settings import QDRANT_HOST, QDRANT_PORT, COLLECTION_NAME
 
 
 class QdrantFactory:

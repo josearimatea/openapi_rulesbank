@@ -32,10 +32,10 @@ State writes:
             extraction_focus   (str)  — what the Extractor should focus on
 """
 
-from config import get_logger
-from config.llm_config import llm
-from graph.state import RuleBankState
-from prompts.planner_prompts import ExtractionPlan, planner_prompt
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.llm_config import llm
+from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.prompts.planner_prompts import ExtractionPlan, planner_prompt
 
 logger = get_logger(__name__)
 

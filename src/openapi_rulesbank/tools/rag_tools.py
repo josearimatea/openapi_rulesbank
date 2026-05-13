@@ -25,16 +25,16 @@ from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
-from config import get_logger
-from config.hardware import device
-from config.settings import (
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.hardware import device
+from openapi_rulesbank.config.settings import (
     QDRANT_HOST, QDRANT_PORT,
     OPENAPI_COLLECTION_NAME,
     CHUNK_SIZE, CHUNK_OVERLAP,
     EMBEDDING_MODEL, EMBEDDING_DIM,
     OPENAPI_REFERENCE_RETRIEVE_CHUNKS,
 )
-from tools.document_tools import load_openapi_reference
+from openapi_rulesbank.tools.document_tools import load_openapi_reference
 
 logger = get_logger(__name__)
 

@@ -58,12 +58,12 @@ import os
 from collections import Counter
 from datetime import datetime
 
-from config import get_logger
-from config.paths import OUTPUTS_RULES_DIR
-from config.settings import DIAGNOSTIC_MODE, MODEL, MAX_ITERATIONS
-from graph.state import RuleBankState
-from schemas.output import RulesBank, RulesBankMetadata, RulesBankSummary, RuleOutput, RULE_OUTPUT_FIELDS
-from schemas.rules import ValidatedRule
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.paths import OUTPUTS_RULES_DIR
+from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE, MODEL, MAX_ITERATIONS
+from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.schemas.output import RulesBank, RulesBankMetadata, RulesBankSummary, RuleOutput, RULE_OUTPUT_FIELDS
+from openapi_rulesbank.schemas.rules import ValidatedRule
 
 logger = get_logger(__name__)
 

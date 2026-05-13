@@ -20,7 +20,7 @@ Constants:
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
-from schemas.rules import RawRule
+from openapi_rulesbank.schemas.rules import RawRule
 
 
 # ---------------------------------------------------------------------------

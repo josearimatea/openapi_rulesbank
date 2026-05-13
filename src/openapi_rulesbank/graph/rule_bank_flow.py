@@ -157,15 +157,15 @@ NODE DESCRIPTIONS
 """
 
 from langgraph.graph import StateGraph, END
-from config import get_logger
-from graph.state import RuleBankState
-from graph.conditions import should_retry_section_or_build, should_next_section_or_end
-from nodes.reader import reader_node
-from nodes.planner import planner_node
-from nodes.extractor import extractor_node
-from nodes.reflector import reflector_node
-from nodes.validator import validator_node
-from nodes.builder import builder_node
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.graph.conditions import should_retry_section_or_build, should_next_section_or_end
+from openapi_rulesbank.nodes.reader import reader_node
+from openapi_rulesbank.nodes.planner import planner_node
+from openapi_rulesbank.nodes.extractor import extractor_node
+from openapi_rulesbank.nodes.reflector import reflector_node
+from openapi_rulesbank.nodes.validator import validator_node
+from openapi_rulesbank.nodes.builder import builder_node
 
 logger = get_logger(__name__)
 

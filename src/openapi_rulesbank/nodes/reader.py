@@ -34,10 +34,10 @@ State writes:
                                              is missing or empty.
 """
 
-from config import get_logger
-from graph.state import RuleBankState
-from tools.document_tools import load_markdown, load_openapi_reference
-from utils.parsers import parse_sections
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.tools.document_tools import load_markdown, load_openapi_reference
+from openapi_rulesbank.utils.parsers import parse_sections
 
 logger = get_logger(__name__)
 

@@ -18,11 +18,11 @@ from langchain.retrievers.self_query.base import SelfQueryRetriever
 from langchain_core.documents import Document
 from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 
-from config import get_logger
-from config.llm_config import llm
-from config.hardware import device
-from rag.qdrant_factory import QdrantFactory
-from rag.self_query import metadata_field_info, document_content_description
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.llm_config import llm
+from openapi_rulesbank.config.hardware import device
+from openapi_rulesbank.rag.qdrant_factory import QdrantFactory
+from openapi_rulesbank.rag.self_query import metadata_field_info, document_content_description
 
 logger = get_logger(__name__)
 

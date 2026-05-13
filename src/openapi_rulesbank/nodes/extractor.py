@@ -39,11 +39,11 @@ State writes:
     section_iteration_count (int)        — incremented by 1
 """
 
-from config import get_logger
-from config.llm_config import llm
-from graph.state import RuleBankState
-from prompts.extractor_prompts import SectionRules, extractor_prompt
-from tools.rag_tools import search_openapi_reference
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.llm_config import llm
+from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.prompts.extractor_prompts import SectionRules, extractor_prompt
+from openapi_rulesbank.tools.rag_tools import search_openapi_reference
 
 logger = get_logger(__name__)
 

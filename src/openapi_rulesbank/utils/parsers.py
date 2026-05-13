@@ -11,7 +11,7 @@ Functions:
 """
 
 import re
-from config.settings import FILTER_SYMBOLIC_TITLES, FILTER_BY_KEYWORDS
+from openapi_rulesbank.config.settings import FILTER_SYMBOLIC_TITLES, FILTER_BY_KEYWORDS
 
 # Keywords used to filter sections relevant to OpenAPI rule extraction.
 # Used only when FILTER_BY_KEYWORDS = True in settings.py.

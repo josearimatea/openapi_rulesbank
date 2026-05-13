@@ -21,8 +21,8 @@ import argparse
 import os
 import sys
 
-from config import get_logger
-from graph.rule_bank_flow import get_compiled_graph
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.graph.rule_bank_flow import get_compiled_graph
 
 logger = get_logger(__name__)
 

@@ -19,8 +19,8 @@ Functions:
 
 import os
 from typing import List, Dict
-from config import get_logger
-from config.paths import OPENAPI_REFERENCE_DIR
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.paths import OPENAPI_REFERENCE_DIR
 
 logger = get_logger(__name__)
 

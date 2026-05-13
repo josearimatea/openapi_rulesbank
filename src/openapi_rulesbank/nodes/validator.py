@@ -42,17 +42,17 @@ State writes:
 
 from pydantic import ValidationError as PydanticValidationError
 
-from config import get_logger
-from config.llm_config import llm
-from config.settings import DIAGNOSTIC_MODE
-from graph.state import RuleBankState
-from prompts.validator_prompts import (
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.llm_config import llm
+from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE
+from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.prompts.validator_prompts import (
     SectionAnalysisResult, ValidationVerdict, ReflectorReviewResult,
     validator_section_init_prompt, validator_prompt, validator_reflector_review_prompt,
 )
-from schemas.rules import ValidatedRule, ValidationError
-from utils.diagnostic import _diagnostic
-from utils.rules_check import check_mapping_for_type
+from openapi_rulesbank.schemas.rules import ValidatedRule, ValidationError
+from openapi_rulesbank.utils.diagnostic import _diagnostic
+from openapi_rulesbank.utils.rules_check import check_mapping_for_type
 
 logger = get_logger(__name__)
 

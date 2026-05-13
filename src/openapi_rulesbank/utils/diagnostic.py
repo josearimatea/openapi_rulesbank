@@ -22,8 +22,8 @@ import json
 import os
 from datetime import datetime
 
-from config.paths import OUTPUTS_DIAGNOSTIC_DIR
-from config.settings import DIAGNOSTIC_MODE
+from openapi_rulesbank.config.paths import OUTPUTS_DIAGNOSTIC_DIR
+from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE
 
 
 class DiagnosticCollector:

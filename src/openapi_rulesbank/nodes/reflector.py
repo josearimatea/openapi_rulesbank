@@ -40,14 +40,14 @@ State writes:
                                       genuinely missing rules (Fase 2 output)
 """
 
-from config import get_logger
-from config.llm_config import llm
-from graph.state import RuleBankState
-from prompts.reflector_prompts import (
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.llm_config import llm
+from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.prompts.reflector_prompts import (
     ReflectionResult, SectionReflection,
     reflector_prompt, reflector_section_prompt,
 )
-from tools.rag_tools import search_openapi_reference
+from openapi_rulesbank.tools.rag_tools import search_openapi_reference
 
 logger = get_logger(__name__)
 

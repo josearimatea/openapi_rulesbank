@@ -18,9 +18,9 @@
 #       If there are more sections to process → "extractor" (next section).
 #       Otherwise → "end" (pipeline complete).
 
-from config import get_logger
-from config.settings import VALIDATION_ERROR_THRESHOLD, MAX_ITERATIONS
-from graph.state import RuleBankState
+from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.settings import VALIDATION_ERROR_THRESHOLD, MAX_ITERATIONS
+from openapi_rulesbank.graph.state import RuleBankState
 
 logger = get_logger(__name__)
 
