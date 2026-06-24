@@ -47,11 +47,27 @@ def _has_real_words(title: str) -> bool:
     return bool(re.search(r'[a-zA-Z]{3,}', title))
 
 
+# Setext level-2 heading: a non-empty text line immediately followed by a line
+# of dashes (----). Older pandoc versions (used to build the original TSpec .md
+# corpus) emit setext headings, while newer pandoc emits ATX (## ). We normalize
+# setext level-2 headings to ATX so parse_sections() works for both, without
+# altering the .md on disk.
+_SETEXT_H2_RE = re.compile(r'^(?P<title>[^\n]+)\n-{2,}[ \t]*$', re.MULTILINE)
+
+
+def _normalize_setext_headings(md_text: str) -> str:
+    """Rewrites setext level-2 headings ('Title\\n----') as ATX ('## Title')."""
+    return _SETEXT_H2_RE.sub(lambda m: f"## {m.group('title').strip()}", md_text)
+
+
 def parse_sections(md_text: str) -> tuple[list[dict], list[dict]]:
     """
     Splits a Markdown document into sections and separates relevant from excluded.
 
     HOW IT WORKS:
+        0. Normalizes setext level-2 headings ('Title\n----') to ATX ('## Title')
+           so documents produced by older pandoc (setext) parse the same as those
+           produced by newer pandoc (ATX). See _normalize_setext_headings().
         1. Splits the full document text on '## ' (level-2 headers), which is
            the standard header level used for sections in 3GPP Markdown specs.
         2. For each section, separates the first line (title) from the rest (content).
@@ -73,6 +89,7 @@ def parse_sections(md_text: str) -> tuple[list[dict], list[dict]]:
             title      (str) — section header text
             reason     (str) — "symbolic_title" | "keyword_filter"
     """
+    md_text = _normalize_setext_headings(md_text)
     raw_sections = [s.strip() for s in md_text.split('## ') if s.strip()]
 
     sections: list[dict] = []

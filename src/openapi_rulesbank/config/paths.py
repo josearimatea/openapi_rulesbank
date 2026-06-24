@@ -9,9 +9,9 @@ import os
 
 # Anchor: resolve ROOT from this file's location so all paths work
 # regardless of the working directory (notebooks, scripts, tests).
-# paths.py is at src/config/paths.py -> dirname twice = project root.
+# paths.py is at src/openapi_rulesbank/config/paths.py -> three levels up = project root.
 _THIS_FILE = os.path.abspath(__file__)
-ROOT       = f"{os.path.dirname(_THIS_FILE)}/../.."
+ROOT       = f"{os.path.dirname(_THIS_FILE)}/../../.."
 
 #--------------------------------------------------------
 # Parent repository (Dataset lives outside the project root)
@@ -45,6 +45,9 @@ SCRIPTS_DIR     = f"{ROOT}/scripts"
 # Project data paths
 DATA_DIR = f"{ROOT}/data"
 INPUTS_3GPP_DIR      = f"{DATA_DIR}/inputs/3gpp"
+# Markdown files converted from the .docx sources are written here, separating
+# derived artifacts from the original .docx inputs in INPUTS_3GPP_DIR.
+INPUTS_3GPP_MD_DIR   = f"{INPUTS_3GPP_DIR}/md"
 INPUTS_AUXILIARY_DIR = f"{DATA_DIR}/inputs/auxiliary"
 OUTPUTS_RULES_DIR       = f"{DATA_DIR}/outputs/rules_bank"
 OUTPUTS_REPORTS_DIR     = f"{DATA_DIR}/outputs/reports"
