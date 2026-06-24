@@ -12,7 +12,11 @@ HOW IT WORKS:
        which splits on '## ' headers and optionally filters sections by keywords
        (see FILTER_SYMBOLIC_TITLES and FILTER_BY_KEYWORDS in settings.py).
     3. Loads each auxiliary 3GPP document and truncates to 2000 chars each,
-       joining them into a single helper_context string.
+       joining them into a single helper_context string. When ANNEX_A_AS_HELPER
+       is True, ONLY the target document's Annex A subsection (by target_yaml,
+       e.g. "ProvMnS") is extracted and appended to helper_context as the target
+       YAML format — not the whole annex. If a legacy_yaml_path is provided, that
+       previous-release YAML is also appended as extra context.
     4. Reads the local OpenAPI specification snapshot from
        data/references/openapi_reference/ via tools.document_tools.load_openapi_reference().
 
@@ -20,14 +24,18 @@ State reads:
     main_doc_path        (str)       — local file path to the main 3GPP spec
     auxiliary_doc_paths  (list[str]) — local file paths to auxiliary 3GPP specs
                                        (empty list if none provided)
+    target_yaml          (str)       — OpenAPI document to build rules for
+                                       (e.g. "ProvMnS"); defaults to TARGET_YAML
+    legacy_yaml_path     (str)       — optional previous-release YAML path
+                                       (empty string if not provided)
 
 State writes:
     parsed_sections           (list[dict]) — relevant sections from the main doc.
                                              Each dict: {section_id, title, content}.
                                              Only sections with OpenAPI keywords are kept.
-    helper_context            (str)        — auxiliary docs concatenated into one string
-                                             (2000 chars per doc, max). Used by Planner
-                                             and Extractor for background context.
+    helper_context            (str)        — auxiliary docs + the target YAML subsection
+                                             (+ optional legacy YAML), concatenated. Used
+                                             by Planner and Extractor for background context.
     openapi_reference_context (str)        — full text of the local OpenAPI spec snapshot.
                                              Used by Planner as overview reference.
                                              Empty string if data/references/openapi_reference/
@@ -35,7 +43,14 @@ State writes:
 """
 
 from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.settings import (
+    ANNEX_A_AS_HELPER,
+    ANNEX_A_MAX_CHARS,
+    LEGACY_YAML_MAX_CHARS,
+    TARGET_YAML,
+)
 from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.tools.docx_converter import extract_annex_a_yaml
 from openapi_rulesbank.tools.document_tools import load_markdown, load_openapi_reference
 from openapi_rulesbank.utils.parsers import parse_sections
 
@@ -71,8 +86,47 @@ def reader_node(state: RuleBankState) -> dict:
     helper_parts = []
     for path in state.get("auxiliary_doc_paths", []):
         helper_parts.append(load_markdown(path)[:2000])
-    helper_context = "\n\n---\n\n".join(helper_parts)
     logger.debug(f"Loaded {len(helper_parts)} auxiliary document(s).")
+
+    # --- Target OpenAPI YAML format (Annex A subsection) ---
+    # Extract ONLY the target document's subsection from the spec's Annex A
+    # (e.g. target_yaml="ProvMnS" -> the "TS28532_ProvMnS.yaml" block), so
+    # downstream nodes see exactly the YAML the rules must build — not the whole
+    # annex. The target comes from the state (main.py --target), defaulting to
+    # settings.TARGET_YAML. Truncated and toggled via settings.py.
+    target_yaml = state.get("target_yaml") or TARGET_YAML
+    if ANNEX_A_AS_HELPER:
+        target_doc = extract_annex_a_yaml(raw_main, target_yaml)
+        if target_doc:
+            helper_parts.append(
+                f"Target OpenAPI YAML format ({target_yaml}, from 3GPP Annex A):\n"
+                + target_doc[:ANNEX_A_MAX_CHARS]
+            )
+            logger.info(
+                f"Appended target YAML '{target_yaml}' to helper_context "
+                f"({min(len(target_doc), ANNEX_A_MAX_CHARS)} chars)."
+            )
+        else:
+            logger.warning(
+                f"No Annex A subsection found for target YAML '{target_yaml}'."
+            )
+
+    # --- Legacy OpenAPI YAML (optional, previous release) ---
+    # When a legacy YAML path is provided (main.py --legacy-yaml), load it as
+    # extra context for building the rules (e.g. a Rel-17 YAML when targeting
+    # Rel-18). It is a valid .yaml file, so loaded as-is and truncated.
+    legacy_yaml_path = state.get("legacy_yaml_path", "")
+    if legacy_yaml_path:
+        legacy_yaml = load_markdown(legacy_yaml_path)[:LEGACY_YAML_MAX_CHARS]
+        helper_parts.append(
+            f"Legacy OpenAPI YAML for reference ({target_yaml}):\n" + legacy_yaml
+        )
+        logger.info(
+            f"Appended legacy YAML from '{legacy_yaml_path}' to helper_context "
+            f"({len(legacy_yaml)} chars)."
+        )
+
+    helper_context = "\n\n---\n\n".join(helper_parts)
 
     # --- Local OpenAPI spec snapshot ---
     # load_openapi_reference_context() reads from OPENAPI_REFERENCE_DIR using discover_specs().

@@ -39,6 +39,12 @@ MODEL = "gpt-4.1-mini"
 # MODEL = "gpt-5-mini"
 TEMPERATURE = 0
 
+# OpenAPI reference version to fetch.
+# The 3GPP ProvMnS specs under data/inputs/3gpp declare `openapi: 3.0.1`, so the
+# reference used to generate rules must match that legacy version rather than the
+# latest published spec (e.g. 3.2.0).
+OPENAPI_REFERENCE_VERSION = "3.0.1"
+
 # RAG — OpenAPI reference collection
 # Same embedding model used in openapi_chatbotUI (free, local, no API key needed).
 OPENAPI_COLLECTION_NAME  = "openapi_reference"
@@ -66,6 +72,28 @@ FILTER_SYMBOLIC_TITLES = True
 # keyword list may not cover all relevant terminology in a given spec.
 # Enable only after reviewing and validating the keyword list for the target document.
 FILTER_BY_KEYWORDS = False
+
+# Target OpenAPI YAML — which OpenAPI document the rules are built for. The
+# Reader extracts ONLY this document's subsection from the spec's normative
+# Annex A (e.g. "TS28532_ProvMnS.yaml") and appends it to helper_context, so the
+# Planner and Extractor see exactly the target YAML format the rules must support
+# (not the whole annex). This is a pipeline input; main.py --target overrides it.
+# Default is "ProvMnS" while testing.
+TARGET_YAML = "ProvMnS"
+
+# When True, the Reader injects the target YAML subsection (above) into
+# helper_context. Set False to run without any Annex A format context.
+ANNEX_A_AS_HELPER = True
+
+# Max characters of the target YAML subsection appended to helper_context (the
+# embedded YAML can be tens of KB). Keeps the auxiliary context bounded.
+ANNEX_A_MAX_CHARS = 8000
+
+# Optional legacy OpenAPI YAML — a previous release's YAML (e.g. Rel-17) given as
+# extra context for building Rel-18 rules. Provided via main.py --legacy-yaml; no
+# default (the feature is off unless a path is passed). Truncated by the value
+# below when injected into helper_context.
+LEGACY_YAML_MAX_CHARS = 8000
 
 # Diagnostic mode — when True, the Validator records per-iteration details
 # (reflected rules, validation errors, section feedback, error rate) and the

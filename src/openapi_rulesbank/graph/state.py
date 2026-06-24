@@ -38,6 +38,16 @@ class RuleBankState(TypedDict):
     # Empty list if no auxiliary documents are provided.
     auxiliary_doc_paths: list[str]
 
+    # Target OpenAPI YAML document the rules are built for, e.g. "ProvMnS".
+    # The Reader extracts only this document's Annex A subsection as format
+    # context. Defaults to settings.TARGET_YAML; main.py --target overrides it.
+    target_yaml: str
+
+    # Optional path to a legacy (previous-release) OpenAPI YAML file, e.g. a
+    # Rel-17 ProvMnS.yaml used as extra context when building Rel-18 rules.
+    # Empty string if not provided.
+    legacy_yaml_path: str
+
     # -------------------------------------------------------------------------
     # READER OUTPUT — produced by the Reader Node
     # -------------------------------------------------------------------------

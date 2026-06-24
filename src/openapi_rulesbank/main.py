@@ -12,9 +12,18 @@ Usage (from src/):
     python main.py --doc /path/to/spec.md
     python main.py --doc /path/to/spec.md --aux /path/to/aux1.md /path/to/aux2.md
 
+The pipeline consumes Markdown (.md) only. Convert the 3GPP .docx sources to
+Markdown first with scripts/convert_docx_inputs.py (run once); the pipeline then
+reads the generated .md from data/inputs/3gpp/md/.
+
 Arguments:
-    --doc  PATH    Path to the main 3GPP specification file (.md). Required.
-    --aux  PATH…   Paths to auxiliary 3GPP documents (optional, space-separated).
+    --doc          PATH   Path to the main 3GPP specification file (.md). Required.
+    --target       NAME   OpenAPI YAML document to build rules for (e.g. ProvMnS).
+                          Defaults to settings.TARGET_YAML. The Reader uses only
+                          this document's Annex A subsection as format context.
+    --aux          PATH…  Paths to auxiliary 3GPP documents (optional).
+    --legacy-yaml  PATH   Optional previous-release OpenAPI YAML (e.g. a Rel-17
+                          ProvMnS.yaml) added as extra context for the rules.
 """
 
 import argparse
@@ -22,6 +31,7 @@ import os
 import sys
 
 from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.settings import TARGET_YAML
 from openapi_rulesbank.graph.rule_bank_flow import get_compiled_graph
 
 logger = get_logger(__name__)
@@ -34,8 +44,9 @@ def _parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python main.py --doc ../data/inputs/3gpp/28532-i00.md\n"
-            "  python main.py --doc spec.md --aux aux1.md aux2.md\n"
+            "  python main.py --doc ../data/inputs/3gpp/md/28532-i20.md\n"
+            "  python main.py --doc spec.md --target ProvMnS\n"
+            "  python main.py --doc rel18.md --legacy-yaml rel17_ProvMnS.yaml\n"
         ),
     )
     parser.add_argument(
@@ -45,11 +56,23 @@ def _parse_args() -> argparse.Namespace:
         help="Path to the main 3GPP specification file (.md).",
     )
     parser.add_argument(
+        "--target",
+        default=TARGET_YAML,
+        metavar="NAME",
+        help=f"OpenAPI YAML document to build rules for (default: {TARGET_YAML}).",
+    )
+    parser.add_argument(
         "--aux",
         nargs="*",
         default=[],
         metavar="PATH",
         help="Paths to auxiliary 3GPP specification files (optional).",
+    )
+    parser.add_argument(
+        "--legacy-yaml",
+        default=None,
+        metavar="PATH",
+        help="Optional previous-release OpenAPI YAML file used as extra context.",
     )
     return parser.parse_args()
 
@@ -60,6 +83,7 @@ def main() -> None:
     # Resolve all paths to absolute so downstream nodes work regardless of cwd
     main_doc_path = os.path.abspath(args.doc)
     aux_doc_paths = [os.path.abspath(p) for p in args.aux]
+    legacy_yaml_path = os.path.abspath(args.legacy_yaml) if args.legacy_yaml else ""
 
     # Fail early if any file is missing — avoids wasting LLM calls
     if not os.path.isfile(main_doc_path):
@@ -71,10 +95,17 @@ def main() -> None:
             logger.error(f"Auxiliary document not found: {p}")
             sys.exit(1)
 
+    if legacy_yaml_path and not os.path.isfile(legacy_yaml_path):
+        logger.error(f"Legacy YAML not found: {legacy_yaml_path}")
+        sys.exit(1)
+
     logger.info("Starting Rules Bank pipeline.")
     logger.info(f"  Document : {main_doc_path}")
+    logger.info(f"  Target   : {args.target}")
     for p in aux_doc_paths:
         logger.info(f"  Auxiliary: {p}")
+    if legacy_yaml_path:
+        logger.info(f"  Legacy YAML: {legacy_yaml_path}")
 
     # Initial state passed into the LangGraph pipeline.
     # Fields written by nodes (parsed_sections, extraction_plan, etc.) are
@@ -82,6 +113,8 @@ def main() -> None:
     initial_state = {
         "main_doc_path":           main_doc_path,
         "auxiliary_doc_paths":     aux_doc_paths,
+        "target_yaml":             args.target,
+        "legacy_yaml_path":        legacy_yaml_path,
         "validated_rules":              [],  # accumulated via operator.add across all sections
         "validation_errors":            [],  # cleared by Builder after each section
         "section_reflection":           [],  # Reflector Fase 2 output; reset by Builder
