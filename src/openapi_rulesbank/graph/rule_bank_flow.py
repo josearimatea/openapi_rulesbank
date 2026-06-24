@@ -3,6 +3,14 @@
 """
 Constructs and compiles the LangGraph StateGraph for the Rule Bank pipeline.
 
+INPUT PRE-PROCESSING (outside the graph, run once):
+
+  data/inputs/3gpp/*.docx ──[scripts/convert_docx_inputs.py]──▶ data/inputs/3gpp/md/*.md
+
+  The 3GPP sources ship as .docx. A separate pre-processing step converts them
+  to Markdown with pandoc (via the bundled pypandoc-binary), mirroring the
+  dataset's process-3GPP.ipynb. The graph below consumes the generated .md only.
+
 FLOW DIAGRAM:
 
   [Reader] → [Planner] → [Extractor] → [Reflector] → [Validator] ──→ [Builder] → END
@@ -23,16 +31,25 @@ NODE DESCRIPTIONS
   │ Loads all source documents and prepares them for downstream nodes.          │
   │                                                                             │
   │ Steps:                                                                      │
-  │   1. Load main 3GPP document (local file or HTTP URL).                      │
+  │   1. Load main 3GPP document (.md, pre-converted from .docx).               │
   │   2. Split into sections on '## ' headers via utils.parsers.parse_sections. │
-  │      Keep only sections with OpenAPI-relevant keywords (mapping, yang,      │
-  │      template, attribute, openapi, nrm, etc.).                              │
+  │      Setext headings (----/====) are normalized to ATX first, so .md from   │
+  │      any pandoc version parses. Optional symbolic-title/keyword filters.    │
   │   3. Load auxiliary 3GPP documents (truncated to 2000 chars each).          │
-  │   4. Read local OpenAPI spec snapshot from data/references/openapi_reference│
+  │   4. Extract ONLY the target OpenAPI document's subsection from Annex A       │
+  │      (target_yaml, e.g. "ProvMnS" -> the "TS28532_ProvMnS.yaml" block, not   │
+  │      the whole annex) and append it to helper_context as the target YAML     │
+  │      format. This is where the target YAML enters the flow; it then reaches  │
+  │      the Planner and Extractor prompts via helper_context.                   │
+  │   5. If legacy_yaml_path is set, append that previous-release YAML as extra   │
+  │      context (e.g. a Rel-17 YAML when targeting Rel-18).                      │
+  │   6. Read local OpenAPI spec snapshot from data/references/openapi_reference│
   │                                                                             │
-  │ Input  (state):  main_doc_path, auxiliary_doc_paths                         │
+  │ Input  (state):  main_doc_path, auxiliary_doc_paths, target_yaml,            │
+  │                  legacy_yaml_path                                            │
   │ Output (state):  parsed_sections   — list[{section_id, title, content}]     │
-  │                  helper_context    — auxiliary docs joined as one string     │
+  │                  helper_context    — aux docs + target YAML subsection        │
+  │                                      (+ optional legacy YAML), joined         │
   │                  openapi_reference_context — full OpenAPI spec text         │
   └─────────────────────────────────────────────────────────────────────────────┘
 

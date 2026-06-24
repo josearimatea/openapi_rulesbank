@@ -7,9 +7,23 @@ Multi-agent LangGraph pipeline that extracts a structured rules bank from 3GPP t
 The pipeline reads 3GPP normative documents (e.g., TS 28.532) and auxiliary references (e.g., TS 32.160, the OpenAPI/Swagger specification), reasons about their content, and produces a structured JSON rules bank that can guide OpenAPI generation.
 
 ### Inputs
-- **Main 3GPP specification** — the normative document from which rules are extracted (e.g., TS 28.532)
-- **Auxiliary 3GPP specification** — optional supporting document that may provide additional context
-- **OpenAPI Specification** — fetched from [swagger.io/specification](https://swagger.io/specification/) and indexed locally via RAG (Qdrant)
+- **Main 3GPP specification** — the normative document from which rules are extracted (e.g., TS 28.532). Provided as `.docx` under `data/inputs/3gpp/` and converted to Markdown by a pre-processing step (see [Input pre-processing](#input-pre-processing)); the pipeline consumes the generated `.md`.
+- **Target OpenAPI YAML** (`--target`, default `ProvMnS`) — the OpenAPI document the rules are built for. The Reader extracts **only that document's subsection** from the spec's Annex A (e.g. `TS28532_ProvMnS.yaml`) and injects it into `helper_context`, so the Planner and Extractor see exactly the target YAML format the rules must support.
+- **Auxiliary 3GPP specification** (`--aux`) — optional supporting document(s) that may provide additional context.
+- **Legacy OpenAPI YAML** (`--legacy-yaml`) — optional previous-release YAML (e.g. a Rel-17 `ProvMnS.yaml`) added as extra context when building rules for a newer release (e.g. Rel-18).
+- **OpenAPI Specification** — fetched from [swagger.io/specification](https://swagger.io/specification/) and indexed locally via RAG (Qdrant).
+
+> **Per-YAML selection.** TS 28.532's Annex A bundles several OpenAPI documents (`TS28532_ProvMnS.yaml`, `…PerfMnS.yaml`, `…HeartbeatNtf.yaml`, etc.), each under its own `## A.x.y OpenAPI document "<name>.yaml"` heading. The Reader extracts **only** the `--target` document's subsection (its heading up to the next heading) — not the whole annex — so only the chosen YAML's format reaches the prompts.
+
+### Input pre-processing
+
+The 3GPP sources are `.docx`. Convert them to Markdown once, before running the pipeline:
+
+```bash
+uv run python scripts/convert_docx_inputs.py
+```
+
+This writes `data/inputs/3gpp/md/<spec>.md` using pandoc (bundled via the `pypandoc-binary` dependency — no system pandoc needed), mirroring the dataset's `process-3GPP.ipynb`. It is idempotent: existing `.md` files are skipped unless `--overwrite` is passed.
 
 ### Output
 - **Rules bank** — a structured JSON file containing validated OpenAPI rules derived from the 3GPP specification
@@ -34,7 +48,7 @@ The pipeline runs **per section** with two conditional edges:
 
 | Node | Responsibility |
 |---|---|
-| **Reader** | Loads and filters the main 3GPP doc, auxiliary docs, and the OpenAPI reference |
+| **Reader** | Loads/filters the main 3GPP doc and auxiliary docs, injects the target YAML's Annex A subsection (+ optional legacy YAML), and loads the OpenAPI reference |
 | **Planner** | Reasons about document structure and defines the extraction strategy |
 | **Extractor** | Extracts raw OpenAPI rules from each section guided by the plan and Validator feedback |
 | **Reflector** | Per-rule CoT self-reflection (Fase 1) + per-section completeness analysis (Fase 2), grounded by RAG |
@@ -48,15 +62,17 @@ The pipeline runs **per section** with two conditional edges:
 
 Loads all source documents and prepares them for downstream nodes.
 
-1. Load main 3GPP document (local file or HTTP URL).
-2. Split into sections on `## ` headers via `utils.parsers.parse_sections`. Keep only sections with OpenAPI-relevant keywords (`mapping`, `yang`, `template`, `attribute`, `openapi`, `nrm`, etc.).
+1. Load main 3GPP document (`.md`, pre-converted from `.docx`).
+2. Split into sections via `utils.parsers.parse_sections`. Setext headings (`----`/`====`) are normalized to ATX first, so `.md` produced by any pandoc version splits on `## ` consistently. Optional symbolic-title and keyword filters apply.
 3. Load auxiliary 3GPP documents (truncated to 2000 chars each).
-4. Read local OpenAPI spec snapshot from `data/references/openapi_reference`.
+4. **Extract the target YAML's Annex A subsection** — `tools.docx_converter.extract_annex_a_yaml(raw, target_yaml)` pulls **only** the `target_yaml` document's subsection from Annex A (e.g. `ProvMnS` → the `TS28532_ProvMnS.yaml` block, heading up to the next heading — not the whole annex) and appends it to `helper_context` as the target format. Controlled by `ANNEX_A_AS_HELPER` / `ANNEX_A_MAX_CHARS` in `settings.py`. **This is where the target YAML enters the flow** — it then reaches the Planner and Extractor through `helper_context`.
+5. If `legacy_yaml_path` is set, append that previous-release YAML as extra context (truncated by `LEGACY_YAML_MAX_CHARS`).
+6. Read local OpenAPI spec snapshot from `data/references/openapi_reference`.
 
 | | |
 |---|---|
-| **Input** | `main_doc_path`, `auxiliary_doc_paths` |
-| **Output** | `parsed_sections` — list of `{section_id, title, content}`; `helper_context` — auxiliary docs joined as one string; `openapi_reference_context` — full OpenAPI spec text; `excluded_sections_reader` — sections filtered out by symbolic-title heuristics |
+| **Input** | `main_doc_path`, `auxiliary_doc_paths`, `target_yaml`, `legacy_yaml_path` |
+| **Output** | `parsed_sections` — list of `{section_id, title, content}`; `helper_context` — auxiliary docs **+ the target YAML subsection** (+ optional legacy YAML) joined as one string; `openapi_reference_context` — full OpenAPI spec text; `excluded_sections_reader` — sections filtered out by symbolic-title heuristics |
 
 ---
 
@@ -196,7 +212,9 @@ openapi_rulesbank/
 ├── .env / .env.example            # Environment variables
 │
 ├── data/
-│   ├── inputs/                    # 3GPP documents
+│   ├── inputs/
+│   │   ├── 3gpp/                  # Source 3GPP specs (.docx) + md/ (converted .md)
+│   │   └── auxiliary/             # Optional auxiliary documents
 │   ├── outputs/
 │   │   ├── rules_bank/            # Generated rules bank JSON files
 │   │   └── diagnostic/            # Per-iteration diagnostic reports (DIAGNOSTIC_MODE=True)
@@ -204,10 +222,12 @@ openapi_rulesbank/
 │       └── openapi_reference/     # Local snapshot of the OAI OpenAPI specification
 │
 ├── scripts/
+│   ├── convert_docx_inputs.py     # Pre-processing: .docx → .md (pandoc via pypandoc-binary)
+│   ├── fetch_openapi_reference.py # Fetches the OpenAPI spec snapshot
 │   └── index_openapi_reference.py # Indexes the OpenAPI reference into Qdrant
 │
-├── src/
-│   ├── main.py                    # Pipeline entry point
+├── src/openapi_rulesbank/
+│   ├── main.py                    # Pipeline entry point (consumes .md only)
 │   │
 │   ├── config/                    # Centralized configuration
 │   │   ├── __init__.py            # Exports get_logger() and all config symbols
@@ -231,6 +251,7 @@ openapi_rulesbank/
 │   │   └── builder.py             # Builds and saves the rules bank JSON; force-include at max retries
 │   │
 │   ├── tools/
+│   │   ├── docx_converter.py      # .docx → .md conversion + per-target Annex A YAML extraction
 │   │   ├── document_tools.py      # Document loading utilities
 │   │   ├── web_tools.py           # Fetching content from swagger.io
 │   │   └── rag_tools.py           # RAG retrieval helpers
@@ -257,16 +278,10 @@ openapi_rulesbank/
 │
 └── tests/
     ├── conftest.py                # Session-scoped qdrant fixture (auto-starts Docker)
-    ├── unit/                      # Per-node interactive notebooks
-    │   ├── test_reader.ipynb
-    │   ├── test_planner.ipynb
-    │   ├── test_extractor.ipynb
-    │   ├── test_reflector.ipynb
-    │   ├── test_validator.ipynb
-    │   ├── test_builder.ipynb
-    │   └── test_rag.ipynb
+    ├── unit/                      # Fast unit tests (no LLM/RAG)
+    │   ├── test_docx_converter.py # convert_docx_to_md guards + extract_annex_a
+    │   └── test_parsers_setext.py # parse_sections ATX + setext heading handling
     └── integration/
-        ├── test_flow.ipynb                  # Interactive end-to-end (2 sections)
         ├── test_pipeline.py                 # Full-document integration test
         └── test_pipeline_10sections.py      # Scoped 10-section integration test
 ```
@@ -279,20 +294,32 @@ openapi_rulesbank/
 # Copy and fill in environment variables
 cp .env.example .env
 
-# Install dependencies
+# Install dependencies (includes pypandoc-binary, which bundles pandoc)
 uv sync
+
+# Convert the 3GPP .docx inputs to Markdown (one-time pre-processing)
+uv run python scripts/convert_docx_inputs.py
 
 # Index the OpenAPI reference into Qdrant (one-time)
 docker run -d --name qdrant-local -p 6333:6333 qdrant/qdrant
 uv run python scripts/index_openapi_reference.py
 
-# Run the pipeline
-uv run run-flow
+# Run the pipeline on a converted .md (default target: ProvMnS)
+uv run python -m openapi_rulesbank.main --doc data/inputs/3gpp/md/28532-i20.md
+# (equivalently, via the installed entry point:)
+uv run openapi-rulesbank --doc data/inputs/3gpp/md/28532-i20.md
+
+# Choose a different target YAML, and/or pass a legacy YAML as extra context
+uv run openapi-rulesbank --doc data/inputs/3gpp/md/28532-i20.md --target PerfMnS
+uv run openapi-rulesbank --doc data/inputs/3gpp/md/28532-i20.md --legacy-yaml rel17_ProvMnS.yaml
 ```
 
 ### Running tests
 
 ```bash
+# Fast unit tests (no LLM/RAG)
+uv run pytest tests/unit -q
+
 # Full-document integration test (real LLM calls — slow, costs tokens)
 pytest tests/integration/test_pipeline.py -v
 
@@ -313,5 +340,6 @@ The session-scoped `qdrant` fixture in `tests/conftest.py` starts the `qdrant-lo
 | LLM framework | LangChain |
 | Data validation | Pydantic |
 | Vector store | Qdrant |
+| Document conversion | pandoc (bundled via `pypandoc-binary`) |
 | Document parsing | Markdown, jsonschema |
 | Package manager | uv |
