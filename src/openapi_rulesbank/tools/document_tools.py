@@ -21,6 +21,7 @@ import os
 from typing import List, Dict
 from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.paths import OPENAPI_REFERENCE_DIR
+from openapi_rulesbank.config.settings import OPENAPI_REFERENCE_VERSION
 
 logger = get_logger(__name__)
 
@@ -106,26 +107,31 @@ def discover_specs(path: str) -> List[Dict[str, str]]:
 
 def load_openapi_reference() -> str:
     """
-    Loads the local OpenAPI reference document from OPENAPI_REFERENCE_DIR
-    (data/references/openapi_reference/) and returns its content as a single string.
+    Loads the local OpenAPI reference document for the configured version
+    (settings.OPENAPI_REFERENCE_VERSION) from OPENAPI_REFERENCE_DIR
+    (data/references/openapi_reference/openapi_spec_<version>.md) and returns
+    its content as a single string.
 
-    The file is saved by fetch_openapi_reference() in web_tools.py.
-    Run it once to populate the directory before starting the pipeline.
+    The file is saved by fetch_openapi_reference() in web_tools.py. Only the spec
+    matching the configured version is loaded, even if other versions are present,
+    so the reference matches the OpenAPI version declared by the 3GPP inputs.
 
     Guard behaviour:
-      - Directory does not exist or has no .md files → logs a warning, returns "".
-      - Files found → loads each file, joins with blank line separator.
+      - The configured version's file is missing → logs a warning, returns "".
     """
-    entries = discover_specs(OPENAPI_REFERENCE_DIR)
+    file_path = os.path.join(
+        OPENAPI_REFERENCE_DIR, f"openapi_spec_{OPENAPI_REFERENCE_VERSION}.md"
+    )
 
-    if not entries:
+    if not os.path.isfile(file_path):
         logger.warning(
-            f"No OpenAPI reference file found in '{OPENAPI_REFERENCE_DIR}'. "
-            "Run fetch_openapi_reference() from tools/web_tools.py to populate it. "
-            "Continuing with empty OpenAPI context."
+            f"No OpenAPI reference file found for version {OPENAPI_REFERENCE_VERSION} "
+            f"at '{file_path}'. Run fetch_openapi_reference() from tools/web_tools.py "
+            "to populate it. Continuing with empty OpenAPI context."
         )
         return ""
 
-    parts = [load_markdown(entry["file_path"]) for entry in entries]
-    logger.debug(f"Loaded {len(parts)} OpenAPI reference file(s) from '{OPENAPI_REFERENCE_DIR}'.")
-    return "\n\n".join(parts)
+    logger.debug(
+        f"Loaded OpenAPI reference v{OPENAPI_REFERENCE_VERSION} from '{file_path}'."
+    )
+    return load_markdown(file_path)
