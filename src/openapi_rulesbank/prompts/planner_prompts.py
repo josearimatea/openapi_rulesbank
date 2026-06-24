@@ -91,8 +91,11 @@ The pipeline extracts exactly these seven types of OpenAPI rules from each secti
                   the "className" in /{{className}}={{id}}, the "version" in /api/{{version}})
   query_parameter — a named query string parameter for an HTTP operation
   request_body    — the media type and schema of an HTTP request body
-  response        — an HTTP response code and its body schema for an operation
-  schema_property — a field or attribute in a data model (becomes components/schemas in OpenAPI)
+  response        — an HTTP response code (including the "default" error response) and
+                  its body schema for an operation
+  schema_property — a field, attribute, or schema-level constraint in a data model
+                  (becomes components/schemas in OpenAPI), including enumerations,
+                  required fields, and composition keywords (oneOf/anyOf/allOf)
   security_scheme — an authentication or security requirement
 
 For each section, ask: "Could this section contain at least one of these seven rule types?"

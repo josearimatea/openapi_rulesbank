@@ -27,7 +27,9 @@ VALIDATION RULES BY rule_type:
 
     schema_property:
         openapi_object  must contain "components/schemas"
-        openapi_field   must start with "properties."
+        openapi_field   must start with "properties.<name>" OR be a schema-level
+                        keyword: enum | required | oneOf | anyOf | allOf | items |
+                        additionalProperties
 
     path_parameter:
         openapi_field   must contain "in=path"
@@ -36,9 +38,11 @@ VALIDATION RULES BY rule_type:
         openapi_field   must contain "in=query"
 
     response:
-        openapi_field   must be a 3-digit status code ("200", "404", etc.) or an
-                        OpenAPI wildcard ("1XX"–"5XX"). Rejects combined forms like
-                        "4XX/5XX", "4xx", or "n/a".
+        openapi_field   must be a 3-digit status code ("200", "404", etc.), an
+                        OpenAPI wildcard ("1XX"–"5XX"), or the catch-all "default"
+                        (the OpenAPI keyword for the response covering all undeclared
+                        status codes). Rejects combined forms like "4XX/5XX", "4xx",
+                        or "n/a".
 
     request_body:
         openapi_field   must be "content"
@@ -55,10 +59,18 @@ Functions:
 import re
 
 _VALID_HTTP_METHODS   = {"get", "put", "post", "delete", "patch"}
+# OpenAPI 3.0.1 Security Scheme types (the "type" field of a securityScheme).
 _VALID_SECURITY_TYPES = {"oauth2", "http", "apiKey", "openIdConnect"}
-# Accepts 3-digit codes ("200", "404") and OpenAPI wildcards ("1XX"–"5XX").
+# Schema-level OpenAPI / JSON Schema keywords that constrain a whole schema rather
+# than a single named property. A schema_property rule may target one of these in
+# addition to a "properties.<name>" path.
+_VALID_SCHEMA_KEYWORDS = {
+    "enum", "required", "oneOf", "anyOf", "allOf", "items", "additionalProperties",
+}
+# Accepts 3-digit codes ("200", "404"), OpenAPI wildcards ("1XX"–"5XX"), and the
+# OpenAPI "default" keyword (the response for all undeclared status codes).
 # Rejects combined forms ("4XX/5XX"), lowercase wildcards ("4xx"), and "n/a".
-_VALID_RESPONSE_FIELD = re.compile(r"^(\d{3}|[1-5]XX)$")
+_VALID_RESPONSE_FIELD = re.compile(r"^(\d{3}|[1-5]XX|default)$")
 
 
 def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
@@ -102,9 +114,13 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
             errors.append(
                 f"openapi_object must reference 'components/schemas/<Name>', got '{obj}'."
             )
-        if not field.startswith("properties."):
+        # The field may be a named property ("properties.<name>") or a schema-level
+        # keyword that applies to the whole schema (enum, required, oneOf, anyOf,
+        # allOf, items, additionalProperties).
+        if not (field.startswith("properties.") or field in _VALID_SCHEMA_KEYWORDS):
             errors.append(
-                f"openapi_field must start with 'properties.<name>', got '{field}'."
+                f"openapi_field must be 'properties.<name>' or one of "
+                f"{sorted(_VALID_SCHEMA_KEYWORDS)}, got '{field}'."
             )
 
     elif rule_type in ("path_parameter", "query_parameter"):
@@ -117,8 +133,8 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
     elif rule_type == "response":
         if not _VALID_RESPONSE_FIELD.match(field):
             errors.append(
-                f"openapi_field must be an HTTP status code string ('200', '404', etc.) "
-                f"or an OpenAPI wildcard ('1XX'–'5XX'), got '{field}'."
+                f"openapi_field must be an HTTP status code string ('200', '404', etc.), "
+                f"an OpenAPI wildcard ('1XX'–'5XX'), or 'default', got '{field}'."
             )
 
     elif rule_type == "request_body":

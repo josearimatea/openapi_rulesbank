@@ -73,14 +73,25 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     NEVER combine two methods (e.g. never "put, patch") — create two rules.
    openapi_value  : the HTTP method in uppercase: GET | PUT | POST | DELETE | PATCH
 
-2. schema_property — one rule per attribute or field in a data model
+2. schema_property — one rule per attribute, field, or schema-level constraint in a data model
    rule_type      : "schema_property"
-   source_name    : the attribute or field name (e.g. "nrCellDuId", "scopeType")
+   source_name    : the attribute, field, or constraint name (e.g. "nrCellDuId", "scopeType")
    openapi_object : the schema path, e.g. "components/schemas/NrCellDu"
-   openapi_field  : "properties.<propertyName>" e.g. "properties.nrCellDuId"
-   openapi_value  : the JSON Schema type or reference:
-                    "string" | "integer" | "boolean" | "array" | "object" |
-                    "$ref: '#/components/schemas/<Name>'"
+   openapi_field  : EITHER a named property: "properties.<propertyName>" e.g. "properties.nrCellDuId"
+                    OR a schema-level keyword that constrains the whole schema:
+                    "enum" | "required" | "oneOf" | "anyOf" | "allOf" | "items" |
+                    "additionalProperties"
+   openapi_value  : depends on openapi_field:
+                    - for "properties.<name>": the JSON Schema type or reference:
+                      "string" | "integer" | "boolean" | "array" | "object" |
+                      "$ref: '#/components/schemas/<Name>'" |
+                      "$ref: '<OtherFile>.yaml#/components/schemas/<Name>'"
+                    - for "enum"      : the allowed values, e.g. "[add, remove, replace]"
+                    - for "required"  : the required property name(s), e.g. "[id]"
+                    - for "oneOf"/"anyOf"/"allOf": the list of referenced schemas, e.g.
+                      "[$ref: '#/components/schemas/A', $ref: '#/components/schemas/B']"
+                    - for "items"     : the item type or "$ref: '#/components/schemas/<Name>'"
+                    - for "additionalProperties": the value type or "true"/"false"
 
 3. path_parameter  — one rule per path variable in a URI template
    rule_type      : "path_parameter"
@@ -88,7 +99,9 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
    openapi_object : the COMPLETE path template, e.g. "paths./{{MnSVersion}}/{{className}}={{id}}"
                     NEVER abbreviate with "..." — always write the full URI template.
    openapi_field  : "parameters[in=path,name=<paramName>]"
-   openapi_value  : the parameter schema type: "string" | "integer" | etc.
+   openapi_value  : the parameter schema type or reference:
+                    "string" | "integer" | "boolean" | "array" |
+                    "$ref: '#/components/schemas/<Name>'"
 
 4. query_parameter — one rule per query string parameter
    rule_type      : "query_parameter"
@@ -96,7 +109,9 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
    openapi_object : the COMPLETE path template, e.g. "paths./{{MnSVersion}}/{{className}}={{id}}"
                     NEVER abbreviate with "..." — always write the full URI template.
    openapi_field  : "parameters[in=query,name=<paramName>]"
-   openapi_value  : the parameter schema type: "string" | "integer" | etc.
+   openapi_value  : the parameter schema type or reference:
+                    "string" | "integer" | "boolean" | "array" |
+                    "$ref: '#/components/schemas/<Name>'"
 
 5. response        — one rule per HTTP response code or range for an operation
    rule_type      : "response"
@@ -113,7 +128,9 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     Do NOT invent a field not present in the section. Follow what
                     the section says exactly.
    openapi_value  : "$ref: '#/components/responses/<Name>'" or
-                    "$ref: '#/components/schemas/<Name>'" or a brief schema description
+                    "$ref: '#/components/schemas/<Name>'" or
+                    "$ref: '<OtherFile>.yaml#/components/schemas/<Name>'" or
+                    a brief schema description
 
 6. request_body    — one rule per operation that accepts a request body
    rule_type      : "request_body"

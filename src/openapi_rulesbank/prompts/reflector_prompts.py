@@ -183,8 +183,9 @@ already_validated_rules. If not present, report it as missing.
                     mandatory payload? If yes → must have at least one request_body rule.
 
   response        → Did the section describe response codes or response data structures?
-                    If yes → must have one rule per response code or wildcard range (4XX, 5XX).
-                    Check each code mentioned: 200, 201, 204, 4xx/5xx, etc.
+                    If yes → must have one rule per response code, wildcard range (4XX, 5XX),
+                    or the "default" catch-all error response.
+                    Check each code mentioned: 200, 201, 204, 4xx/5xx, default, etc.
 
   path_parameter  → Did the section describe path variables (e.g. {{id}}, {{version}}, {{className}})?
                     If yes → must have one path_parameter rule per variable.
@@ -192,8 +193,9 @@ already_validated_rules. If not present, report it as missing.
   query_parameter → Did the section describe named query parameters (not their absence)?
                     If yes → must have one query_parameter rule per named parameter.
 
-  schema_property → Did the section describe data model attributes or fields?
-                    If yes → must have one schema_property rule per attribute.
+  schema_property → Did the section describe data model attributes, fields, enumerations,
+                    required fields, or schema composition (oneOf/anyOf/allOf)?
+                    If yes → must have one schema_property rule per attribute or constraint.
 
   security_scheme → Did the section describe authentication or security requirements?
                     If yes → must have at least one security_scheme rule.
