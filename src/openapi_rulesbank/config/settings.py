@@ -77,8 +77,11 @@ FILTER_BY_KEYWORDS = False
 # Reader extracts ONLY this document's subsection from the spec's normative
 # Annex A (e.g. "TS28532_ProvMnS.yaml") and appends it to helper_context, so the
 # Planner and Extractor see exactly the target YAML format the rules must support
-# (not the whole annex). This is a pipeline input; main.py --target overrides it.
-# Default is "ProvMnS" while testing.
+# (not the whole annex).
+#
+# In normal use the target is REQUIRED from the user via main.py --target. This
+# value is the fallback used by local tests and programmatic reader_node() calls
+# that don't set state["target_yaml"]; it is "ProvMnS" for the local test setup.
 TARGET_YAML = "ProvMnS"
 
 # When True, the Reader injects the target YAML subsection (above) into

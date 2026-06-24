@@ -8,7 +8,7 @@ The pipeline reads 3GPP normative documents (e.g., TS 28.532) and auxiliary refe
 
 ### Inputs
 - **Main 3GPP specification** — the normative document from which rules are extracted (e.g., TS 28.532). Provided as `.docx` under `data/inputs/3gpp/` and converted to Markdown by a pre-processing step (see [Input pre-processing](#input-pre-processing)); the pipeline consumes the generated `.md`.
-- **Target OpenAPI YAML** (`--target`, default `ProvMnS`) — the OpenAPI document the rules are built for. The Reader extracts **only that document's subsection** from the spec's Annex A (e.g. `TS28532_ProvMnS.yaml`) and injects it into `helper_context`, so the Planner and Extractor see exactly the target YAML format the rules must support.
+- **Target OpenAPI YAML** (`--target`, **required**) — the OpenAPI document the rules are built for (e.g. `ProvMnS`, `PerfMnS`). The Reader extracts **only that document's subsection** from the spec's Annex A (e.g. `TS28532_ProvMnS.yaml`) and injects it into `helper_context`, so the Planner and Extractor see exactly the target YAML format the rules must support.
 - **Auxiliary 3GPP specification** (`--aux`) — optional supporting document(s) that may provide additional context.
 - **Legacy OpenAPI YAML** (`--legacy-yaml`) — optional previous-release YAML (e.g. a Rel-17 `ProvMnS.yaml`) added as extra context when building rules for a newer release (e.g. Rel-18).
 - **OpenAPI Specification** — fetched from [swagger.io/specification](https://swagger.io/specification/) and indexed locally via RAG (Qdrant).
@@ -304,14 +304,14 @@ uv run python scripts/convert_docx_inputs.py
 docker run -d --name qdrant-local -p 6333:6333 qdrant/qdrant
 uv run python scripts/index_openapi_reference.py
 
-# Run the pipeline on a converted .md (default target: ProvMnS)
-uv run python -m openapi_rulesbank.main --doc data/inputs/3gpp/md/28532-i20.md
+# Run the pipeline on a converted .md (--target is required)
+uv run python -m openapi_rulesbank.main --doc data/inputs/3gpp/md/28532-i20.md --target ProvMnS
 # (equivalently, via the installed entry point:)
-uv run openapi-rulesbank --doc data/inputs/3gpp/md/28532-i20.md
+uv run openapi-rulesbank --doc data/inputs/3gpp/md/28532-i20.md --target ProvMnS
 
-# Choose a different target YAML, and/or pass a legacy YAML as extra context
+# Pick any OpenAPI document from the spec's Annex A, and/or pass a legacy YAML
 uv run openapi-rulesbank --doc data/inputs/3gpp/md/28532-i20.md --target PerfMnS
-uv run openapi-rulesbank --doc data/inputs/3gpp/md/28532-i20.md --legacy-yaml rel17_ProvMnS.yaml
+uv run openapi-rulesbank --doc data/inputs/3gpp/md/28532-i20.md --target ProvMnS --legacy-yaml rel17_ProvMnS.yaml
 ```
 
 ### Running tests

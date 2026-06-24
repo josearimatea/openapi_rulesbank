@@ -19,8 +19,8 @@ reads the generated .md from data/inputs/3gpp/md/.
 Arguments:
     --doc          PATH   Path to the main 3GPP specification file (.md). Required.
     --target       NAME   OpenAPI YAML document to build rules for (e.g. ProvMnS).
-                          Defaults to settings.TARGET_YAML. The Reader uses only
-                          this document's Annex A subsection as format context.
+                          Required. The Reader uses only this document's Annex A
+                          subsection as format context.
     --aux          PATH…  Paths to auxiliary 3GPP documents (optional).
     --legacy-yaml  PATH   Optional previous-release OpenAPI YAML (e.g. a Rel-17
                           ProvMnS.yaml) added as extra context for the rules.
@@ -31,7 +31,6 @@ import os
 import sys
 
 from openapi_rulesbank.config import get_logger
-from openapi_rulesbank.config.settings import TARGET_YAML
 from openapi_rulesbank.graph.rule_bank_flow import get_compiled_graph
 
 logger = get_logger(__name__)
@@ -44,9 +43,9 @@ def _parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python main.py --doc ../data/inputs/3gpp/md/28532-i20.md\n"
-            "  python main.py --doc spec.md --target ProvMnS\n"
-            "  python main.py --doc rel18.md --legacy-yaml rel17_ProvMnS.yaml\n"
+            "  python main.py --doc spec.md --target <YamlName>\n"
+            "  python main.py --doc spec.md --target <YamlName> --aux aux1.md\n"
+            "  python main.py --doc spec.md --target <YamlName> --legacy-yaml old.yaml\n"
         ),
     )
     parser.add_argument(
@@ -57,9 +56,10 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        default=TARGET_YAML,
+        required=True,
         metavar="NAME",
-        help=f"OpenAPI YAML document to build rules for (default: {TARGET_YAML}).",
+        help="OpenAPI YAML document to build rules for, e.g. ProvMnS, PerfMnS. "
+             "Selects which Annex A subsection is used as the target format.",
     )
     parser.add_argument(
         "--aux",
