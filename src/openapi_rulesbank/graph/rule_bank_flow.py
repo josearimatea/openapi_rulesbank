@@ -187,8 +187,15 @@ from openapi_rulesbank.nodes.builder import builder_node
 logger = get_logger(__name__)
 
 
-def _build_graph(entry_point: str):
-    """Shared graph builder used by both get_compiled_graph variants."""
+def _build_graph(entry_point: str, checkpointer=None):
+    """
+    Shared graph builder used by both get_compiled_graph variants.
+
+    checkpointer: optional LangGraph checkpointer (e.g. an AsyncSqliteSaver) for
+    persistence/resumability when the graph is driven by an external host such as
+    the chatbot UI. None (default) compiles without persistence — the behaviour
+    used by the CLI.
+    """
     graph = StateGraph(RuleBankState)
 
     # Add nodes
@@ -222,19 +229,55 @@ def _build_graph(entry_point: str):
     # Entry point
     graph.set_entry_point(entry_point)
 
-    return graph.compile()
+    # compile(checkpointer=None) is equivalent to no persistence, so the CLI
+    # path is unaffected.
+    return graph.compile(checkpointer=checkpointer)
 
 
-def get_compiled_graph():
-    """Full pipeline starting at the Reader."""
-    return _build_graph("reader")
+def get_compiled_graph(checkpointer=None):
+    """Full pipeline starting at the Reader. See _build_graph for checkpointer."""
+    return _build_graph("reader", checkpointer=checkpointer)
 
 
-def get_compiled_graph_from_planner():
+def get_compiled_graph_from_planner(checkpointer=None):
     """
     Pipeline starting at the Planner — Reader is skipped.
 
     Use when parsed_sections is already populated (e.g. scoped tests that
     pre-filter sections before invoking the graph).
     """
-    return _build_graph("planner")
+    return _build_graph("planner", checkpointer=checkpointer)
+
+
+def build_initial_state(
+    main_doc_path: str,
+    target_yaml: str,
+    auxiliary_doc_paths: list[str] | None = None,
+    legacy_yaml_path: str = "",
+) -> dict:
+    """
+    Builds the initial RuleBankState with all flow-control defaults set.
+
+    Centralizes the defaults that the pipeline expects before the graph runs
+    (accumulators, counters, message history) so every caller — the CLI and any
+    external host such as the chatbot UI — produces an identical starting state.
+
+    Args:
+        main_doc_path:       absolute path to the main 3GPP spec (.md).
+        target_yaml:         OpenAPI document to build rules for (e.g. "ProvMnS").
+        auxiliary_doc_paths: optional auxiliary 3GPP .md paths.
+        legacy_yaml_path:    optional previous-release YAML path ("" if none).
+    """
+    return {
+        "main_doc_path":                main_doc_path,
+        "auxiliary_doc_paths":          auxiliary_doc_paths or [],
+        "target_yaml":                  target_yaml,
+        "legacy_yaml_path":             legacy_yaml_path,
+        "validated_rules":              [],  # accumulated via operator.add across sections
+        "validation_errors":            [],  # cleared by Builder after each section
+        "section_reflection":           [],  # Reflector Fase 2 output; reset by Builder
+        "validator_section_reflection": [],  # Validator final missing-rules; reset by Builder
+        "current_section_idx":          0,   # advanced by Builder after each section
+        "section_iteration_count":      0,   # reset by Builder after each section
+        "messages":                     [],  # LLM message history across all nodes
+    }

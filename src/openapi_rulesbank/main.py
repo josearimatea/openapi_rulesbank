@@ -31,7 +31,7 @@ import os
 import sys
 
 from openapi_rulesbank.config import get_logger
-from openapi_rulesbank.graph.rule_bank_flow import get_compiled_graph
+from openapi_rulesbank.graph.rule_bank_flow import build_initial_state, get_compiled_graph
 
 logger = get_logger(__name__)
 
@@ -107,22 +107,16 @@ def main() -> None:
     if legacy_yaml_path:
         logger.info(f"  Legacy YAML: {legacy_yaml_path}")
 
-    # Initial state passed into the LangGraph pipeline.
-    # Fields written by nodes (parsed_sections, extraction_plan, etc.) are
-    # populated automatically as the graph runs — only inputs are set here.
-    initial_state = {
-        "main_doc_path":           main_doc_path,
-        "auxiliary_doc_paths":     aux_doc_paths,
-        "target_yaml":             args.target,
-        "legacy_yaml_path":        legacy_yaml_path,
-        "validated_rules":              [],  # accumulated via operator.add across all sections
-        "validation_errors":            [],  # cleared by Builder after each section
-        "section_reflection":           [],  # Reflector Fase 2 output; reset by Builder
-        "validator_section_reflection": [],  # Validator final missing-rules; reset by Builder
-        "current_section_idx":          0,   # advanced by Builder after each section
-        "section_iteration_count":      0,   # reset by Builder after each section
-        "messages":                     [],  # LLM message history across all nodes
-    }
+    # Initial state passed into the LangGraph pipeline. build_initial_state()
+    # centralizes the flow-control defaults so the CLI and external hosts (e.g.
+    # the chatbot UI) start from an identical state. Fields written by nodes
+    # (parsed_sections, extraction_plan, etc.) are populated as the graph runs.
+    initial_state = build_initial_state(
+        main_doc_path=main_doc_path,
+        target_yaml=args.target,
+        auxiliary_doc_paths=aux_doc_paths,
+        legacy_yaml_path=legacy_yaml_path,
+    )
 
     # Compile and run the full Reader→Planner→Extractor→Reflector→Validator→Builder graph
     pipeline = get_compiled_graph()
