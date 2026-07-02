@@ -21,6 +21,8 @@ State reads:
     parsed_sections           (list[dict]) — sections from reader_node
     helper_context            (str)        — auxiliary 3GPP documents context
     openapi_reference_context (str)        — first 3000 chars used as OpenAPI overview
+    service_contract          (dict)       — scope contract from contract_builder_node;
+                                             strongly informs which sections are in scope
 
 State writes:
     extraction_plan (dict) — serialized ExtractionPlan containing:
@@ -36,6 +38,7 @@ from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.llm_config import llm
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.prompts.planner_prompts import ExtractionPlan, planner_prompt
+from openapi_rulesbank.schemas.contract import format_contract_summary
 
 logger = get_logger(__name__)
 
@@ -67,6 +70,10 @@ def planner_node(state: RuleBankState) -> dict:
     sections_summary    = _build_sections_summary(state["parsed_sections"])
     openapi_overview    = state["openapi_reference_context"][:_OPENAPI_OVERVIEW_CHARS]
     helper_context      = state.get("helper_context", "") or "No auxiliary context provided."
+    contract_summary    = (
+        format_contract_summary(state.get("service_contract", {}))
+        or "No service contract provided."
+    )
 
     logger.debug(f"Sending {len(state['parsed_sections'])} section(s) to Planner LLM.")
 
@@ -78,6 +85,7 @@ def planner_node(state: RuleBankState) -> dict:
         "sections_summary":    sections_summary,
         "openapi_reference_overview": openapi_overview,
         "helper_context":      helper_context,
+        "contract_summary":    contract_summary,
     })
 
     selected_ids = {s.section_id for s in plan.sections_to_extract}

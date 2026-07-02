@@ -126,6 +126,21 @@ The OpenAPI Specification overview below gives you context on the target format:
 """
 
 _USER = """\
+{contract_summary}
+
+The SERVICE CONTRACT above (when present) defines the scope of the specific
+OpenAPI YAML these rules are being built for. Treat it as a strong signal about
+what belongs to this service — YOU still decide which sections to include, but
+let the contract drive that decision:
+  - A section is in scope when its content matches the service's purpose,
+    capabilities, key_concepts, or inclusion_keywords → keep it and set priority
+    by directness (HIGH/MEDIUM/LOW as defined above).
+  - A section is likely out of scope when its content is dominated by
+    exclusion_keywords or out_of_scope_signals (i.e. it belongs to another MnS)
+    → exclude it unless it clearly also defines rules for THIS service.
+  - extraction_focus should reference the relevant capabilities by name when applicable.
+When the contract is absent, fall back to the inclusion/exclusion rules above.
+
 Document sections to analyze (section_id | title | content preview):
 {sections_summary}
 

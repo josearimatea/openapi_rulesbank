@@ -28,6 +28,9 @@ State reads:
     parsed_sections         (list[dict]) — full section content from reader_node
     extraction_plan         (dict)       — sections_to_extract from planner_node
     helper_context          (str)        — auxiliary 3GPP documents context
+    service_contract        (dict)       — scope contract from contract_builder_node;
+                                           the LLM extracts only rules that belong to
+                                           the target service's OpenAPI YAML
     validation_errors             (list[dict]) — correction errors from Validator (empty on first)
     validator_section_reflection  (list[dict]) — missing-rules decided by Validator (empty on first)
     current_section_idx     (int)        — index of the section to process
@@ -43,6 +46,7 @@ from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.llm_config import llm
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.prompts.extractor_prompts import SectionRules, extractor_prompt
+from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.tools.rag_tools import search_openapi_reference
 
 logger = get_logger(__name__)
@@ -113,6 +117,10 @@ def extractor_node(state: RuleBankState) -> dict:
     sections_index          = _build_sections_index(state["parsed_sections"])
     all_plan_sections       = state["extraction_plan"]["sections_to_extract"]
     helper_context          = state.get("helper_context", "") or "No auxiliary context provided."
+    contract_summary        = (
+        format_contract_summary(state.get("service_contract", {}))
+        or "No service contract provided."
+    )
     # correction + split only — discard errors need no Extractor action
     validation_errors  = [
         e for e in (state.get("validation_errors", []) or [])
@@ -178,6 +186,7 @@ def extractor_node(state: RuleBankState) -> dict:
         "section_content":            section["content"],
         "openapi_reference_overview": openapi_reference_overview,
         "helper_context":             helper_context,
+        "contract_summary":           contract_summary,
         "correction_task":            correction_task,
     })
 

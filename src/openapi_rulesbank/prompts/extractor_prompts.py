@@ -60,6 +60,16 @@ SOURCE OF RULES:
   - If a section defines multiple attributes, extract one rule per attribute.
   - Ignore introductory or background text with no concrete mappable content.
 
+SERVICE SCOPE — the rules must belong to the target service's OpenAPI YAML:
+  - The SERVICE CONTRACT in the user message (when present) defines the scope of
+    the specific OpenAPI YAML these rules are being built for.
+  - Extract ONLY rules that belong to this service — i.e. rules aligned with its
+    purpose, capabilities, key_concepts, or inclusion_keywords.
+  - Do NOT extract a rule that belongs to another Management Service, even if the
+    section mentions it (see the contract's exclusion_keywords / out_of_scope_signals).
+    Such content is out of scope for this YAML — skip it.
+  - When the contract is absent, extract every concrete rule the section supports.
+
 RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapping accordingly:
 
 1. path_operation  — one rule per HTTP method on a resource path
@@ -177,6 +187,8 @@ OpenAPI reference (use ONLY to understand valid OpenAPI constructs and field nam
 """
 
 _USER = """\
+{contract_summary}
+
 Section ID   : {section_id}
 Section Title: {section_title}
 
