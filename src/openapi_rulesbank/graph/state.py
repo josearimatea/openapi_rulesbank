@@ -12,7 +12,8 @@
 #   state.py           → defines WHAT travels between them (shared memory)
 #
 # FIELD OWNERSHIP (which node writes each field):
-#   Reader    → parsed_sections, helper_context, openapi_reference_context
+#   Reader          → parsed_sections, helper_context, openapi_reference_context
+#   ContractBuilder → service_contract
 #   Planner   → extraction_plan
 #   Extractor → raw_rules
 #   Reflector → reflected_rules, section_reflection
@@ -77,6 +78,17 @@ class RuleBankState(TypedDict):
     # specification (data/references/openapi_reference/).
     # Used by the Reflector node for RAG-grounded self-reflection.
     openapi_reference_context: str
+
+    # -------------------------------------------------------------------------
+    # CONTRACT BUILDER OUTPUT — produced by the ContractBuilder Node
+    # -------------------------------------------------------------------------
+
+    # Semantic scope contract for the target Management Service (ServiceContract
+    # as dict). Built once from the spec text, between Reader and Planner.
+    # Read by the Planner (to prioritize sections by scope) and the Extractor
+    # (to classify each rule's contract_status). Empty dict before the
+    # ContractBuilder runs; no other node writes to it afterwards.
+    service_contract: dict
 
     # -------------------------------------------------------------------------
     # PLANNER OUTPUT — produced by the Planner Node

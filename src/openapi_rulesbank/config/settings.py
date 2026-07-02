@@ -58,6 +58,15 @@ OPENAPI_REFERENCE_RETRIEVE_CHUNKS = 5  # number of chunks returned by search_ope
 VALIDATION_ERROR_THRESHOLD = 0.10  # Loop back to Extractor if error rate exceeds 10%
 MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops before forcing forward
 
+# ContractBuilder — semantic scope contract for the target service
+# CONTRACT_LOCATOR_PREVIEW_CHARS: chars of each section's content sent in the
+#   locator table (LLM call 1). The locator only needs a preview to decide
+#   relevance — the full content of located sections goes to LLM call 2.
+# CONTRACT_FALLBACK_SECTIONS: sections used when the locator finds nothing — the
+#   opening sections of a 3GPP spec are usually the overview and definitions.
+CONTRACT_LOCATOR_PREVIEW_CHARS = 200
+CONTRACT_FALLBACK_SECTIONS     = 5
+
 # Section parsing — title validity filter
 # When True, parse_sections() discards sections whose title contains no real words
 # (i.e., titles made up entirely of symbols like table borders: "+---+---+").

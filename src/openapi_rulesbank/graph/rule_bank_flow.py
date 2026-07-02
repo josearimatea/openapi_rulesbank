@@ -13,12 +13,12 @@ INPUT PRE-PROCESSING (outside the graph, run once):
 
 FLOW DIAGRAM:
 
-  [Reader] → [Planner] → [Extractor] → [Reflector] → [Validator] ──→ [Builder] → END
-                              ↑                            │               │
-                              │  error rate > threshold    │    next section available
-                              │  AND section retries < max │               │
-                              └──────── retry section ─────┘               │
-                              └──────────────────── next section ──────────┘
+  [Reader] → [ContractBuilder] → [Planner] → [Extractor] → [Reflector] → [Validator] ──→ [Builder] → END
+                                                  ↑                            │               │
+                                                  │  error rate > threshold    │    next section available
+                                                  │  AND section retries < max │               │
+                                                  └──────── retry section ─────┘               │
+                                                  └──────────────────── next section ──────────┘
 
 ═══════════════════════════════════════════════════════════════════════════════════
 NODE DESCRIPTIONS
@@ -52,6 +52,28 @@ NODE DESCRIPTIONS
   └─────────────────────────────────────────────────────────────────────────────┘
 
   ┌─────────────────────────────────────────────────────────────────────────────┐
+  │ CONTRACT BUILDER                                                            │
+  │ LLM: yes (2 calls)  │  RAG: no  │  Runs once per pipeline execution         │
+  ├─────────────────────────────────────────────────────────────────────────────┤
+  │ Builds the semantic scope contract for the target Management Service.       │
+  │ Defines what the target OpenAPI YAML covers, so the Planner keeps only in-  │
+  │ scope sections and the Extractor extracts only rules that belong to it.     │
+  │                                                                             │
+  │ Steps:                                                                      │
+  │   1. Build summary table (section_id | title | first N chars).             │
+  │   2. LLM call 1 (locator): identifies which section IDs contain purpose,   │
+  │      capabilities, and key concepts. Returns SectionLocator.               │
+  │      Fallback: if no IDs found, uses first CONTRACT_FALLBACK_SECTIONS.      │
+  │   3. Fetches full content of located sections only.                        │
+  │   4. LLM call 2 (extractor): builds ServiceContract from full content —    │
+  │      purpose, capabilities (with type from spec text), key_concepts,       │
+  │      inclusion_keywords, exclusion_keywords, out_of_scope_signals.         │
+  │                                                                             │
+  │ Input  (state):  parsed_sections, target_yaml                              │
+  │ Output (state):  service_contract — ServiceContract as dict                │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────────────────┐
   │ PLANNER                                                                     │
   │ LLM: yes (1 call)  │  RAG: no                                               │
   ├─────────────────────────────────────────────────────────────────────────────┤
@@ -63,7 +85,8 @@ NODE DESCRIPTIONS
   │   3. LLM returns ExtractionPlan with priority and extraction_focus per      │
   │      section (high/medium/low). Uses with_structured_output(ExtractionPlan).│
   │                                                                             │
-  │ Input  (state):  parsed_sections, helper_context, openapi_reference_context │
+  │ Input  (state):  parsed_sections, helper_context, openapi_reference_context,│
+  │                  service_contract                                           │
   │ Output (state):  extraction_plan — {document_summary,                       │
   │                    sections_to_extract: [{section_id, title,                │
   │                                          priority, extraction_focus}]}      │
@@ -176,6 +199,7 @@ from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.graph.conditions import should_retry_section_or_build, should_next_section_or_end
 from openapi_rulesbank.nodes.reader import reader_node
+from openapi_rulesbank.nodes.contract_builder import contract_builder_node
 from openapi_rulesbank.nodes.planner import planner_node
 from openapi_rulesbank.nodes.extractor import extractor_node
 from openapi_rulesbank.nodes.reflector import reflector_node
@@ -197,16 +221,18 @@ def _build_graph(entry_point: str, checkpointer=None):
     graph = StateGraph(RuleBankState)
 
     # Add nodes
-    graph.add_node("reader",    reader_node)
-    graph.add_node("planner",   planner_node)
+    graph.add_node("reader",           reader_node)
+    graph.add_node("contract_builder", contract_builder_node)
+    graph.add_node("planner",          planner_node)
     graph.add_node("extractor", extractor_node)
     graph.add_node("reflector", reflector_node)
     graph.add_node("validator", validator_node)
     graph.add_node("builder",   builder_node)
 
     # Fixed edges
-    graph.add_edge("reader",    "planner")
-    graph.add_edge("planner",   "extractor")
+    graph.add_edge("reader",           "contract_builder")
+    graph.add_edge("contract_builder", "planner")
+    graph.add_edge("planner",          "extractor")
     graph.add_edge("extractor", "reflector")
     graph.add_edge("reflector", "validator")
 
@@ -271,6 +297,7 @@ def build_initial_state(
         "auxiliary_doc_paths":          auxiliary_doc_paths or [],
         "target_yaml":                  target_yaml,
         "legacy_yaml_path":             legacy_yaml_path,
+        "service_contract":             {},  # populated by ContractBuilder before Planner runs
         "validated_rules":              [],  # accumulated via operator.add across sections
         "validation_errors":            [],  # cleared by Builder after each section
         "section_reflection":           [],  # Reflector Fase 2 output; reset by Builder
