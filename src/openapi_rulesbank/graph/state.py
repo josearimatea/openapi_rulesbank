@@ -39,8 +39,9 @@ class RuleBankState(TypedDict):
     auxiliary_doc_paths: list[str]
 
     # Target OpenAPI YAML document the rules are built for, e.g. "ProvMnS".
-    # The Reader extracts only this document's Annex A subsection as format
-    # context. Defaults to settings.TARGET_YAML; main.py --target overrides it.
+    # Used as a label for the legacy YAML and downstream metadata; the document's
+    # Annex A is not used as context. Defaults to settings.TARGET_YAML; main.py
+    # --target overrides it.
     target_yaml: str
 
     # Optional path to a legacy (previous-release) OpenAPI YAML file, e.g. a

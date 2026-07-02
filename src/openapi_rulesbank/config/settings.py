@@ -73,24 +73,14 @@ FILTER_SYMBOLIC_TITLES = True
 # Enable only after reviewing and validating the keyword list for the target document.
 FILTER_BY_KEYWORDS = False
 
-# Target OpenAPI YAML — which OpenAPI document the rules are built for. The
-# Reader extracts ONLY this document's subsection from the spec's normative
-# Annex A (e.g. "TS28532_ProvMnS.yaml") and appends it to helper_context, so the
-# Planner and Extractor see exactly the target YAML format the rules must support
-# (not the whole annex).
+# Target OpenAPI YAML — which OpenAPI document the rules are built for. Used as a
+# label for the legacy YAML and downstream metadata; the rules are built from the
+# spec sections only (the document's Annex A is not used as context).
 #
 # In normal use the target is REQUIRED from the user via main.py --target. This
 # value is the fallback used by local tests and programmatic reader_node() calls
 # that don't set state["target_yaml"]; it is "ProvMnS" for the local test setup.
 TARGET_YAML = "ProvMnS"
-
-# When True, the Reader injects the target YAML subsection (above) into
-# helper_context. Set False to run without any Annex A format context.
-ANNEX_A_AS_HELPER = True
-
-# Max characters of the target YAML subsection appended to helper_context (the
-# embedded YAML can be tens of KB). Keeps the auxiliary context bounded.
-ANNEX_A_MAX_CHARS = 8000
 
 # Optional legacy OpenAPI YAML — a previous release's YAML (e.g. Rel-17) given as
 # extra context for building Rel-18 rules. Provided via main.py --legacy-yaml; no

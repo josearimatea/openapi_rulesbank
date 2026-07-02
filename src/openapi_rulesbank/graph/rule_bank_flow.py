@@ -36,20 +36,18 @@ NODE DESCRIPTIONS
   │      Setext headings (----/====) are normalized to ATX first, so .md from   │
   │      any pandoc version parses. Optional symbolic-title/keyword filters.    │
   │   3. Load auxiliary 3GPP documents (truncated to 2000 chars each).          │
-  │   4. Extract ONLY the target OpenAPI document's subsection from Annex A       │
-  │      (target_yaml, e.g. "ProvMnS" -> the "TS28532_ProvMnS.yaml" block, not   │
-  │      the whole annex) and append it to helper_context as the target YAML     │
-  │      format. This is where the target YAML enters the flow; it then reaches  │
-  │      the Planner and Extractor prompts via helper_context.                   │
-  │   5. If legacy_yaml_path is set, append that previous-release YAML as extra   │
+  │   4. If legacy_yaml_path is set, append that previous-release YAML as extra   │
   │      context (e.g. a Rel-17 YAML when targeting Rel-18).                      │
-  │   6. Read local OpenAPI spec snapshot from data/references/openapi_reference│
+  │   5. Read local OpenAPI spec snapshot from data/references/openapi_reference│
+  │                                                                             │
+  │ The document's Annex A (the embedded target YAML) is deliberately NOT used   │
+  │ as context — the rules are built from the spec sections only.               │
   │                                                                             │
   │ Input  (state):  main_doc_path, auxiliary_doc_paths, target_yaml,            │
   │                  legacy_yaml_path                                            │
   │ Output (state):  parsed_sections   — list[{section_id, title, content}]     │
-  │                  helper_context    — aux docs + target YAML subsection        │
-  │                                      (+ optional legacy YAML), joined         │
+  │                  helper_context    — aux docs (+ optional legacy YAML),       │
+  │                                      joined                                   │
   │                  openapi_reference_context — full OpenAPI spec text         │
   └─────────────────────────────────────────────────────────────────────────────┘
 
