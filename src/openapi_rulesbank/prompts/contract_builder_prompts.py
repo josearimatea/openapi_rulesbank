@@ -54,6 +54,38 @@ class SectionLocator(BaseModel):
         default_factory=list,
         description="Section IDs that define domain terms central to this service."
     )
+    other_services: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of the OTHER Management Services present in the document — every "
+            "MnS that is NOT the target service. Use the short 'XxxMnS' abbreviation "
+            "ONLY when the document actually defines one; many services have no such "
+            "abbreviation (e.g. 'Heartbeat', 'Performance assurance') — for those use "
+            "the service name exactly as the document presents it. Do not invent an "
+            "abbreviation. These services are out of scope for the target contract."
+        )
+    )
+    stage3_clause: str = Field(
+        default="",
+        description=(
+            "The clause-number prefix of the TARGET service's stage 3 block — the "
+            "'solution set' that maps the abstract operations to a concrete protocol "
+            "(RESTful HTTP: paths, methods, schemas, status codes). Identify it by "
+            "titles containing 'solution set', 'RESTful HTTP', or 'Mapping to HTTP...'. "
+            "Return only the clause prefix, e.g. '12.1'. This is the block OpenAPI "
+            "rules must be extracted from. Empty string if the document has no stage 3."
+        )
+    )
+    operation_map_section_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Section IDs of the stage 3 'Mapping of operations' subsections — the "
+            "ones whose table maps each IS operation to its HTTP method and resource "
+            "URI (titles like 'Mapping of operations', 'Operation <name>', 'Mapping "
+            "to HTTP ...'). These give the canonical IS operation names for the "
+            "target's HTTP bindings."
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -61,39 +93,97 @@ class SectionLocator(BaseModel):
 # ---------------------------------------------------------------------------
 
 _LOCATOR_SYSTEM = """\
-You are reading a 3GPP specification that defines a Management Service.
-Your task is to identify which sections of the document contain the information
-needed to understand what this service does and what it supports.
+You are reading a 3GPP specification that defines SEVERAL Management Services
+(MnS), one per top-level clause (e.g. "11.1 Generic provisioning management
+service", "11.2 Generic fault supervision management service", "11.3 Performance
+assurance"). Your task is to identify the sections that belong to the ONE target
+service named by the user — and ONLY that service.
 
-You are looking for sections that contain:
-  - PURPOSE: general description or overview of what this service exists to do
-  - CAPABILITIES: what this service supports — operations, notifications, states,
-    subscriptions, or any other type of capability. Do not assume the type in advance.
-  - KEY_CONCEPTS: domain terms and data structures central to this service
+METHOD:
+  1. Find the umbrella clause whose title names the target service (e.g. for
+     "ProvMnS", the clause titled "...provisioning management service"). Its
+     subsections (same clause number prefix, e.g. 11.1.x) hold that service's
+     stage-2 definitions.
+  2. Select sections that belong to the target service:
+     - PURPOSE: the service's introduction/overview section.
+     - CAPABILITIES: sections defining its operations, notifications, states, or
+       subscriptions. Do not assume the type in advance.
+     - KEY_CONCEPTS: sections defining domain terms/data structures for it.
 
-These may or may not exist as dedicated sections. If you cannot find a clear match
-for a category, return an empty list for that key — do not guess.
+STRICT SCOPE RULES:
+  - A section belongs to the target ONLY if the spec places it under the target's
+    clause. When a title names another service (fault, alarm, performance,
+    heartbeat, streaming, file), it is NOT the target — do not select it.
+  - Sub-section titles may be terse (e.g. "Operations and notifications" with an
+    empty preview). Judge membership from the clause number in the title, not the
+    preview.
+  - Precision over coverage: if you are not certain a section is the target
+    service's, leave it out. Return empty lists rather than guessing.
+
+ALSO IDENTIFY THE OTHER SERVICES:
+  The document defines several Management Services, one per top-level clause.
+  In `other_services`, list every service that is NOT the target — read their
+  umbrella-clause titles (e.g. "11.2 Generic fault supervision management
+  service", "11.4 Heartbeat"). Use the short "XxxMnS" abbreviation only when the
+  document defines one; otherwise use the name as written (e.g. "Heartbeat"). Do
+  not invent abbreviations. These are recorded as out of scope for the target.
+
+ALSO IDENTIFY THE TARGET'S STAGE 3 BLOCK:
+  3GPP specs describe each service in two stages:
+    - Stage 2: abstract definitions — operations, input/output parameters,
+      notifications — with NO protocol binding (no HTTP method, URI, status code,
+      media type, or JSON schema). Titles like "Operations and notifications",
+      "Input parameters", "Output parameters".
+    - Stage 3: the "solution set" that maps stage 2 onto a concrete protocol
+      (RESTful HTTP): resource paths, HTTP methods, schemas, response codes.
+      Titles contain "solution set", "RESTful HTTP", or "Mapping to HTTP...".
+  OpenAPI rules can only come from stage 3. In `stage3_clause`, return the
+  clause-number prefix of the TARGET service's stage 3 block (e.g. "12.1"), or
+  "" if the document has no stage 3.
+
+ALSO LOCATE THE OPERATION MAPPING:
+  Inside the target's stage 3 block, find the sections whose tables map each IS
+  operation to its HTTP method and resource URI. Return their section IDs in
+  `operation_map_section_ids`.
+  IMPORTANT: return the specific SUBSECTIONS that actually CONTAIN the mapping
+  table (e.g. "Mapping of IS operations to SS equivalents", "Operation <name>",
+  "Mapping to HTTP ..."), NOT the parent heading. Parent headings such as
+  "Mapping of operations" usually have no content — their previews are empty
+  ("##"/"###") — so select the child sections whose preview shows the actual
+  table instead. These sections are the source of the canonical IS operation
+  names for the target's HTTP bindings.
 """
 
 _LOCATOR_USER = """\
 Service being documented: {service_name}
 
-Below is a summary of all sections: section_id | title | first 200 characters of content.
+Below is a summary of all sections, one per line, in the format:
+    section_id | title | first 600 characters of content
 
-Identify which section IDs contain PURPOSE, CAPABILITIES, and KEY_CONCEPTS.
+The section_id is the FIRST column only (a short number like "5" or "42"),
+NOT the clause number embedded in the title (like "11.1.1").
+
+Identify which sections contain PURPOSE, CAPABILITIES, and KEY_CONCEPTS, and
+return their section_id — the first-column value — for each category.
 
 SECTION SUMMARIES:
 {section_summaries}
 """
 
 _CONTRACT_SYSTEM = """\
-You are building a scope contract for a 3GPP Management Service.
+You are building a scope contract for ONE 3GPP Management Service (the target).
 This contract will be used by downstream pipeline nodes to decide whether rules
 extracted from the spec belong to this service or not.
 
-Extract only what is explicitly present in the provided spec text.
-If a field cannot be determined from the text, return an empty list or empty string.
-Do not invent anything not present in the text.
+PRINCIPLES:
+  - Extract only what is explicitly present in the provided spec text. Do not
+    invent anything not present in the text.
+  - Precision over coverage: include a capability or concept ONLY when the text
+    makes clear it belongs to the target service. When unsure, leave it out — the
+    Planner completes the picture later. A small, correct contract is better than
+    a large, contaminated one.
+  - Every list must contain UNIQUE entries. Never repeat the same value.
+  - If a field cannot be determined from the text, return an empty list or string.
 """
 
 _CONTRACT_USER = """\
@@ -102,21 +192,41 @@ Service being documented: {service_name}
 RELEVANT SPEC SECTIONS:
 {relevant_content}
 
-From the text above, extract the scope contract for this service.
+From the text above, extract the scope contract for this service ONLY.
+Include something only when the text makes clear it belongs to this service.
+Every list must have unique entries — never repeat a value.
+
+For purpose: one sentence describing what THIS service exists to do.
 
 For capabilities:
-  - List every operation, notification, state, subscription, or other capability
-    the spec declares this service supports.
+  - A capability is something the service OFFERS to its consumers — an action it
+    performs or exposes: an invocable operation, an emitted notification, a
+    subscription. List each one once.
+  - Do NOT list conditions, states, or descriptive facts as capabilities. Text
+    that merely DESCRIBES a situation (e.g. pre/post conditions, before/after
+    states, triggering circumstances, counts, or the internal state model of an
+    operation or notification) is NOT a capability — it describes how or when a
+    capability behaves, not a capability itself. Skip it.
   - The type of each capability comes from how the spec labels it:
     if the spec says "the following operations", type = operation;
-    if it says "the following notifications", type = notification;
-    if it says "the following states", type = state; and so on.
+    if it says "the following notifications", type = notification; and so on.
+    Use "state" only if the spec genuinely offers a state as a service feature —
+    never for a before/after or trigger condition of another capability.
   - If the spec does not label the type explicitly, infer from context.
+  - Do not include capabilities the text attributes to a different service.
 
-For inclusion_keywords: terms that appear repeatedly and are specific to this service.
-For exclusion_keywords: terms that belong to another MnS — use format "term → OtherMnS"
-  when the other service is known.
-For out_of_scope_signals: short "term → OtherMnS" pairs, e.g. "alarm → FaultMnS".
+For key_concepts: unique domain terms/data structures central to THIS service.
+For inclusion_keywords: unique terms that are specific to THIS service.
+For exclusion_keywords: terms the text attributes to another MnS — use format
+  "term → OtherMnS" when the other service is known (e.g. "alarm → FaultMnS").
+For out_of_scope_signals: short "term → OtherMnS" pairs, e.g. "threshold → PerfMnS".
+
+For operation_map: if the text contains a "Mapping of operations" table (IS
+  operation ↔ HTTP method ↔ resource URI), extract one entry per (operation,
+  method) pair: {{"is_operation": "<name>", "http_method": "<METHOD>",
+  "resource_uri": "<uri>"}}. Use the exact IS operation name from the table (e.g.
+  "getMOIAttributes"). If an operation maps to multiple methods, emit one entry
+  per method. Leave the list empty if no such table is present.
 """
 
 

@@ -53,6 +53,11 @@ def _build_sections_summary(sections: list[dict]) -> str:
     """
     Formats parsed_sections into a compact table for the locator prompt.
     Each row: section_id | title | first N chars of content.
+
+    section_id (the first column, e.g. "5") is the canonical unique key the
+    locator should return and that contract_builder_node matches against; the
+    title is shown alongside for context. section_id is used as the key because
+    titles are not guaranteed unique across specs (e.g. repeated "Description").
     """
     rows = []
     for s in sections:
@@ -96,18 +101,50 @@ def contract_builder_node(state: RuleBankState) -> dict:
         + locator.concepts_section_ids
     )
 
-    if located_ids:
-        selected_sections = [s for s in parsed_sections if s["section_id"] in located_ids]
-    else:
+    # section_id is the canonical key (unique per document). The locator is asked
+    # to return it, but sometimes returns the title instead, so we also accept an
+    # exact title match as a safety net. Both are exact dict lookups — no string
+    # parsing. by_id takes precedence; by_title only fills unresolved values.
+    by_id    = {s["section_id"]: s for s in parsed_sections}
+    by_title = {s["title"]: s for s in parsed_sections}
+
+    def _resolve(refs) -> list[dict]:
+        """Maps locator refs (ids, or titles as a fallback) to sections, deduped."""
+        out, seen_ids = [], set()
+        for ref in refs:
+            section = by_id.get(ref) or by_title.get(ref)
+            if section is not None and section["section_id"] not in seen_ids:
+                out.append(section)
+                seen_ids.add(section["section_id"])
+        return out
+
+    selected_sections = _resolve(located_ids)
+
+    if not selected_sections:
         logger.warning(
-            "ContractBuilder: locator returned no section IDs — "
-            f"falling back to first {CONTRACT_FALLBACK_SECTIONS} sections."
+            "ContractBuilder: locator returned no matching section IDs "
+            f"(got {sorted(located_ids)[:5]}...) — falling back to first "
+            f"{CONTRACT_FALLBACK_SECTIONS} sections."
         )
         selected_sections = parsed_sections[:CONTRACT_FALLBACK_SECTIONS]
+
+    # Stage 3 "Mapping of operations" sections — the canonical IS-operation ↔ HTTP
+    # binding table. Sent to call 2 (under a clear header) so it can fill
+    # operation_map with the correct operation names. Kept separate from the
+    # scope sections above, which are stage 2.
+    mapping_sections = _resolve(locator.operation_map_section_ids)
 
     relevant_content = "\n\n".join(
         f"### {s['title']}\n{s['content']}" for s in selected_sections
     )
+    if mapping_sections:
+        mapping_content = "\n\n".join(
+            f"### {s['title']}\n{s['content']}" for s in mapping_sections
+        )
+        relevant_content += (
+            "\n\n=== OPERATION MAPPING (stage 3 — source of operation_map) ===\n"
+            + mapping_content
+        )
 
     # --- LLM call 2: extract the contract from full section content ---
     contract_chain = contract_extract_prompt | llm.with_structured_output(ServiceContract)
@@ -115,6 +152,65 @@ def contract_builder_node(state: RuleBankState) -> dict:
         "service_name":     service_name,
         "relevant_content": relevant_content,
     })
+
+    # Deterministic dedup: the prompt asks for unique entries, but the LLM can
+    # still repeat values (observed: the same concept emitted hundreds of times).
+    # Enforce uniqueness here while preserving first-seen order.
+    def _dedup(items: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for x in items:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+    # Record the document's other Management Services (found by the locator) as
+    # out of scope. This gives the Planner/Extractor explicit negative signals
+    # without the extractor having to read those services' sections — the
+    # extractor only saw the target's sections, so it cannot name them itself.
+    other_services = [f"{name} (out of scope)" for name in locator.other_services]
+
+    # Also flag the located target sections that fall OUTSIDE the stage 3 block as
+    # out of scope. These are sections about the target service but not part of the
+    # solution set, so no rules should come from them. Generic: the stage 3 clause
+    # comes from the LLM; membership is a clause-number prefix test, no fixed
+    # numbering. We do not label WHAT they are (could be stage 1 or 2) — only that
+    # they are out of scope. To keep the contract small, collapse the sections to
+    # their top-level clause (first two number parts, e.g. "11.1.1.2" -> "11.1")
+    # and emit one signal per distinct block instead of one per subsection.
+    out_of_scope_sections: list[str] = []
+    if locator.stage3_clause:
+        prefix = locator.stage3_clause + "."
+        blocks: list[str] = []
+        for s in selected_sections:
+            clause = s["title"].strip().split(" ", 1)[0]
+            in_stage3 = clause == locator.stage3_clause or clause.startswith(prefix)
+            if not in_stage3:
+                blocks.append(".".join(clause.split(".")[:2]))  # top-level block
+        out_of_scope_sections = [
+            f"{b}.x (out of scope)" for b in dict.fromkeys(blocks)  # unique, ordered
+        ]
+
+    contract.key_concepts        = _dedup(contract.key_concepts)
+    contract.inclusion_keywords  = _dedup(contract.inclusion_keywords)
+    contract.exclusion_keywords  = _dedup(contract.exclusion_keywords)
+    contract.out_of_scope_signals = _dedup(
+        contract.out_of_scope_signals + other_services + out_of_scope_sections
+    )
+
+    # Record where the OpenAPI rules must come from: the target's stage 3 block
+    # (the RESTful HTTP solution set) identified by the locator. Stage 2 sections
+    # (abstract definitions) are not a rule source. This guides the Planner to
+    # extract only from stage 3.
+    if locator.stage3_clause:
+        contract.stage_scope = (
+            f"OpenAPI rules come ONLY from the stage 3 block (the RESTful HTTP "
+            f"solution set) under clause {locator.stage3_clause}.x. Stage 2 "
+            f"sections (abstract operation/parameter definitions, e.g. 'Input "
+            f"parameters', 'Output parameters', 'Operations and notifications') "
+            f"have no protocol binding and are NOT a rule source — exclude them."
+        )
 
     logger.info(
         f"ContractBuilder complete: {len(contract.capabilities)} capabilities, "

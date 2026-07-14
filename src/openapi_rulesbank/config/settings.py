@@ -64,7 +64,7 @@ MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops befo
 #   relevance — the full content of located sections goes to LLM call 2.
 # CONTRACT_FALLBACK_SECTIONS: sections used when the locator finds nothing — the
 #   opening sections of a 3GPP spec are usually the overview and definitions.
-CONTRACT_LOCATOR_PREVIEW_CHARS = 200
+CONTRACT_LOCATOR_PREVIEW_CHARS = 600
 CONTRACT_FALLBACK_SECTIONS     = 5
 
 # Section parsing — title validity filter
