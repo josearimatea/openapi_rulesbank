@@ -13,5 +13,8 @@ data/references/
 # Jupyter checkpoints
 .ipynb_checkpoints/
 
+# Tracking / project logbook (personal, not versioned)
+docs/
+
 # uv
 uv.lock
