@@ -24,9 +24,14 @@ import pytest
 
 from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE
 from openapi_rulesbank.nodes.reader import reader_node
+from openapi_rulesbank.nodes.contract_builder import contract_builder_node
 from openapi_rulesbank.graph.rule_bank_flow import get_compiled_graph_from_planner
 
 TARGET_IDS = {"323", "325", "326", "327", "328", "346", "347", "348", "349", "356"}
+
+# Target service the rules are scoped to (the ContractBuilder builds the scope
+# contract for it). It is the service *name*, not a YAML to inject.
+TARGET_SERVICE = "ProvMnS"
 
 
 @pytest.fixture(scope="module")
@@ -41,6 +46,7 @@ def pipeline_output(qdrant):
     reader_result = reader_node({
         "main_doc_path":       os.path.abspath(TSPEC_DATA_TEST_FILE),
         "auxiliary_doc_paths": [],
+        "target_yaml":         TARGET_SERVICE,
     })
 
     sections_by_id = {s["section_id"]: s for s in reader_result["parsed_sections"]}
@@ -48,11 +54,22 @@ def pipeline_output(qdrant):
     missing        = TARGET_IDS - {s["section_id"] for s in target_parsed}
     assert not missing, f"TARGET_IDS not found in parsed_sections: {missing}"
 
+    # The graph starts at the Planner (get_compiled_graph_from_planner skips the
+    # Reader and the ContractBuilder), so run the ContractBuilder here over the
+    # scoped sections to give the Planner/Extractor the same service_contract
+    # they get in a full run.
+    contract_result = contract_builder_node({
+        "parsed_sections": target_parsed,
+        "target_yaml":     TARGET_SERVICE,
+    })
+
     initial_state = {
         **reader_result,
         "parsed_sections":              target_parsed,
         "main_doc_path":                os.path.abspath(TSPEC_DATA_TEST_FILE),
         "auxiliary_doc_paths":          [],
+        "target_yaml":                  TARGET_SERVICE,
+        "service_contract":             contract_result["service_contract"],
         "validated_rules":              [],
         "validation_errors":            [],
         "section_reflection":           [],

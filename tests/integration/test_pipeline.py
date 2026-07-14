@@ -20,11 +20,16 @@ from datetime import datetime
 import pytest
 
 from openapi_rulesbank.config.paths import OUTPUTS_RULES_DIR, TSPEC_DATA_TEST_FILE
-from openapi_rulesbank.graph.rule_bank_flow import get_compiled_graph
+from openapi_rulesbank.graph.rule_bank_flow import build_initial_state, get_compiled_graph
 
 # Full-document runs are saved under rules_bank/Final_rules/ to keep them
 # separated from scoped/exploratory runs that land directly in rules_bank/.
 FINAL_RULES_DIR = os.path.join(OUTPUTS_RULES_DIR, "Final_rules")
+
+# Target service the rules are scoped to. It is the service *name* the rules are
+# built for (the ContractBuilder builds the scope contract for it) — not a YAML
+# to inject. Run with only the spec (--doc) and this target; no aux/legacy.
+TARGET_SERVICE = "ProvMnS"
 
 
 @pytest.fixture(scope="module")
@@ -45,18 +50,15 @@ def pipeline_output(qdrant):
         FINAL_RULES_DIR, f"rules_bank_{doc_stem}_full_{timestamp}.json"
     )
 
-    initial_state = {
-        "main_doc_path":           os.path.abspath(TSPEC_DATA_TEST_FILE),
-        "auxiliary_doc_paths":     [],
-        "validated_rules":              [],
-        "validation_errors":            [],
-        "section_reflection":           [],
-        "validator_section_reflection": [],
-        "current_section_idx":          0,
-        "section_iteration_count":      0,
-        "messages":                     [],
-        "final_output_path":            output_file,
-    }
+    # Same starting state the CLI produces (build_initial_state), scoped to
+    # TARGET_SERVICE. Only the spec and target are provided — no aux/legacy.
+    initial_state = build_initial_state(
+        main_doc_path=os.path.abspath(TSPEC_DATA_TEST_FILE),
+        target_yaml=TARGET_SERVICE,
+    )
+    # Pre-set the output path so the Builder writes into Final_rules/ (it reuses
+    # final_output_path when already present — see src/nodes/builder.py).
+    initial_state["final_output_path"] = output_file
 
     pipeline = get_compiled_graph()
     result = pipeline.invoke(initial_state)
