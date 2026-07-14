@@ -139,6 +139,16 @@ let the contract drive that decision:
     exclusion_keywords or out_of_scope_signals (i.e. it belongs to another MnS)
     → exclude it unless it clearly also defines rules for THIS service.
   - extraction_focus should reference the relevant capabilities by name when applicable.
+  - SCOPE IS AN INTERSECTION — a section qualifies ONLY if BOTH hold:
+      (a) it belongs to THIS service (matches purpose/capabilities/inclusion, and
+          is NOT dominated by exclusion_keywords/out_of_scope_signals), AND
+      (b) it is in the stage 3 block named by the contract's "Stage scope"
+          (e.g. clause 12.1.x for this service — NOT the stage 3 block of another
+          service such as 12.2.x, 12.3.x, which belong to other MnS).
+    Exclude a section if EITHER condition fails. In particular, the stage 3 block
+    of a DIFFERENT service (another MnS) is out of scope — do not select it.
+    Also exclude every stage 2 section (abstract operation/parameter definitions),
+    even this service's, since stage 2 is not a source of OpenAPI rules.
 When the contract is absent, fall back to the inclusion/exclusion rules above.
 
 Document sections to analyze (section_id | title | content preview):

@@ -88,7 +88,23 @@ def planner_node(state: RuleBankState) -> dict:
         "contract_summary":    contract_summary,
     })
 
-    selected_ids = {s.section_id for s in plan.sections_to_extract}
+    # Keep only plan entries whose section_id actually exists in parsed_sections.
+    # The LLM occasionally returns an id that isn't among the input sections
+    # (hallucinated or duplicated); counting those would break the Builder's
+    # section accounting (planned + excluded_planner must equal what the Planner
+    # received) and point the Extractor at a section that doesn't exist.
+    input_ids = {s["section_id"] for s in state["parsed_sections"]}
+    valid_plan_sections = [
+        s for s in plan.sections_to_extract if s.section_id in input_ids
+    ]
+    dropped = len(plan.sections_to_extract) - len(valid_plan_sections)
+    if dropped:
+        logger.warning(
+            f"Planner returned {dropped} section id(s) not in parsed_sections — dropped."
+        )
+    plan.sections_to_extract = valid_plan_sections
+
+    selected_ids = {s.section_id for s in valid_plan_sections}
 
     # Sections the Planner did not select — computed here so the accounting
     # is always accurate regardless of test limitations applied outside the node.
@@ -98,7 +114,7 @@ def planner_node(state: RuleBankState) -> dict:
         if s["section_id"] not in selected_ids
     ]
 
-    selected = len(plan.sections_to_extract)
+    selected = len(valid_plan_sections)
     excluded = len(excluded_sections_planner)
     logger.info(
         f"Planner Node complete — {selected} section(s) selected, {excluded} excluded."

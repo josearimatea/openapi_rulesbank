@@ -70,6 +70,15 @@ SERVICE SCOPE — the rules must belong to the target service's OpenAPI YAML:
     Such content is out of scope for this YAML — skip it.
   - When the contract is absent, extract every concrete rule the section supports.
 
+OPERATION NAMING — use the contract's "Operation map" for source_name:
+  - The contract's "Operation map" lists each IS operation with its HTTP method
+    and resource URI (e.g. "getMOIAttributes → GET /{{className}}={{id}}").
+  - For path_operation, response, and request_body rules, set source_name to the
+    IS operation name from that map — match by HTTP method + resource URI.
+    Example: a GET on /{{className}}={{id}} → source_name = "getMOIAttributes".
+  - NEVER use the bare HTTP method (e.g. "GET") as source_name, and NEVER invent
+    an operation name (e.g. "retrieveMOI") that is not in the map or the section.
+
 RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapping accordingly:
 
 1. path_operation  — one rule per HTTP method on a resource path
