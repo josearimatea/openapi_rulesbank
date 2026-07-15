@@ -47,7 +47,11 @@ from openapi_rulesbank.config.llm_config import llm
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.prompts.extractor_prompts import SectionRules, extractor_prompt
 from openapi_rulesbank.schemas.contract import format_contract_summary
-from openapi_rulesbank.tools.rag_tools import search_openapi_reference
+from openapi_rulesbank.tools.rag_tools import (
+    search_openapi_reference,
+    search_spec,
+    umbrella_mns_for as _umbrella_mns,
+)
 
 logger = get_logger(__name__)
 
@@ -174,6 +178,21 @@ def extractor_node(state: RuleBankState) -> dict:
     rag_query = f"{section_title} — {focus}"
     openapi_reference_overview = search_openapi_reference(rag_query)
 
+    # Retrieve related chunks from the 3GPP document itself (temporary spec RAG),
+    # scoped to the target service's stage 2 definitions — that is where the
+    # canonical IS operation name behind an HTTP method lives. Restricting to the
+    # same MnS as the current (stage 3) section and to stage 2 keeps the retrieval
+    # on the target service and off unrelated services' look-alike sections.
+    target_mns = _umbrella_mns(section_title, state["parsed_sections"])
+    spec_filters = {"stage": "2"}
+    if target_mns:
+        spec_filters["mns"] = target_mns
+    spec_context = search_spec(
+        f"{section_title} {focus} {section['content'][:300]}",
+        state.get("spec_collection_name", ""),
+        filters=spec_filters,
+    ) or "No related spec context retrieved."
+
     logger.debug(
         f"Extracting [{section_id}] '{section_title}' "
         f"(priority={plan_section['priority']}, attempt={section_iteration_count + 1})."
@@ -185,6 +204,7 @@ def extractor_node(state: RuleBankState) -> dict:
         "extraction_focus":           focus,
         "section_content":            section["content"],
         "openapi_reference_overview": openapi_reference_overview,
+        "spec_context":               spec_context,
         "helper_context":             helper_context,
         "contract_summary":           contract_summary,
         "correction_task":            correction_task,

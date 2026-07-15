@@ -54,6 +54,12 @@ EMBEDDING_MODEL          = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIM            = 384   # output dimension for all-MiniLM-L6-v2
 OPENAPI_REFERENCE_RETRIEVE_CHUNKS = 5  # number of chunks returned by search_openapi_reference()
 
+# Spec RAG — the main 3GPP document is indexed into a temporary Qdrant collection
+# per run (via qdrant_3gpp_rag) so the Extractor can retrieve related sections
+# (e.g. the stage 2 definition behind a stage 3 mapping). Dropped by the Builder.
+SPEC_COLLECTION_PREFIX  = "spec_tmp_"  # temporary collection name prefix (+ random suffix)
+SPEC_RETRIEVE_CHUNKS    = 4            # chunks returned by search_spec()
+
 # Pipeline flow control
 VALIDATION_ERROR_THRESHOLD = 0.10  # Loop back to Extractor if error rate exceeds 10%
 MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops before forcing forward

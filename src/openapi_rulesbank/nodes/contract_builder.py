@@ -45,6 +45,7 @@ from openapi_rulesbank.prompts.contract_builder_prompts import (
     contract_extract_prompt,
 )
 from openapi_rulesbank.schemas.contract import ServiceContract
+from openapi_rulesbank.tools.rag_tools import index_spec_sections
 
 logger = get_logger(__name__)
 
@@ -128,23 +129,9 @@ def contract_builder_node(state: RuleBankState) -> dict:
         )
         selected_sections = parsed_sections[:CONTRACT_FALLBACK_SECTIONS]
 
-    # Stage 3 "Mapping of operations" sections — the canonical IS-operation ↔ HTTP
-    # binding table. Sent to call 2 (under a clear header) so it can fill
-    # operation_map with the correct operation names. Kept separate from the
-    # scope sections above, which are stage 2.
-    mapping_sections = _resolve(locator.operation_map_section_ids)
-
     relevant_content = "\n\n".join(
         f"### {s['title']}\n{s['content']}" for s in selected_sections
     )
-    if mapping_sections:
-        mapping_content = "\n\n".join(
-            f"### {s['title']}\n{s['content']}" for s in mapping_sections
-        )
-        relevant_content += (
-            "\n\n=== OPERATION MAPPING (stage 3 — source of operation_map) ===\n"
-            + mapping_content
-        )
 
     # --- LLM call 2: extract the contract from full section content ---
     contract_chain = contract_extract_prompt | llm.with_structured_output(ServiceContract)
@@ -218,4 +205,19 @@ def contract_builder_node(state: RuleBankState) -> dict:
         f"{len(contract.exclusion_keywords)} exclusion keyword(s)."
     )
 
-    return {"service_contract": contract.model_dump()}
+    # --- Spec RAG (temporary) ---
+    # Index the document's sections into a per-run Qdrant collection, tagging each
+    # with its MnS and stage (using the stage3_clause just identified) so the
+    # Extractor can retrieve the target service's stage 2 definitions — where the
+    # canonical IS operation names live. The Builder drops this collection when the
+    # run ends. Non-fatal: the pipeline continues without spec RAG on failure.
+    spec_collection_name = ""
+    try:
+        spec_collection_name = index_spec_sections(parsed_sections, locator.stage3_clause)
+    except Exception as e:
+        logger.warning(f"Spec RAG indexing failed ({e}); continuing without spec RAG.")
+
+    return {
+        "service_contract":     contract.model_dump(),
+        "spec_collection_name": spec_collection_name,
+    }

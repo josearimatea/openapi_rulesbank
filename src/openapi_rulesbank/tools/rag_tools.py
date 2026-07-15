@@ -17,6 +17,8 @@ Functions:
     search_openapi_reference(query, k) — semantic search, returns joined chunk texts
 """
 
+import os
+import uuid
 from functools import lru_cache
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -24,6 +26,8 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+
+from qdrant_3gpp_rag import QdrantFactory, index_segments, drop_collection, retrieve
 
 from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.hardware import device
@@ -33,10 +37,161 @@ from openapi_rulesbank.config.settings import (
     CHUNK_SIZE, CHUNK_OVERLAP,
     EMBEDDING_MODEL, EMBEDDING_DIM,
     OPENAPI_REFERENCE_RETRIEVE_CHUNKS,
+    SPEC_COLLECTION_PREFIX, SPEC_RETRIEVE_CHUNKS,
 )
 from openapi_rulesbank.tools.document_tools import load_openapi_reference
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Spec RAG — index the main 3GPP document into a temporary Qdrant collection
+# and retrieve related sections during extraction. Backed by qdrant_3gpp_rag.
+# ---------------------------------------------------------------------------
+
+def _spec_factory() -> QdrantFactory:
+    """Shared QdrantFactory for the spec RAG (same host/port/model as this project)."""
+    return QdrantFactory.get_instance(
+        host=QDRANT_HOST, port=QDRANT_PORT,
+        model_name=EMBEDDING_MODEL, device=device,
+    )
+
+
+def _clause_prefix(title: str, levels: int) -> str:
+    """Return the leading clause number of a title, to `levels` parts.
+
+    "12.1.1.3 createMOI" with levels=2 -> "12.1". "" if the title has no clause
+    number. Generic — no fixed numbering assumed.
+    """
+    head = title.strip().split(" ", 1)[0]
+    parts = head.split(".")
+    if not parts or not parts[0].isdigit():
+        return ""
+    return ".".join(parts[:levels])
+
+
+def _service_name_from_title(title: str) -> str:
+    """Strip the leading clause number from a title, leaving the service name.
+
+    "11.1 Generic provisioning management service" -> "Generic provisioning
+    management service". This name is stable across the stage 2 (e.g. 11.1) and
+    stage 3 (e.g. 12.1) copies of the same service, so it groups them together.
+    """
+    parts = title.strip().split(" ", 1)
+    return parts[1].strip() if len(parts) > 1 else title.strip()
+
+
+def _umbrella_titles(sections: list[dict]) -> dict[str, str]:
+    """Map each level-2 clause prefix to its service name (number stripped).
+
+    E.g. {"11.1": "Generic provisioning management service",
+          "12.1": "Generic provisioning management service", ...}. A section is an
+    umbrella when it is itself exactly a level-2 clause. Using the number-stripped
+    name means the stage 2 and stage 3 blocks of one service share the same `mns`.
+    """
+    umbrellas: dict[str, str] = {}
+    for s in sections:
+        clause = _clause_prefix(s["title"], levels=2)
+        if clause and _clause_prefix(s["title"], levels=3) == clause:
+            umbrellas.setdefault(clause, _service_name_from_title(s["title"]))
+    return umbrellas
+
+
+def umbrella_mns_for(section_title: str, sections: list[dict]) -> str:
+    """Return the MnS (umbrella title) that owns a section, or "" if unknown.
+
+    Matches the `mns` metadata written by _label_sections, so callers can build a
+    retrieval filter that scopes to the same service as a given section.
+    """
+    clause2 = _clause_prefix(section_title, levels=2)
+    return _umbrella_titles(sections).get(clause2, "")
+
+
+def _label_sections(sections: list[dict], stage3_clause: str = "") -> list[dict]:
+    """Tag each section with its owning MnS and 3GPP stage, structurally.
+
+    - mns: the title of the level-2 umbrella clause the section falls under
+      (e.g. "11.1 Generic provisioning management service"). Derived purely from
+      the clause numbering, so it works for any spec without hardcoded numbers.
+    - stage: "3" when the section sits under the target's stage 3 block
+      (stage3_clause), else "2". Best-effort; used only as a retrieval filter.
+
+    Returns segment dicts ready for index_segments: {text, section_id, title,
+    clause, mns, stage}.
+    """
+    # Level-2 umbrella titles keyed by their clause prefix (e.g. "11.1" -> title).
+    umbrellas = _umbrella_titles(sections)
+
+    segments = []
+    for s in sections:
+        clause2 = _clause_prefix(s["title"], levels=2)
+        mns = umbrellas.get(clause2, "")
+        in_stage3 = bool(stage3_clause) and (
+            clause2 == stage3_clause
+            or _clause_prefix(s["title"], levels=len(stage3_clause.split("."))) == stage3_clause
+            or s["title"].strip().split(" ", 1)[0].startswith(stage3_clause + ".")
+        )
+        segments.append({
+            "text":       f"{s['title']}\n{s['content']}",
+            "section_id": s["section_id"],
+            "title":      s["title"],
+            "clause":     clause2,
+            "mns":        mns,
+            "stage":      "3" if in_stage3 else "2",
+        })
+    return segments
+
+
+def index_spec_sections(sections: list[dict], stage3_clause: str = "") -> str:
+    """Index the document's sections into a fresh temporary collection.
+
+    Each chunk keeps mns/stage/clause metadata so retrieval can be scoped to one
+    service and stage. Returns the collection name (unique per call).
+    """
+    collection_name = f"{SPEC_COLLECTION_PREFIX}{uuid.uuid4().hex[:12]}"
+    segments = _label_sections(sections, stage3_clause=stage3_clause)
+    index_segments(
+        segments,
+        factory=_spec_factory(),
+        collection_name=collection_name,
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        embedding_dim=EMBEDDING_DIM,
+    )
+    logger.info(f"Indexed {len(segments)} spec section(s) into '{collection_name}'.")
+    return collection_name
+
+
+def search_spec(
+    query: str,
+    collection_name: str,
+    k: int = SPEC_RETRIEVE_CHUNKS,
+    filters: dict | None = None,
+) -> str:
+    """Retrieve the most relevant spec chunks for a query, optionally filtered.
+
+    Dense similarity search over the temporary spec collection. Pass filters
+    (e.g. {"mns": "...", "stage": "2"}) to scope retrieval to one service/stage.
+    Returns the chunk texts joined for prompt injection, or "" if unavailable.
+    """
+    if not collection_name:
+        return ""
+    factory = _spec_factory()
+    if not factory.client.collection_exists(collection_name):
+        logger.warning(f"Spec collection '{collection_name}' not found — skipping spec RAG.")
+        return ""
+    result = retrieve(
+        query, factory=factory, collection_name=collection_name, k=k, filters=filters,
+    )
+    if not result.docs:
+        return ""
+    return "\n\n---\n\n".join(doc.page_content for doc in result.docs)
+
+
+def drop_spec_collection(collection_name: str) -> None:
+    """Remove the temporary spec collection at the end of a run."""
+    if collection_name:
+        drop_collection(_spec_factory(), collection_name)
 
 
 # ---------------------------------------------------------------------------

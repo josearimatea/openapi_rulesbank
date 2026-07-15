@@ -20,10 +20,14 @@ dependencies = [
     "pytest>=7.1.2",
     "python-dotenv>=1.2.2",
     "qdrant-client>=1.17.1",
+    "qdrant-3gpp-rag",
     "requests>=2.32.5",
     "sentence-transformers>=5.3.0",
     "torch>=2.0.0",
 ]
+
+[tool.uv.sources]
+qdrant-3gpp-rag = { path = "../qdrant_3gpp_rag", editable = true }
 
 [project.scripts]
 openapi-rulesbank = "openapi_rulesbank.main:main"
