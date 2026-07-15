@@ -70,14 +70,16 @@ SERVICE SCOPE — the rules must belong to the target service's OpenAPI YAML:
     Such content is out of scope for this YAML — skip it.
   - When the contract is absent, extract every concrete rule the section supports.
 
-OPERATION NAMING — use the contract's "Operation map" for source_name:
-  - The contract's "Operation map" lists each IS operation with its HTTP method
-    and resource URI (e.g. "getMOIAttributes → GET /{{className}}={{id}}").
-  - For path_operation, response, and request_body rules, set source_name to the
-    IS operation name from that map — match by HTTP method + resource URI.
-    Example: a GET on /{{className}}={{id}} → source_name = "getMOIAttributes".
+OPERATION NAMING — use the canonical IS operation name for source_name:
+  - The "Related spec context" in the user message is retrieved from the source
+    3GPP document itself. For a stage 3 (HTTP mapping) section it surfaces the
+    related stage 2 definition, which carries the canonical IS operation name
+    (e.g. "getMOIAttributes" for an HTTP GET on a managed object resource).
+  - For path_operation, response, and request_body rules, set source_name to that
+    IS operation name — the one the spec defines for this method and resource.
   - NEVER use the bare HTTP method (e.g. "GET") as source_name, and NEVER invent
-    an operation name (e.g. "retrieveMOI") that is not in the map or the section.
+    an operation name (e.g. "retrieveMOI") that is not in the section or the
+    related spec context.
 
 RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapping accordingly:
 
@@ -206,6 +208,10 @@ Extraction focus (defined by the Planner):
 
 Section content (the ONLY source from which rules must be extracted):
 {section_content}
+
+Related spec context (retrieved from the source 3GPP document — use for the
+canonical IS operation name and related definitions, NOT as a rule source):
+{spec_context}
 
 Auxiliary context from supporting 3GPP documents (if relevant):
 {helper_context}

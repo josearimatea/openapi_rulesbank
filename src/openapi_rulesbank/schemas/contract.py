@@ -50,25 +50,6 @@ class Capability(BaseModel):
     )
 
 
-class OperationMapping(BaseModel):
-    """
-    One row of the stage 3 'Mapping of operations' table: an IS operation and its
-    concrete HTTP binding. Fixed to the 3GPP RESTful solution-set shape; specs
-    without a stage 3 REST mapping simply leave operation_map empty.
-    """
-
-    is_operation: str = Field(
-        description="The IS operation name from the mapping table (e.g. 'getMOIAttributes')."
-    )
-    http_method: str = Field(
-        description="The HTTP method it maps to (e.g. 'GET', 'PUT', 'PATCH')."
-    )
-    resource_uri: str = Field(
-        default="",
-        description="The resource URI template it maps to, as written in the table."
-    )
-
-
 class ServiceContract(BaseModel):
     """
     Scope contract for a 3GPP Management Service.
@@ -124,15 +105,6 @@ class ServiceContract(BaseModel):
             "extract only from stage 3 sections."
         )
     )
-    operation_map: list[OperationMapping] = Field(
-        default_factory=list,
-        description=(
-            "Canonical mapping of each IS operation to its HTTP binding, taken from "
-            "the stage 3 'Mapping of operations' table. Used by the Extractor to "
-            "name rules with the correct IS operation (e.g. 'getMOIAttributes' for "
-            "an HTTP GET) instead of inventing a name or using the HTTP method."
-        )
-    )
 
 
 def format_contract_summary(service_contract: dict) -> str:
@@ -160,13 +132,4 @@ def format_contract_summary(service_contract: dict) -> str:
     stage_scope = service_contract.get("stage_scope", "")
     if stage_scope:
         summary += f"\nStage scope: {stage_scope}"
-
-    op_map = service_contract.get("operation_map", [])
-    if op_map:
-        lines = [
-            f"  {m.get('is_operation', '')} → {m.get('http_method', '')} "
-            f"{m.get('resource_uri', '')}".rstrip()
-            for m in op_map
-        ]
-        summary += "\nOperation map (IS operation → HTTP method → URI):\n" + "\n".join(lines)
     return summary

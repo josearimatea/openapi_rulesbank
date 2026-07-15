@@ -76,16 +76,6 @@ class SectionLocator(BaseModel):
             "rules must be extracted from. Empty string if the document has no stage 3."
         )
     )
-    operation_map_section_ids: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Section IDs of the stage 3 'Mapping of operations' subsections — the "
-            "ones whose table maps each IS operation to its HTTP method and resource "
-            "URI (titles like 'Mapping of operations', 'Operation <name>', 'Mapping "
-            "to HTTP ...'). These give the canonical IS operation names for the "
-            "target's HTTP bindings."
-        )
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -140,18 +130,6 @@ ALSO IDENTIFY THE TARGET'S STAGE 3 BLOCK:
   OpenAPI rules can only come from stage 3. In `stage3_clause`, return the
   clause-number prefix of the TARGET service's stage 3 block (e.g. "12.1"), or
   "" if the document has no stage 3.
-
-ALSO LOCATE THE OPERATION MAPPING:
-  Inside the target's stage 3 block, find the sections whose tables map each IS
-  operation to its HTTP method and resource URI. Return their section IDs in
-  `operation_map_section_ids`.
-  IMPORTANT: return the specific SUBSECTIONS that actually CONTAIN the mapping
-  table (e.g. "Mapping of IS operations to SS equivalents", "Operation <name>",
-  "Mapping to HTTP ..."), NOT the parent heading. Parent headings such as
-  "Mapping of operations" usually have no content — their previews are empty
-  ("##"/"###") — so select the child sections whose preview shows the actual
-  table instead. These sections are the source of the canonical IS operation
-  names for the target's HTTP bindings.
 """
 
 _LOCATOR_USER = """\
@@ -220,13 +198,6 @@ For inclusion_keywords: unique terms that are specific to THIS service.
 For exclusion_keywords: terms the text attributes to another MnS — use format
   "term → OtherMnS" when the other service is known (e.g. "alarm → FaultMnS").
 For out_of_scope_signals: short "term → OtherMnS" pairs, e.g. "threshold → PerfMnS".
-
-For operation_map: if the text contains a "Mapping of operations" table (IS
-  operation ↔ HTTP method ↔ resource URI), extract one entry per (operation,
-  method) pair: {{"is_operation": "<name>", "http_method": "<METHOD>",
-  "resource_uri": "<uri>"}}. Use the exact IS operation name from the table (e.g.
-  "getMOIAttributes"). If an operation maps to multiple methods, emit one entry
-  per method. Leave the list empty if no such table is present.
 """
 
 
