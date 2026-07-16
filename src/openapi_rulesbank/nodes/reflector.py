@@ -47,7 +47,11 @@ from openapi_rulesbank.prompts.reflector_prompts import (
     ReflectionResult, SectionReflection,
     reflector_prompt, reflector_section_prompt,
 )
-from openapi_rulesbank.tools.rag_tools import search_openapi_reference
+from openapi_rulesbank.tools.rag_tools import (
+    search_openapi_reference,
+    search_spec,
+    umbrella_mns_for as _umbrella_mns,
+)
 
 logger = get_logger(__name__)
 
@@ -105,6 +109,18 @@ def reflector_node(state: RuleBankState) -> dict:
         rag_query   = _build_rag_query(rule)
         rag_context = search_openapi_reference(rag_query)
 
+        # Retrieve related chunks from the source 3GPP document (spec RAG), scoped
+        # to the rule's service stage 2 definitions, to check the rule is grounded
+        # in the spec — not just consistent with OpenAPI. Empty when unavailable.
+        section_title = rule.get("section_title", "")
+        rule_mns = _umbrella_mns(section_title, state.get("parsed_sections", []) or [])
+        spec_filters = {"stage": "2"}
+        if rule_mns:
+            spec_filters["mns"] = rule_mns
+        spec_context = search_spec(
+            rag_query, state.get("spec_collection_name", ""), filters=spec_filters,
+        ) or "No related spec context retrieved."
+
         logger.debug(
             f"Reflecting rule {i + 1}/{len(raw_rules)} "
             f"[{section_id}]: {rule.get('rule_text', '')[:60]}"
@@ -112,6 +128,7 @@ def reflector_node(state: RuleBankState) -> dict:
 
         result: ReflectionResult = chain.invoke({
             "openapi_reference_context": rag_context or "No relevant context retrieved.",
+            "spec_context":  spec_context,
             "section_id":    section_id,
             "section_title": rule.get("section_title", ""),
             "rule_type":     rule.get("rule_type", ""),

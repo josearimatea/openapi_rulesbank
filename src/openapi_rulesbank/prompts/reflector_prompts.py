@@ -123,6 +123,10 @@ Rule to assess:
 Section content (the source from which this rule was extracted):
 {section_content}
 
+Related 3GPP spec context (retrieved from the source document — use to check the
+rule is grounded in the specification, e.g. the abstract stage 2 definition):
+{spec_context}
+
 Apply Chain-of-Thought reasoning and return your assessment.
 """
 
