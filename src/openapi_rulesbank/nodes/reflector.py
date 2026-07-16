@@ -49,7 +49,7 @@ from openapi_rulesbank.prompts.reflector_prompts import (
 )
 from openapi_rulesbank.tools.rag_tools import (
     search_openapi_reference,
-    search_spec,
+    search_target_spec,
     umbrella_mns_for as _umbrella_mns,
 )
 
@@ -117,7 +117,7 @@ def reflector_node(state: RuleBankState) -> dict:
         spec_filters = {"stage": "2"}
         if rule_mns:
             spec_filters["mns"] = rule_mns
-        spec_context = search_spec(
+        spec_context = search_target_spec(
             rag_query, state.get("spec_collection_name", ""), filters=spec_filters,
         ) or "No related spec context retrieved."
 

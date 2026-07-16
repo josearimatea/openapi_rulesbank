@@ -27,7 +27,13 @@ from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
-from qdrant_3gpp_rag import QdrantFactory, index_segments, drop_collection, retrieve
+from qdrant_3gpp_rag import (
+    QdrantFactory,
+    chunk_markdown_by_headers,
+    index_segments,
+    drop_collection,
+    retrieve,
+)
 
 from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.hardware import device
@@ -101,14 +107,14 @@ def _umbrella_titles(sections: list[dict]) -> dict[str, str]:
 def umbrella_mns_for(section_title: str, sections: list[dict]) -> str:
     """Return the MnS (umbrella title) that owns a section, or "" if unknown.
 
-    Matches the `mns` metadata written by _label_sections, so callers can build a
+    Matches the `mns` metadata written by _label_target_spec_sections, so callers can build a
     retrieval filter that scopes to the same service as a given section.
     """
     clause2 = _clause_prefix(section_title, levels=2)
     return _umbrella_titles(sections).get(clause2, "")
 
 
-def _label_sections(sections: list[dict], stage3_clause: str = "") -> list[dict]:
+def _label_target_spec_sections(sections: list[dict], stage3_clause: str = "") -> list[dict]:
     """Tag each section with its owning MnS and 3GPP stage, structurally.
 
     - mns: the title of the level-2 umbrella clause the section falls under
@@ -143,14 +149,14 @@ def _label_sections(sections: list[dict], stage3_clause: str = "") -> list[dict]
     return segments
 
 
-def index_spec_sections(sections: list[dict], stage3_clause: str = "") -> str:
+def index_target_spec_sections(sections: list[dict], stage3_clause: str = "") -> str:
     """Index the document's sections into a fresh temporary collection.
 
     Each chunk keeps mns/stage/clause metadata so retrieval can be scoped to one
     service and stage. Returns the collection name (unique per call).
     """
     collection_name = f"{SPEC_COLLECTION_PREFIX}{uuid.uuid4().hex[:12]}"
-    segments = _label_sections(sections, stage3_clause=stage3_clause)
+    segments = _label_target_spec_sections(sections, stage3_clause=stage3_clause)
     index_segments(
         segments,
         factory=_spec_factory(),
@@ -163,7 +169,7 @@ def index_spec_sections(sections: list[dict], stage3_clause: str = "") -> str:
     return collection_name
 
 
-def search_spec(
+def search_target_spec(
     query: str,
     collection_name: str,
     k: int = SPEC_RETRIEVE_CHUNKS,
@@ -189,7 +195,7 @@ def search_spec(
     return "\n\n---\n\n".join(doc.page_content for doc in result.docs)
 
 
-def drop_spec_collection(collection_name: str) -> None:
+def drop_target_spec_collection(collection_name: str) -> None:
     """Remove the temporary spec collection at the end of a run."""
     if collection_name:
         drop_collection(_spec_factory(), collection_name)
@@ -259,14 +265,16 @@ def _get_vector_store() -> QdrantVectorStore:
 
 def chunk_document(text: str) -> list[str]:
     """
-    Splits text into overlapping chunks using RecursiveCharacterTextSplitter.
+    Splits the OpenAPI reference into chunks, respecting markdown section headers.
+
+    Uses the shared chunk_markdown_by_headers helper so the reference (a
+    header-structured spec) is split on '#'/'##'/'###' boundaries before size —
+    keeping objects like "Parameter Object" whole instead of cut mid-section.
     Chunk size and overlap are configured in settings.py.
     """
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
+    return chunk_markdown_by_headers(
+        text, chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP,
     )
-    return splitter.split_text(text)
 
 
 def index_openapi_reference(force: bool = False) -> None:

@@ -49,7 +49,7 @@ from openapi_rulesbank.prompts.extractor_prompts import SectionRules, extractor_
 from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.tools.rag_tools import (
     search_openapi_reference,
-    search_spec,
+    search_target_spec,
     umbrella_mns_for as _umbrella_mns,
 )
 
@@ -187,7 +187,7 @@ def extractor_node(state: RuleBankState) -> dict:
     spec_filters = {"stage": "2"}
     if target_mns:
         spec_filters["mns"] = target_mns
-    spec_context = search_spec(
+    spec_context = search_target_spec(
         f"{section_title} {focus} {section['content'][:300]}",
         state.get("spec_collection_name", ""),
         filters=spec_filters,

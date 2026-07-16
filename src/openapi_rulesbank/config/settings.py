@@ -58,7 +58,7 @@ OPENAPI_REFERENCE_RETRIEVE_CHUNKS = 5  # number of chunks returned by search_ope
 # per run (via qdrant_3gpp_rag) so the Extractor can retrieve related sections
 # (e.g. the stage 2 definition behind a stage 3 mapping). Dropped by the Builder.
 SPEC_COLLECTION_PREFIX  = "spec_tmp_"  # temporary collection name prefix (+ random suffix)
-SPEC_RETRIEVE_CHUNKS    = 4            # chunks returned by search_spec()
+SPEC_RETRIEVE_CHUNKS    = 4            # chunks returned by search_target_spec()
 
 # 3GPP corpus RAG — a persistent Qdrant collection holding many 3GPP specs
 # (built once via qdrant_3gpp_rag/scripts/index_3gpp_all.py). The ContractBuilder

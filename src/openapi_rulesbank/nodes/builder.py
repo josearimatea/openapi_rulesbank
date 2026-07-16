@@ -64,7 +64,7 @@ from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE, MODEL, MAX_ITERAT
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.schemas.output import RulesBank, RulesBankMetadata, RulesBankSummary, RuleOutput, RULE_OUTPUT_FIELDS
 from openapi_rulesbank.schemas.rules import ValidatedRule
-from openapi_rulesbank.tools.rag_tools import drop_spec_collection
+from openapi_rulesbank.tools.rag_tools import drop_target_spec_collection
 
 logger = get_logger(__name__)
 
@@ -234,7 +234,7 @@ def builder_node(state: RuleBankState) -> dict:
         spec_collection_name = state.get("spec_collection_name", "")
         if spec_collection_name:
             try:
-                drop_spec_collection(spec_collection_name)
+                drop_target_spec_collection(spec_collection_name)
             except Exception as e:
                 logger.warning(f"Could not drop spec collection '{spec_collection_name}': {e}")
 
