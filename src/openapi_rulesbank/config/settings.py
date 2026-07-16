@@ -60,6 +60,13 @@ OPENAPI_REFERENCE_RETRIEVE_CHUNKS = 5  # number of chunks returned by search_ope
 SPEC_COLLECTION_PREFIX  = "spec_tmp_"  # temporary collection name prefix (+ random suffix)
 SPEC_RETRIEVE_CHUNKS    = 4            # chunks returned by search_spec()
 
+# 3GPP corpus RAG — a persistent Qdrant collection holding many 3GPP specs
+# (built once via qdrant_3gpp_rag/scripts/index_3gpp_all.py). The ContractBuilder
+# queries it to ground the service contract in referenced specs (e.g. the MnS
+# definitions in TS 28.533/32.160). This project only reads the collection.
+GPP_CORPUS_COLLECTION   = "3gpp_rel18_all"  # persistent corpus collection to query
+GPP_CORPUS_RETRIEVE_CHUNKS = 5              # chunks returned by search_3gpp_corpus()
+
 # Pipeline flow control
 VALIDATION_ERROR_THRESHOLD = 0.10  # Loop back to Extractor if error rate exceeds 10%
 MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops before forcing forward

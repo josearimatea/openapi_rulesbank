@@ -167,12 +167,17 @@ PRINCIPLES:
 _CONTRACT_USER = """\
 Service being documented: {service_name}
 
-RELEVANT SPEC SECTIONS:
+RELEVANT SPEC SECTIONS (primary source — extract the contract from here):
 {relevant_content}
 
-From the text above, extract the scope contract for this service ONLY.
-Include something only when the text makes clear it belongs to this service.
-Every list must have unique entries — never repeat a value.
+BACKGROUND FROM THE WIDER 3GPP CORPUS (reference only — helps you understand what
+this service is and how it is defined across specs; do NOT extract capabilities
+or concepts that this service's own sections above do not support):
+{corpus_context}
+
+From the RELEVANT SPEC SECTIONS above, extract the scope contract for this
+service ONLY. Include something only when those sections make clear it belongs to
+this service. Every list must have unique entries — never repeat a value.
 
 For purpose: one sentence describing what THIS service exists to do.
 

@@ -45,7 +45,7 @@ from openapi_rulesbank.prompts.contract_builder_prompts import (
     contract_extract_prompt,
 )
 from openapi_rulesbank.schemas.contract import ServiceContract
-from openapi_rulesbank.tools.rag_tools import index_spec_sections
+from openapi_rulesbank.tools.rag_tools import index_spec_sections, search_3gpp_corpus
 
 logger = get_logger(__name__)
 
@@ -134,10 +134,18 @@ def contract_builder_node(state: RuleBankState) -> dict:
     )
 
     # --- LLM call 2: extract the contract from full section content ---
+    # Ground the contract in the wider 3GPP corpus: retrieve chunks about the
+    # target service from the persistent corpus collection (referenced specs like
+    # TS 28.533/32.160 that define the MnS). Empty when the corpus is not indexed.
+    corpus_context = search_3gpp_corpus(
+        f"{service_name} management service purpose capabilities operations notifications key concepts"
+    ) or "No external 3GPP corpus context available."
+
     contract_chain = contract_extract_prompt | llm.with_structured_output(ServiceContract)
     contract: ServiceContract = contract_chain.invoke({
         "service_name":     service_name,
         "relevant_content": relevant_content,
+        "corpus_context":   corpus_context,
     })
 
     # Deterministic dedup: the prompt asks for unique entries, but the LLM can

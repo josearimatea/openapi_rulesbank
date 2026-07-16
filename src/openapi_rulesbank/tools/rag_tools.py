@@ -38,6 +38,7 @@ from openapi_rulesbank.config.settings import (
     EMBEDDING_MODEL, EMBEDDING_DIM,
     OPENAPI_REFERENCE_RETRIEVE_CHUNKS,
     SPEC_COLLECTION_PREFIX, SPEC_RETRIEVE_CHUNKS,
+    GPP_CORPUS_COLLECTION, GPP_CORPUS_RETRIEVE_CHUNKS,
 )
 from openapi_rulesbank.tools.document_tools import load_openapi_reference
 
@@ -192,6 +193,34 @@ def drop_spec_collection(collection_name: str) -> None:
     """Remove the temporary spec collection at the end of a run."""
     if collection_name:
         drop_collection(_spec_factory(), collection_name)
+
+
+def search_3gpp_corpus(
+    query: str,
+    k: int = GPP_CORPUS_RETRIEVE_CHUNKS,
+    filters: dict | None = None,
+) -> str:
+    """Retrieve chunks from the persistent 3GPP corpus collection for a query.
+
+    Reads GPP_CORPUS_COLLECTION (built once by qdrant_3gpp_rag's index_3gpp_all
+    script). Used by the ContractBuilder to ground the contract in referenced
+    3GPP specs. Returns joined chunk texts, or "" (with a warning) if the corpus
+    collection has not been indexed — the pipeline then proceeds without it.
+    """
+    factory = _spec_factory()
+    if not factory.client.collection_exists(GPP_CORPUS_COLLECTION):
+        logger.warning(
+            f"3GPP corpus collection '{GPP_CORPUS_COLLECTION}' not found — "
+            "run qdrant_3gpp_rag/scripts/index_3gpp_all.py to build it. "
+            "Continuing without corpus RAG."
+        )
+        return ""
+    result = retrieve(
+        query, factory=factory, collection_name=GPP_CORPUS_COLLECTION, k=k, filters=filters,
+    )
+    if not result.docs:
+        return ""
+    return "\n\n---\n\n".join(doc.page_content for doc in result.docs)
 
 
 # ---------------------------------------------------------------------------
