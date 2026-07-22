@@ -51,6 +51,7 @@ from openapi_rulesbank.prompts.validator_prompts import (
     validator_section_init_prompt, validator_prompt, validator_reflector_review_prompt,
 )
 from openapi_rulesbank.schemas.rules import ValidatedRule, ValidationError
+from openapi_rulesbank.tools.rag_tools import index_validated_rule, search_similar_rules
 from openapi_rulesbank.utils.diagnostic import _diagnostic
 from openapi_rulesbank.utils.rules_check import check_mapping_for_type
 
@@ -198,10 +199,15 @@ def _validate_semantically(
     already_validated_previous: list[dict],
     already_validated_this_iteration: list[dict],
     current_missing_rules: list[str],
+    similar_rules_other_sections: str = "",
 ) -> tuple[dict | None, dict | None, list[str]]:
     """
     Semantic verdict for one rule.
     Returns (validated_dict, None, new_missing) or (None, error_dict, new_missing).
+
+    similar_rules_other_sections: rules already accepted in OTHER sections that
+    resemble this one (from the rules RAG), so the verdict can discard a rule that
+    merely restates one already validated elsewhere.
     """
     mapping = rule.get("openapi_mapping", {})
     section_id = rule.get("section_id", "")
@@ -226,6 +232,7 @@ def _validate_semantically(
         "split_suggestion":      rule.get("split_suggestion", ""),
         "discard_suggestion":    str(rule.get("discard_suggestion", False)),
         "already_validated_rules": already_validated_str,
+        "similar_rules_other_sections": similar_rules_other_sections or "None",
         "current_missing_rules":   _format_missing_rules(current_missing_rules),
         "section_content":         section_content,
     })
@@ -298,6 +305,7 @@ def validator_node(state: RuleBankState) -> dict:
     sections_index               = _build_sections_index(state.get("parsed_sections", []))
     reflector_section_reflection = state.get("section_reflection", []) or []
     prior_validated_rules        = state.get("validated_rules", []) or []
+    rules_collection_name        = state.get("rules_collection_name", "") or ""
 
     if not reflected_rules:
         logger.warning("Validator received no reflected_rules — returning empty results.")
@@ -437,6 +445,13 @@ def validator_node(state: RuleBankState) -> dict:
                 f"{rule.get('rule_text', '')[:60]}"
             )
 
+            # Rules already accepted in OTHER sections that resemble this one. The
+            # per-section lists above never show those, which is how the same rule
+            # ends up validated from several sections describing one operation.
+            similar_other_sections = search_similar_rules(
+                rule, rules_collection_name, exclude_section_id=section_id,
+            )
+
             valid_dict, error_dict, new_missing = _validate_semantically(
                 rule=                           rule,
                 section_content=                section_content,
@@ -444,6 +459,7 @@ def validator_node(state: RuleBankState) -> dict:
                 already_validated_previous=     already_validated_for_section,
                 already_validated_this_iteration= validated_this_section,
                 current_missing_rules=          current_missing,
+                similar_rules_other_sections=   similar_other_sections,
             )
 
             # Accumulate new missing rules (deduplicated)
@@ -467,6 +483,8 @@ def validator_node(state: RuleBankState) -> dict:
                 validated_this_section.append(valid_dict)
                 validated_rules.append(valid_dict)
                 existing_keys.add(rule_key)
+                # Index it so later sections are checked against this rule too.
+                index_validated_rule(valid_dict, rules_collection_name)
 
         logger.debug(
             f"  Stage 2: {len(validated_this_section)} validated, "

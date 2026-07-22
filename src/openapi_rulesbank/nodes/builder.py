@@ -64,7 +64,10 @@ from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE, MODEL, MAX_ITERAT
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.schemas.output import RulesBank, RulesBankMetadata, RulesBankSummary, RuleOutput, RULE_OUTPUT_FIELDS
 from openapi_rulesbank.schemas.rules import ValidatedRule
-from openapi_rulesbank.tools.rag_tools import drop_target_spec_collection
+from openapi_rulesbank.tools.rag_tools import (
+    drop_rules_collection,
+    drop_target_spec_collection,
+)
 
 logger = get_logger(__name__)
 
@@ -76,6 +79,45 @@ _FORCE_EXCLUDE_FIELDS = {
     "reflection_rag_context",
     "validation_notes",
 }
+
+
+def _canonical_rule_key(rule: dict) -> tuple:
+    """Build a comparison key that ignores harmless wording differences.
+
+    Sections often describe one operation several ways, so the same rule arrives
+    with the path written differently ("/{className}={id}" vs the full
+    "/{MnSRoot}/ProvMnS/{MnSVersion}/.../{className}={id}") or with the schema name
+    in another case. The key therefore uses:
+      - the last path segment only, lowercased (path prefixes vary, the tail does not)
+      - lowercased field and value
+    Used ONLY to detect duplicates — the stored rule is never rewritten.
+    """
+    m = rule.get("openapi_mapping", {}) or {}
+    obj = (m.get("openapi_object", "") or "").rstrip("/")
+    # Keep the meaningful tail: "paths./a/b/{className}={id}" -> "{classname}={id}"
+    tail = obj.split("/")[-1].lower() if "/" in obj else obj.lower()
+    return (
+        (rule.get("rule_type", "") or "").lower(),
+        tail,
+        (m.get("openapi_field", "") or "").lower(),
+        str(m.get("openapi_value", "") or "").lower(),
+    )
+
+
+def _dedupe_rules(rules: list[dict]) -> list[dict]:
+    """Keep the first rule for each canonical key, dropping later repeats."""
+    seen: set[tuple] = set()
+    unique: list[dict] = []
+    for r in rules:
+        key = _canonical_rule_key(r)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(r)
+    dropped = len(rules) - len(unique)
+    if dropped:
+        logger.info(f"Deduplicated {dropped} rule(s) — {len(unique)} unique rule(s) kept.")
+    return unique
 
 
 def builder_node(state: RuleBankState) -> dict:
@@ -142,6 +184,12 @@ def builder_node(state: RuleBankState) -> dict:
                     logger.warning(f"  Skipped malformed rule (could not construct ValidatedRule): {e}")
             if force_count:
                 logger.info(f"Force-included {force_count} semantic rule(s).")
+
+    # Final safety net: drop rules that say the same thing. The Validator already
+    # discards cross-section duplicates it recognises, but variants can still slip
+    # through, so compare on a canonical key. Normalisation is for COMPARISON ONLY —
+    # the rule kept keeps its original text, names and path exactly as extracted.
+    validated_rules = _dedupe_rules(validated_rules)
 
     sections_with_rules = sorted({r.get("section_id", "") for r in validated_rules})
 
@@ -231,12 +279,16 @@ def builder_node(state: RuleBankState) -> dict:
     # Drop the temporary spec RAG collection once the run is done, so it does not
     # accumulate in Qdrant. Non-fatal — a leftover collection is harmless.
     if is_last_section:
-        spec_collection_name = state.get("spec_collection_name", "")
-        if spec_collection_name:
+        for name, drop in (
+            (state.get("spec_collection_name", ""),  drop_target_spec_collection),
+            (state.get("rules_collection_name", ""), drop_rules_collection),
+        ):
+            if not name:
+                continue
             try:
-                drop_target_spec_collection(spec_collection_name)
+                drop(name)
             except Exception as e:
-                logger.warning(f"Could not drop spec collection '{spec_collection_name}': {e}")
+                logger.warning(f"Could not drop temporary collection '{name}': {e}")
 
     # Rules that were force-included exist only in the local validated_rules list —
     # they were never returned by the Validator so operator.add never saw them.

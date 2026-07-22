@@ -79,11 +79,18 @@ class RuleBankState(TypedDict):
     # Used by the Reflector node for RAG-grounded self-reflection.
     openapi_reference_context: str
 
-    # Name of the temporary Qdrant collection holding the main 3GPP document,
-    # indexed by the Reader (via tools.rag_tools.index_spec_document) so the
-    # Extractor can retrieve related sections. Dropped by the Builder at the end
-    # of the run. Empty string when spec RAG is unavailable.
+    # Name of the temporary Qdrant collection holding the target spec's sections,
+    # indexed by the ContractBuilder (tools.rag_tools.index_target_spec_sections) so
+    # the Extractor and Reflector can retrieve related sections. Dropped by the
+    # Builder at the end of the run. Empty string when spec RAG is unavailable.
     spec_collection_name: str
+
+    # Name of the temporary Qdrant collection holding the rules validated so far.
+    # Created by the ContractBuilder and grown by the Validator, which indexes each
+    # rule as it passes. Lets the Validator spot a rule that duplicates one already
+    # accepted in ANOTHER section — the per-section check never sees those.
+    # Dropped by the Builder at the end of the run.
+    rules_collection_name: str
 
     # -------------------------------------------------------------------------
     # CONTRACT BUILDER OUTPUT — produced by the ContractBuilder Node

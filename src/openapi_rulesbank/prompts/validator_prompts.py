@@ -210,6 +210,18 @@ VALIDATION RULES BY RULE_TYPE:
 ALREADY-VALIDATED RULES:
   If the rule under review duplicates one already validated, set valid=False,
   error_type='discard', instruction='Duplicate of already-validated rule'.
+
+DUPLICATES ACROSS SECTIONS:
+  similar_rules_other_sections lists rules already accepted in OTHER sections that
+  resemble this one. Several sections often describe the same operation (e.g. the
+  operation mapping table, the resource structure, and the HTTP method subsection
+  all describe one PUT), so the same rule reaches you more than once.
+  If this rule states the same constraint as one of those — same rule_type and the
+  same target, even when the path template is written differently (e.g.
+  "/{{className}}={{id}}" vs "/{{MnSRoot}}/.../{{className}}={{id}}") — it is a
+  duplicate: set valid=False, error_type='discard',
+  instruction='Duplicate of rule already validated in section <id>'.
+  Only keep it when it genuinely adds something the earlier rule does not state.
 """
 
 _USER_RULE = """\
@@ -232,6 +244,10 @@ Reflector assessment (analysis only — you decide):
 
 Already-validated rules for this section:
 {already_validated_rules}
+
+Similar rules already validated in OTHER sections (discard this rule if it merely
+restates one of them — see DUPLICATES ACROSS SECTIONS):
+{similar_rules_other_sections}
 
 Missing rules identified so far for this section (do NOT repeat these):
 {current_missing_rules}

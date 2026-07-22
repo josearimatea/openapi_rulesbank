@@ -45,7 +45,11 @@ from openapi_rulesbank.prompts.contract_builder_prompts import (
     contract_extract_prompt,
 )
 from openapi_rulesbank.schemas.contract import ServiceContract
-from openapi_rulesbank.tools.rag_tools import index_target_spec_sections, search_3gpp_corpus
+from openapi_rulesbank.tools.rag_tools import (
+    create_rules_collection,
+    index_target_spec_sections,
+    search_3gpp_corpus,
+)
 
 logger = get_logger(__name__)
 
@@ -225,7 +229,16 @@ def contract_builder_node(state: RuleBankState) -> dict:
     except Exception as e:
         logger.warning(f"Spec RAG indexing failed ({e}); continuing without spec RAG.")
 
+    # Empty collection the Validator fills as rules pass, so it can detect a rule
+    # duplicating one already accepted in another section. Also dropped by the Builder.
+    rules_collection_name = ""
+    try:
+        rules_collection_name = create_rules_collection()
+    except Exception as e:
+        logger.warning(f"Rules RAG setup failed ({e}); continuing without rules RAG.")
+
     return {
-        "service_contract":     contract.model_dump(),
-        "spec_collection_name": spec_collection_name,
+        "service_contract":      contract.model_dump(),
+        "spec_collection_name":  spec_collection_name,
+        "rules_collection_name": rules_collection_name,
     }

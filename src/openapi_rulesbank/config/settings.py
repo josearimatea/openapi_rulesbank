@@ -67,6 +67,13 @@ SPEC_RETRIEVE_CHUNKS    = 4            # chunks returned by search_target_spec()
 GPP_CORPUS_COLLECTION   = "3gpp_rel18_all"  # persistent corpus collection to query
 GPP_CORPUS_RETRIEVE_CHUNKS = 5              # chunks returned by search_3gpp_corpus()
 
+# Validated-rules RAG — rules are indexed into a temporary collection as they are
+# validated, so the Validator can spot a rule that duplicates one already accepted
+# in ANOTHER section (the per-section check alone never sees those). Dropped by
+# the Builder at the end of the run.
+RULES_COLLECTION_PREFIX = "rules_tmp_"  # temporary collection name prefix (+ random suffix)
+RULES_RETRIEVE_CHUNKS   = 5             # similar rules shown to the Validator per rule
+
 # Pipeline flow control
 VALIDATION_ERROR_THRESHOLD = 0.10  # Loop back to Extractor if error rate exceeds 10%
 MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops before forcing forward

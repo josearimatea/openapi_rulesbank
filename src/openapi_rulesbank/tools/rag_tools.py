@@ -45,6 +45,7 @@ from openapi_rulesbank.config.settings import (
     OPENAPI_REFERENCE_RETRIEVE_CHUNKS,
     SPEC_COLLECTION_PREFIX, SPEC_RETRIEVE_CHUNKS,
     GPP_CORPUS_COLLECTION, GPP_CORPUS_RETRIEVE_CHUNKS,
+    RULES_COLLECTION_PREFIX, RULES_RETRIEVE_CHUNKS,
 )
 from openapi_rulesbank.tools.document_tools import load_openapi_reference
 
@@ -197,6 +198,100 @@ def search_target_spec(
 
 def drop_target_spec_collection(collection_name: str) -> None:
     """Remove the temporary spec collection at the end of a run."""
+    if collection_name:
+        drop_collection(_spec_factory(), collection_name)
+
+
+def create_rules_collection() -> str:
+    """Create an empty temporary collection for rules validated during this run.
+
+    The Validator indexes each rule as it passes, then queries this collection to
+    spot rules duplicating ones already accepted in other sections. Returns the
+    collection name; the Builder drops it when the run ends.
+    """
+    collection_name = f"{RULES_COLLECTION_PREFIX}{uuid.uuid4().hex[:12]}"
+    client = _spec_factory().client
+    if client.collection_exists(collection_name):
+        client.delete_collection(collection_name)
+    client.create_collection(
+        collection_name=collection_name,
+        vectors_config={
+            "text-dense": VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE)
+        },
+    )
+    logger.info(f"Created temporary rules collection '{collection_name}'.")
+    return collection_name
+
+
+def _rule_text_for_index(rule: dict) -> str:
+    """Render a rule as the compact text indexed for similarity search.
+
+    Only the fields that identify the rule — never the reflection reasoning, which
+    is verbose and adds no signal for duplicate detection.
+    """
+    m = rule.get("openapi_mapping", {}) or {}
+    return (
+        f"[{rule.get('rule_type', '')}] {rule.get('source_name', '')}: "
+        f"{rule.get('rule_text', '')} | "
+        f"{m.get('openapi_object', '')} {m.get('openapi_field', '')} {m.get('openapi_value', '')}"
+    )
+
+
+def index_validated_rule(rule: dict, collection_name: str) -> None:
+    """Index one validated rule so later sections can be checked against it.
+
+    No-op when the collection is unset/missing, so the pipeline still runs when
+    the rules RAG is unavailable.
+    """
+    if not collection_name:
+        return
+    factory = _spec_factory()
+    if not factory.client.collection_exists(collection_name):
+        logger.warning(f"Rules collection '{collection_name}' not found — skipping index.")
+        return
+    metadata = {
+        "section_id":  rule.get("section_id", ""),
+        "rule_type":   rule.get("rule_type", ""),
+        "source_name": rule.get("source_name", ""),
+    }
+    vector_store = factory.get_vector_store(collection_name, sparse_vector_name=None)
+    vector_store.add_texts(texts=[_rule_text_for_index(rule)], metadatas=[metadata])
+
+
+def search_similar_rules(
+    rule: dict,
+    collection_name: str,
+    k: int = RULES_RETRIEVE_CHUNKS,
+    exclude_section_id: str = "",
+) -> str:
+    """Retrieve rules already validated that resemble the given rule.
+
+    Used by the Validator to detect a rule duplicating one accepted in another
+    section. Results from `exclude_section_id` are filtered out, since the
+    same-section case is already covered by already_validated_rules.
+    Returns the rules joined for prompt injection, or "" when none/unavailable.
+    """
+    if not collection_name:
+        return ""
+    factory = _spec_factory()
+    if not factory.client.collection_exists(collection_name):
+        return ""
+    result = retrieve(
+        _rule_text_for_index(rule),
+        factory=factory,
+        collection_name=collection_name,
+        k=k + 5,  # over-fetch so same-section hits can be filtered out
+    )
+    lines = [
+        f"  [{d.metadata.get('section_id', '?')}] {d.page_content}"
+        for d in result.docs
+        if d.metadata.get("section_id") != exclude_section_id
+    ][:k]
+    return "\n".join(lines)
+
+
+def drop_rules_collection(collection_name: str) -> None:
+    """Remove the temporary rules collection at the end of a run."""
     if collection_name:
         drop_collection(_spec_factory(), collection_name)
 
