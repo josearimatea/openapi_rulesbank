@@ -206,6 +206,16 @@ VALIDATION RULES BY RULE_TYPE:
                     if a sibling (5XX) is absent — do not reject it for that reason.
   request_body    : openapi_field must be "content". openapi_value must be a media type.
   security_scheme : openapi_field must be "type". openapi_value must be a valid OAuth2/http/apiKey value.
+  callback        : openapi_object must be "paths.<path>.<method>.callbacks.<name>" —
+                    a notification is delivered to the consumer's own address, so it is
+                    never a path of this service. openapi_field is the delivery method
+                    (normally "post"); openapi_value is the runtime expression for the
+                    consumer address as the spec writes it.
+                    A rule that turns a notification into a path_operation (a path named
+                    after the notification, or after the consumer address placeholder) is
+                    wrong: set valid=False, error_type='correction', and instruct the
+                    Extractor to emit it as a callback anchored on the operation where the
+                    consumer supplies its address.
 
 ALREADY-VALIDATED RULES:
   If the rule under review duplicates one already validated, set valid=False,

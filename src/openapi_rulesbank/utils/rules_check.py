@@ -159,4 +159,26 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
                 f"got '{value}'."
             )
 
+    elif rule_type == "callback":
+        # A callback hangs off the operation where the consumer supplies its
+        # address: paths.<path>.<method>.callbacks.<notificationName>
+        if not obj.startswith("paths.") or ".callbacks." not in obj:
+            errors.append(
+                "openapi_object must anchor the callback on an operation, as "
+                "'paths.<path>.<method>.callbacks.<name>', got "
+                f"'{obj}'. A notification is never a path of this service."
+            )
+        if field not in _VALID_HTTP_METHODS:
+            errors.append(
+                f"openapi_field must be the delivery HTTP method "
+                f"({'/'.join(sorted(_VALID_HTTP_METHODS))}), got '{field}'."
+            )
+        # The value is the runtime expression pointing at the consumer's address.
+        if not (value.startswith("{") and value.endswith("}")):
+            errors.append(
+                "openapi_value must be the runtime expression for the consumer "
+                "address as written in the spec (e.g. '{request.body#/<field>}'), "
+                f"got '{value}'."
+            )
+
     return errors

@@ -16,7 +16,8 @@ MODEL HIERARCHY
     ├── section_id      str   — section_id from parsed_sections
     ├── section_title   str   — section title, for traceability
     ├── rule_type       str   — path_operation | schema_property | path_parameter |
-    │                           query_parameter | response | request_body | security_scheme
+    │                           query_parameter | response | request_body |
+    │                           security_scheme | callback
     ├── source_name     str   — name of the specific source element this rule covers:
     │                           path_operation  → IS operation name  (e.g. "createMOI")
     │                           schema_property → NRM attribute name (e.g. "nrCellDuId")
@@ -25,6 +26,7 @@ MODEL HIERARCHY
     │                           response        → IS operation name  (e.g. "getMOIAttributes")
     │                           request_body    → IS operation name  (e.g. "createMOI")
     │                           security_scheme → scheme name        (e.g. "OAuth2")
+    │                           callback        → notification name  (e.g. "notifyMOICreation")
     ├── rule_text       str   — full rule statement extracted from the 3GPP document
     └── openapi_mapping OpenAPIMapping
           ├── openapi_object  str   — OpenAPI object/schema (e.g. "NrCellDu", "paths./nrCellDu/{id}")
@@ -101,7 +103,7 @@ class RawRule(BaseModel):
             "Category of OpenAPI construct this rule describes. "
             "Must be exactly one of: "
             "path_operation | schema_property | path_parameter | query_parameter | "
-            "response | request_body | security_scheme"
+            "response | request_body | security_scheme | callback"
         )
     )
     source_name: str = Field(
@@ -114,7 +116,8 @@ class RawRule(BaseModel):
             "  query_parameter → query param name   (e.g. 'scope', 'filter')\n"
             "  response        → IS operation name  (e.g. 'getMOIAttributes')\n"
             "  request_body    → IS operation name  (e.g. 'createMOI')\n"
-            "  security_scheme → scheme name        (e.g. 'OAuth2', 'BearerAuth')"
+            "  security_scheme → scheme name        (e.g. 'OAuth2', 'BearerAuth')\n"
+            "  callback        → notification name  (e.g. 'notifyMOICreation')"
         )
     )
     rule_text: str = Field(

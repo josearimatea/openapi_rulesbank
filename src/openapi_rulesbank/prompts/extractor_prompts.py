@@ -172,6 +172,46 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
    openapi_field  : "type"
    openapi_value  : "oauth2" | "http" | "apiKey" | "openIdConnect"
 
+8. callback        — one rule per notification the PRODUCER sends to the consumer
+   rule_type      : "callback"
+   source_name    : the notification name (e.g. "notifyMOICreation")
+   openapi_object : the full anchor, "paths.<path>.<method>.callbacks.<notificationName>"
+                    where <path>.<method> is the operation in which the consumer
+                    supplies its address (see NOTIFICATIONS ARE CALLBACKS below).
+   openapi_field  : the HTTP method the producer uses to deliver it, lowercase
+                    (normally "post")
+   openapi_value  : the runtime expression naming the consumer address field, as
+                    written in the spec, e.g.
+                    "{{request.body#/notificationRecipientAddress}}" or
+                    "{{request.body#/consumerReference}}"
+
+NOTIFICATIONS ARE CALLBACKS, NEVER PATHS:
+
+  A `path` is an endpoint THIS service exposes and the consumer calls.
+  A `callback` is an endpoint the CONSUMER exposes and this service calls back.
+
+  Decide by asking who owns the URI. Spec tables map notifications to an HTTP
+  method and a "Resource URI" that is the address the CONSUMER supplied — a
+  placeholder standing for that address rather than a resource of this service.
+  Whenever the URI is the consumer's address, emit a `callback` rule, never a
+  `path_operation`, and never invent a path named after the notification.
+  (Illustrative only — the actual names differ per spec: a URI written as
+  "{{notificationTarget}}" or "{{consumerReference}}" is a consumer address, so
+  "paths./notifyXyz" or "paths./{{notificationTarget}}" would be wrong.)
+
+  Anchor the callback on the operation where the consumer supplies that address —
+  the subscription operation when the service has one, otherwise the operation
+  whose request body carries the address field. Read the anchor operation, the
+  address field name and the delivery method from THIS spec's text; never assume
+  the values seen in other specifications.
+
+  The callback's payload and responses are separate rules whose openapi_object
+  continues the same anchor, so the structure matches the target YAML:
+    request_body : object "paths.<path>.<method>.callbacks.<name>.<cbMethod>.requestBody",
+                   field "content", value the media type
+    response     : object "paths.<path>.<method>.callbacks.<name>.<cbMethod>.responses",
+                   field the status code, value the schema $ref or description
+
 RULES ABOUT WHAT NOT TO EXTRACT:
 
   - Do NOT extract rules about the absence of a construct.
