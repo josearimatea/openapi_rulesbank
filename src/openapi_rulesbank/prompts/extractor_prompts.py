@@ -97,7 +97,19 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
 2. schema_property — one rule per attribute, field, or schema-level constraint in a data model
    rule_type      : "schema_property"
    source_name    : the attribute, field, or constraint name (e.g. "nrCellDuId", "scopeType")
-   openapi_object : the schema path, e.g. "components/schemas/NrCellDu"
+   openapi_object : exactly "components/schemas/<SchemaName>" — one level, never a
+                    nested path (no ".../properties/<x>/..." and never a keyword such
+                    as additionalProperties as the schema name).
+                    <SchemaName> MUST be the name the spec gives the data type in the
+                    HEADING of the section that defines it — headings of the form
+                    "<clause> Type <Name>" or "<clause> Enumeration <Name>" — copied
+                    with the heading's exact spelling and casing.
+                    Do NOT use the name of a property, of a notification, or of a table
+                    column as the schema name, and never append a suffix the spec does
+                    not use (no "Request", "RequestBody", "Response").
+                    Example of the mistake to avoid: in a section titled
+                    "Enumeration CmNotificationTypes" the schema is CmNotificationTypes,
+                    not the property that happens to carry it.
    openapi_field  : EITHER a named property: "properties.<propertyName>" e.g. "properties.nrCellDuId"
                     OR a schema-level keyword that constrains the whole schema:
                     "enum" | "required" | "oneOf" | "anyOf" | "allOf" | "items" |

@@ -192,7 +192,14 @@ VALIDATION RULES BY RULE_TYPE:
                     Each split target must also be a path_operation — one per method.
                     Do NOT split a path_operation into request_body, response, or other rule_types.
                     If the Reflector suggests that kind of split, reject it and set valid=True.
-  schema_property : openapi_field must be "properties.<name>" OR a schema-level keyword
+  schema_property : openapi_object must be "components/schemas/<Name>" naming the schema
+                    itself — never a nested path inside it. <Name> must be the data type
+                    as the defining section's heading spells it ("Type <Name>" /
+                    "Enumeration <Name>"), with that exact casing; a property name, a
+                    notification name, or an invented suffix (Request, RequestBody,
+                    Response) in its place is wrong — set valid=False,
+                    error_type='correction' and give the name from the heading.
+                    openapi_field must be "properties.<name>" OR a schema-level keyword
                     (enum | required | oneOf | anyOf | allOf | items | additionalProperties).
                     openapi_value must be a JSON Schema type, a $ref, or the keyword's
                     value (e.g. the list of enum values or required property names).

@@ -110,9 +110,18 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
             )
 
     elif rule_type == "schema_property":
-        if "components/schemas" not in obj:
+        # Must name a schema directly: "components/schemas/<Name>". A nested path
+        # (".../properties/x/additionalProperties") means the schema was misidentified —
+        # the constrained element belongs in openapi_field, not in the object.
+        if not obj.startswith("components/schemas/"):
             errors.append(
                 f"openapi_object must reference 'components/schemas/<Name>', got '{obj}'."
+            )
+        elif "/" in obj[len("components/schemas/"):]:
+            errors.append(
+                f"openapi_object must name the schema itself, not a path inside it: "
+                f"got '{obj}'. Use 'components/schemas/<Name>' and put the property or "
+                "keyword in openapi_field."
             )
         # The field may be a named property ("properties.<name>") or a schema-level
         # keyword that applies to the whole schema (enum, required, oneOf, anyOf,
