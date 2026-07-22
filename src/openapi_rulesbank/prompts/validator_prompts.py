@@ -223,6 +223,9 @@ VALIDATION RULES BY RULE_TYPE:
                     wrong: set valid=False, error_type='correction', and instruct the
                     Extractor to emit it as a callback anchored on the operation where the
                     consumer supplies its address.
+                    The same applies to any path_operation whose resource sits on the
+                    consumer — sections describing "resources on the MnS consumer" list
+                    endpoints the consumer hosts, not paths of this service's YAML.
 
 ALREADY-VALIDATED RULES:
   If the rule under review duplicates one already validated, set valid=False,

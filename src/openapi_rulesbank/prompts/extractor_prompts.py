@@ -211,6 +211,14 @@ NOTIFICATIONS ARE CALLBACKS, NEVER PATHS:
   "{{notificationTarget}}" or "{{consumerReference}}" is a consumer address, so
   "paths./notifyXyz" or "paths./{{notificationTarget}}" would be wrong.)
 
+  This applies to EVERY section describing resources on the consumer side, not
+  only to notification tables. A section may present a "resources and methods
+  overview" table identical in shape to the producer's one while its heading or
+  text places those resources on the consumer (e.g. "... on the MnS consumer").
+  Resources hosted by the consumer are never paths of this service's YAML:
+  express what the producer sends there as a `callback`, and emit no
+  `path_operation` for them.
+
   Anchor the callback on the operation where the consumer supplies that address —
   the subscription operation when the service has one, otherwise the operation
   whose request body carries the address field. Read the anchor operation, the
