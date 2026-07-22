@@ -78,35 +78,39 @@ def _clause_prefix(title: str, levels: int) -> str:
     return ".".join(parts[:levels])
 
 
-def _service_name_from_title(title: str) -> str:
-    """Strip the leading clause number from a title, leaving the service name.
+def _service_key_from_clause(clause: str) -> str:
+    """Return the service key of a level-2 clause: its second number.
 
-    "11.1 Generic provisioning management service" -> "Generic provisioning
-    management service". This name is stable across the stage 2 (e.g. 11.1) and
-    stage 3 (e.g. 12.1) copies of the same service, so it groups them together.
+    The document lists the same services twice — once per stage — under matching
+    clause numbers ("11.3" is the stage 2 of the service whose stage 3 is "12.3"),
+    so the second number identifies the service across both blocks.
+
+    Titles cannot play that role: they agree for most services but not all (one
+    document has "11.3 Performance assurance" against "12.3 Generic performance
+    assurance management service"), which would leave the two stages of that
+    service under different keys and break stage-2 retrieval for it.
     """
-    parts = title.strip().split(" ", 1)
-    return parts[1].strip() if len(parts) > 1 else title.strip()
+    parts = clause.split(".")
+    return parts[1] if len(parts) > 1 else clause
 
 
 def _umbrella_titles(sections: list[dict]) -> dict[str, str]:
-    """Map each level-2 clause prefix to its service name (number stripped).
+    """Map each level-2 clause prefix to the key identifying its service.
 
-    E.g. {"11.1": "Generic provisioning management service",
-          "12.1": "Generic provisioning management service", ...}. A section is an
-    umbrella when it is itself exactly a level-2 clause. Using the number-stripped
-    name means the stage 2 and stage 3 blocks of one service share the same `mns`.
+    E.g. {"11.1": "1", "12.1": "1", "11.3": "3", "12.3": "3", ...}: the stage 2 and
+    stage 3 blocks of one service share a key, so retrieval scoped to a service
+    reaches both. A section is an umbrella when it is itself a level-2 clause.
     """
     umbrellas: dict[str, str] = {}
     for s in sections:
         clause = _clause_prefix(s["title"], levels=2)
         if clause and _clause_prefix(s["title"], levels=3) == clause:
-            umbrellas.setdefault(clause, _service_name_from_title(s["title"]))
+            umbrellas.setdefault(clause, _service_key_from_clause(clause))
     return umbrellas
 
 
 def umbrella_mns_for(section_title: str, sections: list[dict]) -> str:
-    """Return the MnS (umbrella title) that owns a section, or "" if unknown.
+    """Return the service key of the MnS that owns a section, or "" if unknown.
 
     Matches the `mns` metadata written by _label_target_spec_sections, so callers can build a
     retrieval filter that scopes to the same service as a given section.
@@ -118,9 +122,9 @@ def umbrella_mns_for(section_title: str, sections: list[dict]) -> str:
 def _label_target_spec_sections(sections: list[dict], stage3_clause: str = "") -> list[dict]:
     """Tag each section with its owning MnS and 3GPP stage, structurally.
 
-    - mns: the title of the level-2 umbrella clause the section falls under
-      (e.g. "11.1 Generic provisioning management service"). Derived purely from
-      the clause numbering, so it works for any spec without hardcoded numbers.
+    - mns: key of the service owning the section, taken from its level-2 umbrella
+      clause (e.g. both "11.1.x" and "12.1.x" sections get key "1"). Derived purely
+      from the clause numbering, so it works for any spec without hardcoded numbers.
     - stage: "3" when the section sits under the target's stage 3 block
       (stage3_clause), else "2". Best-effort; used only as a retrieval filter.
 
