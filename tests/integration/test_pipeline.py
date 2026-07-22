@@ -19,17 +19,19 @@ from datetime import datetime
 
 import pytest
 
-from openapi_rulesbank.config.paths import OUTPUTS_RULES_DIR, TSPEC_DATA_TEST_FILE
+from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE, rules_dir_for
 from openapi_rulesbank.graph.rule_bank_flow import build_initial_state, get_compiled_graph
-
-# Full-document runs are saved under rules_bank/Final_rules/ to keep them
-# separated from scoped/exploratory runs that land directly in rules_bank/.
-FINAL_RULES_DIR = os.path.join(OUTPUTS_RULES_DIR, "Final_rules")
 
 # Target service the rules are scoped to. It is the service *name* the rules are
 # built for (the ContractBuilder builds the scope contract for it) — not a YAML
 # to inject. Run with only the spec (--doc) and this target; no aux/legacy.
+# Override to build rules for another service, e.g. TARGET_SERVICE = "PerfMnS".
 TARGET_SERVICE = "ProvMnS"
+
+# Outputs live under the target service's directory, so runs for different MnS do
+# not mix. Full-document runs go to its Final_rules/ subfolder, apart from the
+# scoped/exploratory runs that land directly in the service's folder.
+FINAL_RULES_DIR = os.path.join(rules_dir_for(TARGET_SERVICE), "Final_rules")
 
 
 @pytest.fixture(scope="module")

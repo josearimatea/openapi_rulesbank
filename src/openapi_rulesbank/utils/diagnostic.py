@@ -22,7 +22,7 @@ import json
 import os
 from datetime import datetime
 
-from openapi_rulesbank.config.paths import OUTPUTS_DIAGNOSTIC_DIR
+from openapi_rulesbank.config.paths import diagnostic_dir_for
 from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE
 
 
@@ -112,23 +112,24 @@ class DiagnosticCollector:
             "rules":                        rules_detail,
         })
 
-    def save(self, doc_stem: str) -> str:
+    def save(self, doc_stem: str, service_name: str = "") -> str:
         """
         Writes the collected diagnostic report to disk.
 
         Args:
-            doc_stem : base name of the source document (without extension),
-                       used to name the output file.
+            doc_stem     : base name of the source document (without extension),
+                           used to name the output file.
+            service_name : target Management Service; when given, the report goes
+                           to that service's subdirectory so runs for different
+                           MnS stay separate.
 
         Returns:
             Absolute path to the written JSON file.
         """
-        os.makedirs(OUTPUTS_DIAGNOSTIC_DIR, exist_ok=True)
+        out_dir = diagnostic_dir_for(service_name)
+        os.makedirs(out_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(
-            OUTPUTS_DIAGNOSTIC_DIR,
-            f"diagnostic_{doc_stem}_{timestamp}.json",
-        )
+        path = os.path.join(out_dir, f"diagnostic_{doc_stem}_{timestamp}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"iterations": self.iterations}, f, ensure_ascii=False, indent=2)
         return path

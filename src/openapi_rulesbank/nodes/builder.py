@@ -59,7 +59,7 @@ from collections import Counter
 from datetime import datetime
 
 from openapi_rulesbank.config import get_logger
-from openapi_rulesbank.config.paths import OUTPUTS_RULES_DIR
+from openapi_rulesbank.config.paths import rules_dir_for
 from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE, MODEL, MAX_ITERATIONS
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.schemas.output import RulesBank, RulesBankMetadata, RulesBankSummary, RuleOutput, RULE_OUTPUT_FIELDS
@@ -253,8 +253,10 @@ def builder_node(state: RuleBankState) -> dict:
         doc_stem  = os.path.splitext(os.path.basename(main_doc_path))[0]
         timestamp = now.strftime("%Y%m%d_%H%M%S")
         filename  = f"rules_bank_{doc_stem}_{run_scope}_{timestamp}.json"
-        os.makedirs(OUTPUTS_RULES_DIR, exist_ok=True)
-        output_path = os.path.join(OUTPUTS_RULES_DIR, filename)
+        # One directory per target service, so runs for different MnS do not mix.
+        out_dir = rules_dir_for(state.get("target_yaml", "") or "")
+        os.makedirs(out_dir, exist_ok=True)
+        output_path = os.path.join(out_dir, filename)
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(rules_bank.model_dump(), f, ensure_ascii=False, indent=2)
@@ -273,7 +275,7 @@ def builder_node(state: RuleBankState) -> dict:
         from utils.diagnostic import _diagnostic
         if _diagnostic is not None:
             doc_stem = os.path.splitext(os.path.basename(main_doc_path))[0]
-            diag_path = _diagnostic.save(doc_stem)
+            diag_path = _diagnostic.save(doc_stem, state.get("target_yaml", "") or "")
             logger.info(f"Diagnostic report saved to '{diag_path}'.")
 
     # Drop the temporary spec RAG collection once the run is done, so it does not

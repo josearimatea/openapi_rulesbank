@@ -49,7 +49,38 @@ INPUTS_3GPP_DIR      = f"{DATA_DIR}/inputs/3gpp"
 # derived artifacts from the original .docx inputs in INPUTS_3GPP_DIR.
 INPUTS_3GPP_MD_DIR   = f"{INPUTS_3GPP_DIR}/md"
 INPUTS_AUXILIARY_DIR = f"{DATA_DIR}/inputs/auxiliary"
-OUTPUTS_RULES_DIR       = f"{DATA_DIR}/outputs/rules_bank"
-OUTPUTS_REPORTS_DIR     = f"{DATA_DIR}/outputs/reports"
-OUTPUTS_DIAGNOSTIC_DIR  = f"{DATA_DIR}/outputs/diagnostic"
+OUTPUTS_DIR             = f"{DATA_DIR}/outputs"
+OUTPUTS_RULES_DIR       = f"{OUTPUTS_DIR}/rules_bank"
+OUTPUTS_REPORTS_DIR     = f"{OUTPUTS_DIR}/reports"
+OUTPUTS_DIAGNOSTIC_DIR  = f"{OUTPUTS_DIR}/diagnostic"
+OUTPUTS_CONTRACTS_DIR   = f"{OUTPUTS_DIR}/contracts"
 OPENAPI_REFERENCE_DIR = f"{DATA_DIR}/references/openapi_reference"
+
+
+# --------------------------------------------------------
+# Per-service output directories
+#
+# Runs are scoped to one Management Service (--target), so each service's
+# artifacts live under its own subdirectory — data/outputs/<kind>/<Service>/ —
+# keeping e.g. ProvMnS and PerfMnS results side by side instead of mixed in one
+# folder. Passing no service falls back to the shared directory.
+# --------------------------------------------------------
+
+def service_output_dir(base_dir: str, service_name: str = "") -> str:
+    """Return `base_dir/<service_name>`, or `base_dir` when no service is given."""
+    return os.path.join(base_dir, service_name) if service_name else base_dir
+
+
+def rules_dir_for(service_name: str = "") -> str:
+    """Directory for a service's rules bank JSON files."""
+    return service_output_dir(OUTPUTS_RULES_DIR, service_name)
+
+
+def diagnostic_dir_for(service_name: str = "") -> str:
+    """Directory for a service's diagnostic reports."""
+    return service_output_dir(OUTPUTS_DIAGNOSTIC_DIR, service_name)
+
+
+def contracts_dir_for(service_name: str = "") -> str:
+    """Directory for a service's generated service contracts."""
+    return service_output_dir(OUTPUTS_CONTRACTS_DIR, service_name)
