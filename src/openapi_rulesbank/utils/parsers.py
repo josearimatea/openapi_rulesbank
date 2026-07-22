@@ -47,6 +47,34 @@ def _has_real_words(title: str) -> bool:
     return bool(re.search(r'[a-zA-Z]{3,}', title))
 
 
+def _is_heading_only(content: str) -> bool:
+    """
+    Returns True when a section's body carries no text of its own.
+
+    A parent clause is split away from its children, so its body is left holding
+    just their markdown markers ("#", "###"). Such a section states nothing and,
+    if planned, is extracted instead of the subsection that holds the actual
+    definitions.
+    """
+    stripped = content.strip()
+    return not stripped or not re.search(r'[a-zA-Z0-9]', stripped.replace("#", ""))
+
+
+def _is_embedded_openapi_annex(title: str, content: str) -> bool:
+    """
+    Returns True for an annex section that embeds a finished OpenAPI document.
+
+    3GPP specs append the resulting YAML in an annex ("OpenAPI document
+    <name>.yaml", body starting with `openapi: <version>`). Rules must be derived
+    from the specification text, not copied from that answer — and for a release
+    whose YAML does not exist yet the annex is absent anyway.
+    """
+    body = content.lstrip()
+    return "openapi document" in title.lower() and bool(
+        re.match(r'openapi:\s*\d', body)
+    )
+
+
 # Setext level-2 heading: a non-empty text line immediately followed by a line
 # of dashes (----). Older pandoc versions (used to build the original TSpec .md
 # corpus) emit setext headings, while newer pandoc emits ATX (## ). We normalize
@@ -107,6 +135,21 @@ def parse_sections(md_text: str) -> tuple[list[dict], list[dict]]:
         # Discard sections with symbolic/non-word titles (e.g. cover-page tables)
         if FILTER_SYMBOLIC_TITLES and not _has_real_words(title):
             excluded.append({"section_id": str(i), "title": title, "reason": "symbolic_title"})
+            continue
+
+        # Discard heading-only sections: a parent clause whose body is just the
+        # markdown marker of its children ("#", "###", ...). They hold no rule and,
+        # when planned, take the place of the subsection that actually carries the
+        # definitions.
+        if _is_heading_only(content):
+            excluded.append({"section_id": str(i), "title": title, "reason": "heading_only"})
+            continue
+
+        # Discard the annex embedding the finished OpenAPI document. Extracting
+        # from it would copy the answer instead of deriving it from the spec — and
+        # a new release has no such annex until the YAML exists.
+        if _is_embedded_openapi_annex(title, content):
+            excluded.append({"section_id": str(i), "title": title, "reason": "openapi_annex"})
             continue
 
         # Optionally filter by keywords (disabled by default — see settings.py)
