@@ -226,11 +226,14 @@ def create_rules_collection() -> str:
 def _rule_text_for_index(rule: dict) -> str:
     """Render a rule as the compact text indexed for similarity search.
 
-    Only the fields that identify the rule — never the reflection reasoning, which
-    is verbose and adds no signal for duplicate detection.
+    Carries the fields that identify a rule — section, type, name, text and the
+    OpenAPI mapping — so a duplicate can be recognised and traced back to where it
+    came from. The reflection fields (reasoning, confidence, flags) and validation
+    notes are left out: they are verbose and add no signal for duplicate detection.
     """
     m = rule.get("openapi_mapping", {}) or {}
     return (
+        f"[{rule.get('section_id', '')}] {rule.get('section_title', '')}\n"
         f"[{rule.get('rule_type', '')}] {rule.get('source_name', '')}: "
         f"{rule.get('rule_text', '')} | "
         f"{m.get('openapi_object', '')} {m.get('openapi_field', '')} {m.get('openapi_value', '')}"
@@ -250,9 +253,10 @@ def index_validated_rule(rule: dict, collection_name: str) -> None:
         logger.warning(f"Rules collection '{collection_name}' not found — skipping index.")
         return
     metadata = {
-        "section_id":  rule.get("section_id", ""),
-        "rule_type":   rule.get("rule_type", ""),
-        "source_name": rule.get("source_name", ""),
+        "section_id":    rule.get("section_id", ""),
+        "section_title": rule.get("section_title", ""),
+        "rule_type":     rule.get("rule_type", ""),
+        "source_name":   rule.get("source_name", ""),
     }
     vector_store = factory.get_vector_store(collection_name, sparse_vector_name=None)
     vector_store.add_texts(texts=[_rule_text_for_index(rule)], metadatas=[metadata])
@@ -283,11 +287,11 @@ def search_similar_rules(
         k=k + 5,  # over-fetch so same-section hits can be filtered out
     )
     lines = [
-        f"  [{d.metadata.get('section_id', '?')}] {d.page_content}"
+        d.page_content
         for d in result.docs
         if d.metadata.get("section_id") != exclude_section_id
     ][:k]
-    return "\n".join(lines)
+    return "\n\n".join(lines)
 
 
 def drop_rules_collection(collection_name: str) -> None:
