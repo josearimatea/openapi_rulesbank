@@ -20,13 +20,15 @@ from datetime import datetime
 import pytest
 
 from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE, rules_dir_for
+from openapi_rulesbank.config.settings import TARGET_YAML
 from openapi_rulesbank.graph.rule_bank_flow import build_initial_state, get_compiled_graph
 
-# Target service the rules are scoped to. It is the service *name* the rules are
-# built for (the ContractBuilder builds the scope contract for it) — not a YAML
-# to inject. Run with only the spec (--doc) and this target; no aux/legacy.
-# Override to build rules for another service, e.g. TARGET_SERVICE = "PerfMnS".
-TARGET_SERVICE = "ProvMnS"
+# Target service the rules are scoped to — the service *name* the rules are built
+# for (the ContractBuilder builds the scope contract for it), not a YAML to inject.
+# Comes from settings.TARGET_YAML, the single switch for local testing: change it
+# there to run against another MnS. Only the spec (--doc) and this target are used;
+# no aux/legacy.
+TARGET_SERVICE = TARGET_YAML
 
 # Outputs live under the target service's directory, so runs for different MnS do
 # not mix. Full-document runs go to its Final_rules/ subfolder, apart from the

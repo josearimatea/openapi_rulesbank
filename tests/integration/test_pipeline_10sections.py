@@ -31,6 +31,9 @@ TARGET_IDS = {"323", "325", "326", "327", "328", "346", "347", "348", "349", "35
 
 # Target service the rules are scoped to (the ContractBuilder builds the scope
 # contract for it). It is the service *name*, not a YAML to inject.
+# Pinned to ProvMnS: TARGET_IDS above are ProvMnS sections, so this scoped test
+# stays on that service regardless of settings.TARGET_YAML. Use test_pipeline.py
+# (which follows settings.TARGET_YAML) to exercise another MnS end to end.
 TARGET_SERVICE = "ProvMnS"
 
 

@@ -108,8 +108,12 @@ FILTER_BY_KEYWORDS = False
 #
 # In normal use the target is REQUIRED from the user via main.py --target. This
 # value is the fallback used by local tests and programmatic reader_node() calls
-# that don't set state["target_yaml"]; it is "ProvMnS" for the local test setup.
-TARGET_YAML = "ProvMnS"
+# that don't set state["target_yaml"].
+#
+# It is the single switch for local testing: change it to run the notebooks and
+# the integration tests against another Management Service in the same document
+# (e.g. "PerfMnS", "FaultMnS"). Outputs follow it into that service's folder.
+TARGET_YAML = "PerfMnS"
 
 # Optional legacy OpenAPI YAML — a previous release's YAML (e.g. Rel-17) given as
 # extra context for building Rel-18 rules. Provided via main.py --legacy-yaml; no
