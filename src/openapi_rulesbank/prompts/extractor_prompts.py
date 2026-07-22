@@ -177,7 +177,8 @@ RULES ABOUT WHAT NOT TO EXTRACT:
   - Do NOT extract rules about the absence of a construct.
     Example: "no query parameters are supported" is NOT a valid rule — absence cannot
     be mapped in OpenAPI.
-  - Do NOT duplicate rules already validated in previous iterations.
+  - Do NOT reproduce any rule listed as ALREADY VALIDATED or DISCARDED in the
+    CORRECTION TASK — those already exist or were rejected on purpose.
   - Do NOT abbreviate URI paths with "..." in any openapi_object field —
     always write the full URI template.
 

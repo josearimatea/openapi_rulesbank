@@ -63,25 +63,66 @@ def _build_sections_index(parsed_sections: list[dict]) -> dict[str, dict]:
     return {s["section_id"]: s for s in parsed_sections}
 
 
+def _format_rules_compact(rules: list[dict]) -> list[str]:
+    """One line per rule: type, name, mapping — enough to recognise it, no prose."""
+    lines = []
+    for r in rules:
+        m = r.get("openapi_mapping", {}) or {}
+        lines.append(
+            f"  [{r.get('rule_type', '?')}] {r.get('source_name', '?')} -> "
+            f"{m.get('openapi_object', '')} {m.get('openapi_field', '')} "
+            f"{m.get('openapi_value', '')}".rstrip()
+        )
+    return lines
+
+
 def _build_correction_task(
     validation_errors: list[dict],
     section_reflection: list[dict],
+    already_validated: list[dict] | None = None,
+    discarded_errors: list[dict] | None = None,
 ) -> str:
     """
     Returns a correction instruction for retry attempts on a section.
-    Lists failed rules and missing rules so the LLM can act on each specifically.
-    Returns "" on the first attempt (both inputs empty).
+
+    Lists, in order: the rules already validated and the ones the Validator
+    discarded (neither must be produced again), the rules that failed and how to
+    fix them, and the missing rules to add. Without those first two lists the LLM
+    cannot honour "do not duplicate", so it re-extracts the whole section on every
+    retry — including rules just thrown away.
+    Returns "" on the first attempt (no errors and no missing rules).
     """
     if not validation_errors and not section_reflection:
         return ""
 
     lines = [
-        "CORRECTION TASK — this is a retry attempt for this section.",
-        "Re-extract ONLY what is listed below. Follow each instruction exactly.",
+        "CORRECTION TASK — this section has ALREADY been extracted.",
+        "Return ONLY the rules listed under 'RULES TO CORRECT' and 'RULES TO EXTRACT",
+        "FROM SCRATCH' below. Do NOT re-extract the section from the beginning.",
         "You may produce more or fewer rules than before — quality over quantity.",
-        "Do NOT re-extract rules that were already validated successfully.",
         "",
     ]
+
+    if already_validated:
+        lines.append(
+            "ALREADY VALIDATED — these rules exist and are correct. "
+            "Do NOT produce them again, in any form:"
+        )
+        lines += _format_rules_compact(already_validated)
+        lines.append("")
+
+    if discarded_errors:
+        lines.append(
+            "DISCARDED — the Validator rejected these (duplicates of other sections, "
+            "or not mappable to OpenAPI). Do NOT extract them again:"
+        )
+        for err in discarded_errors:
+            rule = err.get("rule", {})
+            lines.append(
+                f"  [{rule.get('rule_type', '?')}] {rule.get('source_name', '?')}: "
+                f"{err.get('instruction', 'discarded')}"
+            )
+        lines.append("")
 
     if validation_errors:
         lines.append("RULES TO CORRECT (existing rules that failed):")
@@ -103,6 +144,13 @@ def _build_correction_task(
             for j, missing in enumerate(sr.get("missing_rules", []), start=1):
                 lines.append(f"  [{sr['section_id']}] {j}. {missing}")
 
+    n_fix     = len(validation_errors)
+    n_missing = sum(len(sr.get("missing_rules", [])) for sr in section_reflection)
+    lines += [
+        "",
+        f"EXPECTED OUTPUT: {n_fix} corrected rule(s) and {n_missing} new rule(s). "
+        "Anything already listed as validated above must not appear in your output.",
+    ]
     return "\n".join(lines)
 
 
@@ -125,10 +173,16 @@ def extractor_node(state: RuleBankState) -> dict:
         format_contract_summary(state.get("service_contract", {}))
         or "No service contract provided."
     )
-    # correction + split only — discard errors need no Extractor action
+    all_validation_errors = state.get("validation_errors", []) or []
+    # correction + split are the ones the Extractor must act on
     validation_errors  = [
-        e for e in (state.get("validation_errors", []) or [])
-        if e.get("error_type") != "discard"
+        e for e in all_validation_errors if e.get("error_type") != "discard"
+    ]
+    # discards need no fix, but the Extractor must know about them — otherwise it
+    # re-extracts on the next retry exactly what the Validator just threw away
+    # (duplicates of other sections, unmappable statements, ...).
+    discarded_errors   = [
+        e for e in all_validation_errors if e.get("error_type") == "discard"
     ]
     # Final missing-rules decided by the Validator (written to validator_section_reflection)
     section_reflection = state.get("validator_section_reflection", []) or []
@@ -149,7 +203,15 @@ def extractor_node(state: RuleBankState) -> dict:
     section_id   = plan_section["section_id"]
 
     if validation_errors or section_reflection:
-        correction_task = _build_correction_task(validation_errors, section_reflection)
+        # Rules the Validator already accepted for this section — the Extractor must
+        # see them to honour "do not duplicate"; without them it re-extracts the
+        # whole section on every retry.
+        already_validated = (
+            state.get("validated_rules_by_section", {}) or {}
+        ).get(section_id, [])
+        correction_task = _build_correction_task(
+            validation_errors, section_reflection, already_validated, discarded_errors,
+        )
         logger.info(
             f"Retry {section_iteration_count + 1} for [{section_id}] — "
             f"{len(validation_errors)} error(s), "
