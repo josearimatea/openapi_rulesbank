@@ -231,25 +231,36 @@ ALREADY-VALIDATED RULES:
   If the rule under review duplicates one already validated, set valid=False,
   error_type='discard', instruction='Duplicate of already-validated rule'.
 
-DUPLICATES ACROSS SECTIONS:
+DUPLICATES ACROSS SECTIONS — discard ONLY a true duplicate; when unsure, KEEP:
   similar_rules_other_sections lists rules already accepted in OTHER sections that
   resemble this one. Several sections often describe the same operation (e.g. the
   operation mapping table, the resource structure, and the HTTP method subsection
-  all describe one PUT), so the same rule reaches you more than once.
-  Two rules are the SAME when they have the same rule_type and the same target —
-  the same schema property, the same operation+method, or the same operation+code.
-  Treat them as duplicates even when they differ in surface form, specifically:
-    - the path template is written differently
-      ("/{{className}}={{id}}" vs "/{{MnSRoot}}/.../{{className}}={{id}}");
-    - the openapi_value is phrased or formatted differently for the same field
-      (e.g. a property typed "string" here vs {{"type":"string","format":"date-time"}}
-      there, or "string (format: uri)" vs {{"type":"string","format":"uri"}}).
-  A different VALUE FORMAT is not a different rule. When this rule targets the same
-  property/operation as an earlier one, it is a duplicate: set valid=False,
-  error_type='discard',
+  all describe one PUT), so the same rule can reach you more than once.
+
+  Discard THIS rule only when an earlier one has the SAME rule_type AND the SAME
+  target, where the target is identified by openapi_object + openapi_field:
+    - schema_property: same schema AND same property/keyword
+      (components/schemas/X · properties.foo);
+    - path_operation: same path AND same method;
+    - response: same path+method AND same status code;
+    - request_body / parameter: same path+method AND same field.
+  Only then is it a duplicate: set valid=False, error_type='discard',
   instruction='Duplicate of rule already validated in section <id>'.
-  Only keep it when it constrains a genuinely DIFFERENT target (different property,
-  method, or code), not merely a better-formatted value of the same one.
+  A difference only in the VALUE's wording/format is not enough to keep it
+  (e.g. a property typed "string" vs {{"type":"string","format":"date-time"}} for
+  the SAME schema+property is still a duplicate).
+
+  It is NOT a duplicate — KEEP it — when the target differs in ANY of these,
+  however similar the rules look:
+    - a DIFFERENT schema (enum of PerfNotificationTypes vs enum of
+      PerfMetricDirection are two separate rules — same rule_type, different
+      openapi_object);
+    - a DIFFERENT property or keyword of the same schema;
+    - a DIFFERENT status code (204 vs default vs 4XX are separate response rules);
+    - a DIFFERENT method or path.
+  When you are not certain two rules share the exact same object+field, KEEP this
+  rule — dropping a distinct rule loses coverage, which is worse than a duplicate
+  the deterministic dedup can still catch later.
 """
 
 _USER_RULE = """\
