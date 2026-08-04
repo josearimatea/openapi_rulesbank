@@ -45,7 +45,7 @@ from openapi_rulesbank.config.settings import (
     OPENAPI_REFERENCE_RETRIEVE_CHUNKS,
     SPEC_COLLECTION_PREFIX, SPEC_RETRIEVE_CHUNKS,
     SPEC_CHUNK_SIZE, SPEC_CHUNK_OVERLAP,
-    GPP_CORPUS_COLLECTION, GPP_CORPUS_RETRIEVE_CHUNKS,
+    GPP_CORPUS_COLLECTIONS, GPP_CORPUS_RETRIEVE_CHUNKS,
     RULES_COLLECTION_PREFIX, RULES_RETRIEVE_CHUNKS,
 )
 from openapi_rulesbank.tools.document_tools import load_openapi_reference
@@ -323,6 +323,19 @@ def drop_rules_collection(collection_name: str) -> None:
         drop_collection(_spec_factory(), collection_name)
 
 
+def _resolve_corpus_collection(factory) -> str:
+    """First configured corpus collection that actually exists in Qdrant, or "".
+
+    GPP_CORPUS_COLLECTIONS lists candidates in preference order (a full-release
+    index first, the 28-series subset as fallback), so the pipeline uses whatever
+    was indexed without a config change. Returns "" when none is present.
+    """
+    for name in GPP_CORPUS_COLLECTIONS:
+        if factory.client.collection_exists(name):
+            return name
+    return ""
+
+
 def search_3gpp_corpus(
     query: str,
     k: int = GPP_CORPUS_RETRIEVE_CHUNKS,
@@ -330,21 +343,22 @@ def search_3gpp_corpus(
 ) -> str:
     """Retrieve chunks from the persistent 3GPP corpus collection for a query.
 
-    Reads GPP_CORPUS_COLLECTION (built once by qdrant_3gpp_rag's index_3gpp_all
-    script). Used by the ContractBuilder to ground the contract in referenced
-    3GPP specs. Returns joined chunk texts, or "" (with a warning) if the corpus
-    collection has not been indexed — the pipeline then proceeds without it.
+    Resolves the corpus collection from GPP_CORPUS_COLLECTIONS (first candidate
+    present in Qdrant). Used to ground rules in referenced 3GPP specs. Returns
+    joined chunk texts, or "" (with a warning) when no candidate collection has
+    been indexed — the pipeline then proceeds without corpus RAG.
     """
     factory = _spec_factory()
-    if not factory.client.collection_exists(GPP_CORPUS_COLLECTION):
+    collection = _resolve_corpus_collection(factory)
+    if not collection:
         logger.warning(
-            f"3GPP corpus collection '{GPP_CORPUS_COLLECTION}' not found — "
-            "run qdrant_3gpp_rag/scripts/index_3gpp_all.py to build it. "
+            f"No 3GPP corpus collection found (tried {GPP_CORPUS_COLLECTIONS}) — "
+            "run qdrant_3gpp_rag/scripts/index_3gpp_all.py to build one. "
             "Continuing without corpus RAG."
         )
         return ""
     result = retrieve(
-        query, factory=factory, collection_name=GPP_CORPUS_COLLECTION, k=k, filters=filters,
+        query, factory=factory, collection_name=collection, k=k, filters=filters,
     )
     if not result.docs:
         return ""

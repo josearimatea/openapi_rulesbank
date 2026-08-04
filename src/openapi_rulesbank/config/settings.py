@@ -75,9 +75,13 @@ SPEC_CHUNK_OVERLAP      = 200          # overlap for the temporary spec RAG
 
 # 3GPP corpus RAG — a persistent Qdrant collection holding many 3GPP specs
 # (built once via qdrant_3gpp_rag/scripts/index_3gpp_all.py). The ContractBuilder
-# queries it to ground the service contract in referenced specs (e.g. the MnS
-# definitions in TS 28.533/32.160). This project only reads the collection.
-GPP_CORPUS_COLLECTION   = "3gpp_rel18_all"  # persistent corpus collection to query
+# and Extractor query it to ground rules in referenced specs (e.g. the MnS
+# definitions in TS 28.533/32.160, or the NotificationHeader in TS 28.623). This
+# project only reads the collection.
+# Candidates are tried in order; the first one that exists in Qdrant is used. This
+# lets a full-release index ("...all") take precedence when present, while falling
+# back to the 28-series subset that is enough for management-service specs.
+GPP_CORPUS_COLLECTIONS  = ["3gpp_rel18_all", "3gpp_rel18_28"]
 GPP_CORPUS_RETRIEVE_CHUNKS = 5              # chunks returned by search_3gpp_corpus()
 
 # Validated-rules RAG — rules are indexed into a temporary collection as they are
