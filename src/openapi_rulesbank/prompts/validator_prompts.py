@@ -236,12 +236,20 @@ DUPLICATES ACROSS SECTIONS:
   resemble this one. Several sections often describe the same operation (e.g. the
   operation mapping table, the resource structure, and the HTTP method subsection
   all describe one PUT), so the same rule reaches you more than once.
-  If this rule states the same constraint as one of those — same rule_type and the
-  same target, even when the path template is written differently (e.g.
-  "/{{className}}={{id}}" vs "/{{MnSRoot}}/.../{{className}}={{id}}") — it is a
-  duplicate: set valid=False, error_type='discard',
+  Two rules are the SAME when they have the same rule_type and the same target —
+  the same schema property, the same operation+method, or the same operation+code.
+  Treat them as duplicates even when they differ in surface form, specifically:
+    - the path template is written differently
+      ("/{{className}}={{id}}" vs "/{{MnSRoot}}/.../{{className}}={{id}}");
+    - the openapi_value is phrased or formatted differently for the same field
+      (e.g. a property typed "string" here vs {{"type":"string","format":"date-time"}}
+      there, or "string (format: uri)" vs {{"type":"string","format":"uri"}}).
+  A different VALUE FORMAT is not a different rule. When this rule targets the same
+  property/operation as an earlier one, it is a duplicate: set valid=False,
+  error_type='discard',
   instruction='Duplicate of rule already validated in section <id>'.
-  Only keep it when it genuinely adds something the earlier rule does not state.
+  Only keep it when it constrains a genuinely DIFFERENT target (different property,
+  method, or code), not merely a better-formatted value of the same one.
 """
 
 _USER_RULE = """\

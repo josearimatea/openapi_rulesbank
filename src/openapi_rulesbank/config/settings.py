@@ -37,6 +37,7 @@ if not OPENAI_API_KEY:
 # LLM Settings
 MODEL = "gpt-4.1-mini"
 # MODEL = "gpt-5-mini"
+# MODEL = "gpt-5.4-nano"
 TEMPERATURE = 0
 
 # OpenAPI reference version to fetch.
@@ -58,7 +59,19 @@ OPENAPI_REFERENCE_RETRIEVE_CHUNKS = 5  # number of chunks returned by search_ope
 # per run (via qdrant_3gpp_rag) so the Extractor can retrieve related sections
 # (e.g. the stage 2 definition behind a stage 3 mapping). Dropped by the Builder.
 SPEC_COLLECTION_PREFIX  = "spec_tmp_"  # temporary collection name prefix (+ random suffix)
-SPEC_RETRIEVE_CHUNKS    = 4            # chunks returned by search_target_spec()
+SPEC_RETRIEVE_CHUNKS    = 4            # chunks for the stage 2 canonical-name lookup
+# The stage 3 lookup must surface the sibling resource AND type sections of the
+# service (path, schema name/casing). They compete with same-service notification
+# and overview sections, so it needs a wider net than the focused stage 2 lookup;
+# 8 was the point where the resource and type sections reliably came in.
+SPEC_SIBLING_RETRIEVE_CHUNKS = 8       # chunks for the stage 3 sibling lookup
+# One document section should stay one chunk so a retrieved type/resource carries
+# its heading (name/casing) and all its rows together, not a nameless table
+# fragment. At 1000 chars, 28% of sections were split; at 3000, only ~10% are —
+# the oversized data tables, which the Extractor rarely needs. Larger than the
+# global CHUNK_SIZE (which serves the reference/corpus collections) on purpose.
+SPEC_CHUNK_SIZE         = 3000         # chunk size for the temporary spec RAG
+SPEC_CHUNK_OVERLAP      = 200          # overlap for the temporary spec RAG
 
 # 3GPP corpus RAG — a persistent Qdrant collection holding many 3GPP specs
 # (built once via qdrant_3gpp_rag/scripts/index_3gpp_all.py). The ContractBuilder
@@ -73,6 +86,12 @@ GPP_CORPUS_RETRIEVE_CHUNKS = 5              # chunks returned by search_3gpp_cor
 # the Builder at the end of the run.
 RULES_COLLECTION_PREFIX = "rules_tmp_"  # temporary collection name prefix (+ random suffix)
 RULES_RETRIEVE_CHUNKS   = 5             # similar rules shown to the Validator per rule
+# The Extractor queries the same rules RAG with a whole section (not one rule), to
+# see which of the section's rules already exist elsewhere and avoid recreating
+# them. It needs a wider net than the Validator's per-rule check — a section maps
+# to many rules — so it retrieves more; still k-bounded, so context stays flat
+# even for large services (e.g. ProvMnS ~200 rules total).
+RULES_EXTRACTOR_RETRIEVE_CHUNKS = 15    # existing rules shown to the Extractor per section
 
 # Pipeline flow control
 VALIDATION_ERROR_THRESHOLD = 0.10  # Loop back to Extractor if error rate exceeds 10%

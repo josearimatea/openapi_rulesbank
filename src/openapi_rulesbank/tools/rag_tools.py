@@ -44,6 +44,7 @@ from openapi_rulesbank.config.settings import (
     EMBEDDING_MODEL, EMBEDDING_DIM,
     OPENAPI_REFERENCE_RETRIEVE_CHUNKS,
     SPEC_COLLECTION_PREFIX, SPEC_RETRIEVE_CHUNKS,
+    SPEC_CHUNK_SIZE, SPEC_CHUNK_OVERLAP,
     GPP_CORPUS_COLLECTION, GPP_CORPUS_RETRIEVE_CHUNKS,
     RULES_COLLECTION_PREFIX, RULES_RETRIEVE_CHUNKS,
 )
@@ -166,8 +167,8 @@ def index_target_spec_sections(sections: list[dict], stage3_clause: str = "") ->
         segments,
         factory=_spec_factory(),
         collection_name=collection_name,
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
+        chunk_size=SPEC_CHUNK_SIZE,
+        chunk_overlap=SPEC_CHUNK_OVERLAP,
         embedding_dim=EMBEDDING_DIM,
     )
     logger.info(f"Indexed {len(segments)} spec section(s) into '{collection_name}'.")
@@ -266,18 +267,19 @@ def index_validated_rule(rule: dict, collection_name: str) -> None:
     vector_store.add_texts(texts=[_rule_text_for_index(rule)], metadatas=[metadata])
 
 
-def search_similar_rules(
-    rule: dict,
+def search_rules_by_text(
+    query: str,
     collection_name: str,
     k: int = RULES_RETRIEVE_CHUNKS,
     exclude_section_id: str = "",
 ) -> str:
-    """Retrieve rules already validated that resemble the given rule.
+    """Retrieve already-validated rules most similar to a free-text query.
 
-    Used by the Validator to detect a rule duplicating one accepted in another
-    section. Results from `exclude_section_id` are filtered out, since the
-    same-section case is already covered by already_validated_rules.
-    Returns the rules joined for prompt injection, or "" when none/unavailable.
+    The shared core behind rule-duplication checks. The Validator queries with one
+    rule's text; the Extractor queries with a whole section's text to see which of
+    its rules already exist elsewhere. Rules from `exclude_section_id` are dropped
+    (the same-section case is handled separately). Returns the compact rule texts
+    joined for prompt injection, or "" when the collection is unset/missing.
     """
     if not collection_name:
         return ""
@@ -285,7 +287,7 @@ def search_similar_rules(
     if not factory.client.collection_exists(collection_name):
         return ""
     result = retrieve(
-        _rule_text_for_index(rule),
+        query,
         factory=factory,
         collection_name=collection_name,
         k=k + 5,  # over-fetch so same-section hits can be filtered out
@@ -296,6 +298,23 @@ def search_similar_rules(
         if d.metadata.get("section_id") != exclude_section_id
     ][:k]
     return "\n\n".join(lines)
+
+
+def search_similar_rules(
+    rule: dict,
+    collection_name: str,
+    k: int = RULES_RETRIEVE_CHUNKS,
+    exclude_section_id: str = "",
+) -> str:
+    """Retrieve rules already validated that resemble the given rule.
+
+    Used by the Validator to detect a rule duplicating one accepted in another
+    section. Delegates to search_rules_by_text using the rule's compact text as
+    the query. Returns the rules joined for prompt injection, or "" when none.
+    """
+    return search_rules_by_text(
+        _rule_text_for_index(rule), collection_name, k=k, exclude_section_id=exclude_section_id,
+    )
 
 
 def drop_rules_collection(collection_name: str) -> None:

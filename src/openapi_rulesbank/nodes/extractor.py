@@ -44,12 +44,18 @@ State writes:
 
 from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.llm_config import llm
+from openapi_rulesbank.config.settings import (
+    SPEC_RETRIEVE_CHUNKS,
+    SPEC_SIBLING_RETRIEVE_CHUNKS,
+    RULES_EXTRACTOR_RETRIEVE_CHUNKS,
+)
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.prompts.extractor_prompts import SectionRules, extractor_prompt
 from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.tools.rag_tools import (
     search_openapi_reference,
     search_target_spec,
+    search_rules_by_text,
     umbrella_mns_for as _umbrella_mns,
 )
 
@@ -240,20 +246,48 @@ def extractor_node(state: RuleBankState) -> dict:
     rag_query = f"{section_title} — {focus}"
     openapi_reference_overview = search_openapi_reference(rag_query)
 
-    # Retrieve related chunks from the 3GPP document itself (temporary spec RAG),
-    # scoped to the target service's stage 2 definitions — that is where the
-    # canonical IS operation name behind an HTTP method lives. Restricting to the
-    # same MnS as the current (stage 3) section and to stage 2 keeps the retrieval
-    # on the target service and off unrelated services' look-alike sections.
-    target_mns = _umbrella_mns(section_title, state["parsed_sections"])
-    spec_filters = {"stage": "2"}
-    if target_mns:
-        spec_filters["mns"] = target_mns
-    spec_context = search_target_spec(
-        f"{section_title} {focus} {section['content'][:300]}",
-        state.get("spec_collection_name", ""),
-        filters=spec_filters,
-    ) or "No related spec context retrieved."
+    # Retrieve related chunks from the 3GPP document itself (temporary spec RAG).
+    # A section is extracted in isolation, so two things it needs live in OTHER
+    # sections of the same service: the canonical IS operation name (stage 2), and
+    # the resource path, schema name/casing and property list (the sibling stage 3
+    # sections). We fetch each with its own scoped query so both signals are
+    # present and neither crowds out the other. Both are scoped to the same MnS to
+    # stay off other services' look-alike sections.
+    spec_collection = state.get("spec_collection_name", "")
+    target_mns      = _umbrella_mns(section_title, state["parsed_sections"])
+    # The section names the resources, types and operations it refers to, and the
+    # sibling sections are titled after those names — so seeding the query with the
+    # section's own text (title, the Planner's focus, and the opening of the body)
+    # is what pulls the right siblings. A short per-stage intent hint biases
+    # retrieval toward the abstract definition (stage 2) or the concrete
+    # resource/schema sections (stage 3) without parsing any names out.
+    seed = f"{section_title} {focus} {section['content'][:300]}"
+
+    def _scoped(stage: str, hint: str, k: int) -> str:
+        filters = {"stage": stage}
+        if target_mns:
+            filters["mns"] = target_mns
+        return search_target_spec(f"{seed} {hint}", spec_collection, k=k, filters=filters)
+
+    stage2_context = _scoped(
+        "2", "abstract IS operation and notification definition",
+        SPEC_RETRIEVE_CHUNKS,
+    ) or "No stage 2 definition retrieved."
+    stage3_context = _scoped(
+        "3", "resource URI path, HTTP method, data type and schema definition",
+        SPEC_SIBLING_RETRIEVE_CHUNKS,
+    ) or "No related stage 3 section retrieved."
+
+    # Rules already validated in OTHER sections that resemble this one, so the
+    # Extractor does not re-emit a rule that another section already owns — even
+    # when it would phrase the value differently (the deterministic dedup misses
+    # those, since the value differs). Empty until earlier sections are validated.
+    existing_rules = search_rules_by_text(
+        seed,
+        state.get("rules_collection_name", ""),
+        k=RULES_EXTRACTOR_RETRIEVE_CHUNKS,
+        exclude_section_id=section_id,
+    ) or "None yet."
 
     logger.debug(
         f"Extracting [{section_id}] '{section_title}' "
@@ -266,7 +300,9 @@ def extractor_node(state: RuleBankState) -> dict:
         "extraction_focus":           focus,
         "section_content":            section["content"],
         "openapi_reference_overview": openapi_reference_overview,
-        "spec_context":               spec_context,
+        "stage2_context":             stage2_context,
+        "stage3_context":             stage3_context,
+        "existing_rules":             existing_rules,
         "helper_context":             helper_context,
         "contract_summary":           contract_summary,
         "correction_task":            correction_task,

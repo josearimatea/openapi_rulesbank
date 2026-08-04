@@ -52,12 +52,26 @@ You are an expert in 3GPP technical specifications and OpenAPI design.
 Your task is to extract concrete OpenAPI rules from a section of a 3GPP document.
 Each rule must have a rule_type, a clear rule_text, and a precise openapi_mapping.
 
-SOURCE OF RULES:
-  - Extract rules ONLY from the "Section content" in the user message.
-  - Do NOT extract rules from the OpenAPI reference below — it is reference material only.
-  - Do NOT infer or hallucinate rules not explicitly stated or clearly implied by the text.
-  - If a section contains a table, extract one rule per relevant row.
-  - If a section defines multiple attributes, extract one rule per attribute.
+SOURCE OF RULES — "Section content" is the ONE and ONLY place a rule may come
+from; everything else only helps you phrase what is already there:
+  - Extract a rule ONLY when its subject appears in the "Section content" of the
+    user message. Every rule must trace to a specific line, row, or statement in
+    THAT text — if you cannot point to where in the section content it is stated,
+    do not emit it.
+  - The other inputs are REFERENCE, never a source. Do NOT turn anything found only
+    in the "Stage 2 context", the "Sibling stage 3 context", the OpenAPI reference,
+    or the auxiliary context into a rule. They exist solely to correct or complete
+    a rule the section content already supports — e.g. the canonical operation
+    name, the real resource path, the exact schema name/casing. If a property,
+    path, or code is in one of those contexts but NOT in the section content, it is
+    another section's rule — leave it out.
+  - If the "Section content" defines nothing concrete of its own (it is empty, or
+    just a heading / a "###" marker / a cross-reference like "See clause X"), return
+    an EMPTY list. Never populate it from the contexts.
+  - Do NOT infer or hallucinate rules not explicitly stated or clearly implied by
+    the section text.
+  - If the section content contains a table, extract one rule per relevant row.
+  - If the section content defines multiple attributes, extract one rule per attribute.
   - Ignore introductory or background text with no concrete mappable content.
 
 SERVICE SCOPE — the rules must belong to the target service's OpenAPI YAML:
@@ -80,6 +94,57 @@ OPERATION NAMING — use the canonical IS operation name for source_name:
   - NEVER use the bare HTTP method (e.g. "GET") as source_name, and NEVER invent
     an operation name (e.g. "retrieveMOI") that is not in the section or the
     related spec context.
+
+USING THE TWO SPEC CONTEXTS — the section is extracted alone, so facts it depends
+on live in other sections, supplied as "Stage 2 context" and "Sibling stage 3
+context". Neither is a rule source; use them to get THIS section's rules right:
+
+  - RESOURCE PATH — never build a path from an operation or notification name.
+    A section that maps an operation/notification (e.g. a table row
+    "notifyThresholdCrossing  POST  /notificationSink") gives the real URI in its
+    own "Resource URI" column; when the row points elsewhere, the sibling stage 3
+    context holds the resource section that defines that URI. Use that URI as the
+    path. "paths./notifyThresholdCrossing" (a path named after the notification)
+    is always wrong — the path is "/notificationSink". (And when the URI is the
+    consumer's address, it is a callback, not a path — see below.)
+
+  - SCHEMA NAME AND CASING — a data type has ONE canonical name: the one in the
+    heading "<clause> Type <Name>" / "Enumeration <Name>", found in this section or
+    in the sibling stage 3 context. Always use that exact spelling and casing
+    (e.g. "NotifyThresholdCrossing", never "notifyThresholdCrossing"). Do not coin
+    a schema name from a notification or property mentioned in prose.
+
+  - WHO OWNS A SCHEMA — schema_property rules come ONLY from a section that
+    DEFINES a data type, never from one that MAPS parameters. Tell them apart by
+    the section's own table/text, not its title:
+      * A DEFINITION section states the type's fields and their JSON types — its
+        table reads "Definition of type <Name>" with columns like "Attribute name
+        / Data type". THIS is where schema_property rules come from.
+      * A MAPPING section translates an IS operation or notification to its SS
+        (HTTP) form — its text says the parameters are "mapped to SS equivalents"
+        and its table reads "Mapping of IS ... to SS equivalents". Even though it
+        lists parameter names, it is NOT a type definition.
+    From a MAPPING section, extract the HTTP-level rules it establishes
+    (path_operation, callback, request_body, response) but DO NOT emit any
+    schema_property — those attributes are defined, with their real JSON types, in
+    the matching "Definition of type <Name>" section, their single home. A mapping
+    section titled "Notification <name>" still counts as a mapping section: emit
+    its callback/request_body, not its parameters as schema properties. Emitting
+    them in both places produces the same property twice with conflicting types
+    (e.g. "string" in the mapping vs {{"type":"string","format":"date-time"}} in
+    the definition).
+
+  - OWN vs INHERITED PROPERTIES — when a type is defined as `allOf` of a common
+    header schema plus its own properties (e.g. it includes NotificationHeader),
+    extract ONLY the properties this section lists as its own. Do NOT re-emit the
+    header's inherited fields (e.g. objectClass, objectInstance, notificationId,
+    notificationType, eventTime, systemDN, href) as properties of this schema —
+    they belong to the referenced common schema, not here.
+
+  - DO NOT REPEAT A SIBLING'S RULE — if a rule clearly belongs to a sibling stage 3
+    section (its path, its schema, its properties), leave it to that section. Emit
+    only the rules this section is the home of, so one operation/property is not
+    extracted twice under slightly different mappings.
 
 RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapping accordingly:
 
@@ -267,12 +332,25 @@ Section Title: {section_title}
 Extraction focus (defined by the Planner):
 {extraction_focus}
 
-Section content (the ONLY source from which rules must be extracted):
+Section content (the ONLY source from which rules must be extracted — every rule
+you return must trace to a line or row BELOW; if this content is empty or is just
+a heading/marker, return an empty list, do NOT draw rules from the contexts):
 {section_content}
 
-Related spec context (retrieved from the source 3GPP document — use for the
-canonical IS operation name and related definitions, NOT as a rule source):
-{spec_context}
+Stage 2 context (abstract definitions of THIS service, retrieved from the source
+3GPP document — use ONLY for the canonical IS operation name, NOT as a rule source):
+{stage2_context}
+
+Sibling stage 3 context (other HTTP-solution-set sections of THIS SAME service,
+retrieved from the source document — use to resolve the real resource path, the
+exact schema name and casing, and which properties are defined where. NOT a rule
+source, and do NOT re-extract rules that clearly belong to those sibling sections):
+{stage3_context}
+
+Rules ALREADY extracted from other sections of this service (do NOT produce a rule
+that restates any of these — same operation, property, or response, even if you
+would phrase the value differently; that section is its home):
+{existing_rules}
 
 Auxiliary context from supporting 3GPP documents (if relevant):
 {helper_context}
