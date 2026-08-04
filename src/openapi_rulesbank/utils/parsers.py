@@ -47,19 +47,6 @@ def _has_real_words(title: str) -> bool:
     return bool(re.search(r'[a-zA-Z]{3,}', title))
 
 
-def _is_heading_only(content: str) -> bool:
-    """
-    Returns True when a section's body carries no text of its own.
-
-    A parent clause is split away from its children, so its body is left holding
-    just their markdown markers ("#", "###"). Such a section states nothing and,
-    if planned, is extracted instead of the subsection that holds the actual
-    definitions.
-    """
-    stripped = content.strip()
-    return not stripped or not re.search(r'[a-zA-Z0-9]', stripped.replace("#", ""))
-
-
 def _is_embedded_openapi_annex(title: str, content: str) -> bool:
     """
     Returns True for an annex section that embeds a finished OpenAPI document.
@@ -137,13 +124,11 @@ def parse_sections(md_text: str) -> tuple[list[dict], list[dict]]:
             excluded.append({"section_id": str(i), "title": title, "reason": "symbolic_title"})
             continue
 
-        # Discard heading-only sections: a parent clause whose body is just the
-        # markdown marker of its children ("#", "###", ...). They hold no rule and,
-        # when planned, take the place of the subsection that actually carries the
-        # definitions.
-        if _is_heading_only(content):
-            excluded.append({"section_id": str(i), "title": title, "reason": "heading_only"})
-            continue
+        # Heading-only sections (a parent clause whose body is just its children's
+        # markdown markers) are deliberately KEPT: the umbrella clause that names
+        # each Management Service is one of them, and the ContractBuilder's locator
+        # needs it to find the target service's block. Dropping them made the
+        # locator fall back to another service's clause entirely.
 
         # Discard the annex embedding the finished OpenAPI document. Extracting
         # from it would copy the answer instead of deriving it from the spec — and
@@ -157,8 +142,12 @@ def parse_sections(md_text: str) -> tuple[list[dict], list[dict]]:
             excluded.append({"section_id": str(i), "title": title, "reason": "keyword_filter"})
             continue
 
+        # Number the kept sections consecutively. Using the pre-filter index would
+        # leave gaps wherever a section was dropped (1, 2, 4, 7, ...); the LLM stops
+        # reading such a column as an identifier and answers with the clause number
+        # from the title instead, which matches nothing downstream.
         sections.append({
-            "section_id": str(i),
+            "section_id": str(len(sections) + 1),
             "title": title,
             "content": content,
         })
