@@ -203,6 +203,7 @@ def contract_builder_node(state: RuleBankState) -> dict:
     # (abstract definitions) are not a rule source. This guides the Planner to
     # extract only from stage 3.
     if locator.stage3_clause:
+        contract.stage3_clause = locator.stage3_clause
         contract.stage_scope = (
             f"OpenAPI rules come ONLY from the stage 3 block (the RESTful HTTP "
             f"solution set) under clause {locator.stage3_clause}.x. Stage 2 "

@@ -101,6 +101,19 @@ The pipeline extracts exactly these seven types of OpenAPI rules from each secti
 For each section, ask: "Could this section contain at least one of these seven rule types?"
 If yes, include it. If no, exclude it.
 
+Judge every section by the CONTENT shown in its preview, NOT by its title.
+3GPP clauses are hierarchical: a parent clause (e.g. "Resources", "Data type
+definitions", "RESTful HTTP-based solution set") often only GROUPS its children,
+so its preview carries no prose of its own — it is empty or shows just markdown
+heading markers ("#", "##", "###") or a bare title. Such a section defines
+nothing to extract, however relevant its title sounds — do NOT select it. The
+rules live in its child subsections, which appear as their own rows (deeper
+clause numbers) with real text in their previews. Conversely, a deep subsection
+IS a rule source when its preview shows an HTTP method, a URI, a parameter or
+data-type table, an enumeration, or an operation/notification mapping — select it
+on that merit. Being a parent or a leaf decides nothing; only whether the
+section's own preview shows something extractable does.
+
 INCLUDE — assign priority based on directness:
   HIGH   — sections that directly define HTTP operations, paths, parameters,
             request/response structures, or operation-to-HTTP mappings
@@ -129,27 +142,16 @@ _USER = """\
 {contract_summary}
 
 The SERVICE CONTRACT above (when present) defines the scope of the specific
-OpenAPI YAML these rules are being built for. Treat it as a strong signal about
-what belongs to this service — YOU still decide which sections to include, but
-let the contract drive that decision:
+OpenAPI YAML these rules are being built for. The sections below have ALREADY
+been narrowed to this service's stage 3 block, so scope is mostly settled — use
+the contract to make the finer content calls:
   - A section is in scope when its content matches the service's purpose,
     capabilities, key_concepts, or inclusion_keywords → keep it and set priority
     by directness (HIGH/MEDIUM/LOW as defined above).
-  - A section is likely out of scope when its content is dominated by
-    exclusion_keywords or out_of_scope_signals (i.e. it belongs to another MnS)
-    → exclude it unless it clearly also defines rules for THIS service.
+  - A section is out of scope when its content is dominated by exclusion_keywords
+    or out_of_scope_signals (it belongs to another MnS) → exclude it unless it
+    clearly also defines rules for THIS service.
   - extraction_focus should reference the relevant capabilities by name when applicable.
-  - SCOPE IS AN INTERSECTION — a section qualifies ONLY if BOTH hold:
-      (a) it belongs to THIS service (matches purpose/capabilities/inclusion, and
-          is NOT dominated by exclusion_keywords/out_of_scope_signals), AND
-      (b) it is in the stage 3 block named by the contract's "Stage scope"
-          (e.g. clause 12.1.x for this service — NOT the stage 3 block of another
-          service such as 12.2.x, 12.3.x, which belong to other MnS).
-    Exclude a section if EITHER condition fails. In particular, the stage 3 block
-    of a DIFFERENT service (another MnS) is out of scope — do not select it.
-    Also exclude every stage 2 section (abstract operation/parameter definitions),
-    even this service's, since stage 2 is not a source of OpenAPI rules.
-When the contract is absent, fall back to the inclusion/exclusion rules above.
 
 Document sections to analyze (section_id | title | content preview):
 {sections_summary}
