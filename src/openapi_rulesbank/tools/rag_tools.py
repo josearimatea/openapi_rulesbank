@@ -46,6 +46,7 @@ from openapi_rulesbank.config.settings import (
     SPEC_COLLECTION_PREFIX, SPEC_RETRIEVE_CHUNKS,
     SPEC_CHUNK_SIZE, SPEC_CHUNK_OVERLAP,
     GPP_CORPUS_COLLECTIONS, GPP_CORPUS_RETRIEVE_CHUNKS,
+    IMPORTED_TYPE_RETRIEVE_CHUNKS,
     RULES_COLLECTION_PREFIX, RULES_RETRIEVE_CHUNKS,
 )
 from openapi_rulesbank.tools.document_tools import load_openapi_reference
@@ -365,16 +366,18 @@ def search_3gpp_corpus(
     return "\n\n---\n\n".join(doc.page_content for doc in result.docs)
 
 
-def search_imported_type_ref(query: str, k: int = GPP_CORPUS_RETRIEVE_CHUNKS) -> str:
+def search_imported_type_ref(query: str, k: int = IMPORTED_TYPE_RETRIEVE_CHUNKS) -> str:
     """Fetch a common type's definition from the corpus of other 3GPP specs.
 
     3GPP management-service specs reuse common types (e.g. NotificationHeader,
     ErrorResponse) defined in a shared spec like TS 28.623 and referenced via an
     `allOf $ref`. A section that embeds such a type lists the type's fields inline
     without saying which are inherited; to tell them apart we need the imported
-    type's OWN definition. The query is supplied by the caller (the analyzer's
-    step 1 writes it to match the definition block), and this returns the matching
-    corpus chunks, or "" when the corpus is absent or nothing matches.
+    type's OWN fields. The corpus is chunked small, so those fields are spread over
+    several chunks — hence the wider default k (IMPORTED_TYPE_RETRIEVE_CHUNKS) than
+    a normal corpus query, so the whole field set comes back. The query is supplied
+    by the caller (analyzer step 1). Returns the matching chunks, or "" when the
+    corpus is absent or nothing matches.
     """
     if not query:
         return ""

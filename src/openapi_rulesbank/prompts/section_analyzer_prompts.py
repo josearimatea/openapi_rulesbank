@@ -1,115 +1,118 @@
 # src/prompts/section_analyzer_prompts.py
 
 """
-Prompt and output schema for the Section Analyzer — a small LLM call the
-Extractor Node runs BEFORE the main extraction.
+Prompts and schemas for the two-phase Section Analyzer the Extractor runs BEFORE
+its main extraction.
 
-The main extraction is one big call with many rules to follow at once, and the
-model reliably misses two subtle, recurring judgements:
-  1. whether a section DEFINES a data type (its schema_property rules) or only
-     MAPS an operation/notification (HTTP rules only, no schema_property);
-  2. whether a defined type embeds an imported common type (e.g. NotificationHeader
-     from TS 28.623), whose fields must become one `allOf $ref` — not repeated as
-     the type's own properties.
+The main extraction is one crowded call that reliably misses subtle judgements —
+above all, that a defined type embeds a common type imported from ANOTHER spec
+(e.g. NotificationHeader from TS 28.623), whose fields must become one `allOf
+$ref`, not the type's own properties. The reference to that other spec and the
+type's own field list live in DIFFERENT sections, so no single section carries
+the whole picture.
 
-Resolving these in a small, focused call first — with the imported type's
-composition retrieved from the 3GPP corpus — turns them into a few objective
-instructions the Extractor can then follow, instead of re-deriving them inside
-the crowded main prompt.
+Two phases, plus a running reference memory, solve this:
 
-Classes:
-    SectionAnalysis — structured verdict the analyzer returns.
+  Phase 1 (SectionImports) — reads the section and spots any reference to another
+    spec. A reference is a trigger to INVESTIGATE: Phase 1 writes, per reference,
+    a retrieval query to fetch what that type/spec is, and a short explanation of
+    why the other spec is mentioned here. The node runs the queries (RAG).
 
-Constants:
-    section_analyzer_prompt — ChatPromptTemplate for the analyzer call.
+  Phase 2 (SectionAnalysis) — sees the section, the reference memory, and the RAG
+    results. It does two things: (A) MEMORY — say what to add about each reference
+    (its fields / a note), so later sections know what it is without re-deriving;
+    (B) EXTRACTOR — classify the section and draft the guidance the main prompt
+    follows (schema home or not, imported base → allOf $ref + inherited fields).
+
+Phase 1 finds and fetches; Phase 2 writes the memory and the extractor guidance.
+The memory is generic ({type: {spec, fields, note}}), so any imported type from
+any spec flows through the same path.
 """
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 
-class ExternalSpecRef(BaseModel):
-    """One type declared as imported from another spec: name and source spec."""
+# ---------------------------------------------------------------------------
+# Phase 1 — find references to other specs and how to investigate them
+# ---------------------------------------------------------------------------
 
-    type_name: str = Field(description="The imported type's name, e.g. 'NotificationHeader'.")
-    source_spec: str = Field(description="The spec it comes from, e.g. 'TS 28.623'.")
+class SpecReference(BaseModel):
+    """One reference this section makes to another spec, with how to look it up."""
+
+    type_name: str = Field(
+        description="The referenced type's name, e.g. 'NotificationHeader'."
+    )
+    source_spec: str = Field(
+        description="The spec it comes from, as written here, e.g. 'TS 28.623'."
+    )
+    rag_query: str = Field(
+        description=(
+            "A retrieval query to fetch this type's OWN definition from the corpus "
+            "of other specs — aim it at the definition block (the type name with its "
+            "'type: object' / 'properties:' / 'required:' shape) in its source spec, "
+            "so it matches where the type is DEFINED, not the many one-line mentions "
+            "of it. Keep it general: describe an OpenAPI schema definition of the "
+            "named type; do not hard-code field names."
+        )
+    )
 
 
 class SectionImports(BaseModel):
-    """Step 1 output: external-spec references this section carries."""
+    """Phase 1 output: the other-spec references this section carries."""
 
-    declared_refs: list[ExternalSpecRef] = Field(
+    references: list[SpecReference] = Field(
         default_factory=list,
         description=(
-            "Every type this section DECLARES as imported from another spec — the "
-            "rows of a 'Data types imported' table whose Reference column names an "
-            "external spec (e.g. NotificationHeader→TS 28.623, ErrorResponse→TS "
-            "28.623). These are recorded so later sections can resolve types they "
-            "use. Empty when the section declares no imports."
+            "Every reference this section makes to a type defined in ANOTHER spec. "
+            "Sources: a 'Data types imported' table (Reference column names an "
+            "external spec), or a data-type column citing a type the reference "
+            "memory already attributes to another spec. One entry per referenced "
+            "type. Empty when the section references no external types."
         )
     )
-    embedded_base_type: str = Field(
+    explanation: str = Field(
         default="",
         description=(
-            "If THIS section defines a data type that embeds an imported common type "
-            "as its base (its attribute table repeats that type's fields), the base "
-            "type's name (e.g. 'NotificationHeader'). Empty when the section defines "
-            "no type or the type embeds no imported base."
-        )
-    )
-    base_type_query: str = Field(
-        default="",
-        description=(
-            "Only when embedded_base_type is set: a retrieval query to FETCH that "
-            "type's own definition from the corpus of other specs, so its fields can "
-            "be told apart from the section's own. Write it to match the definition "
-            "block itself — the type name plus the shape of an OpenAPI schema "
-            "definition (its properties and required list) and its source spec — not "
-            "one-line mentions of the type elsewhere. Empty when embedded_base_type "
-            "is empty."
+            "A short plain-language note on WHY the other spec(s) are referenced "
+            "here and what role those types play in this section — so the next phase "
+            "understands the purpose of each lookup (e.g. 'This type reuses the "
+            "common NotificationHeader from TS 28.623 as the header of the "
+            "notification payload defined here')."
         )
     )
 
 
 _STEP1_SYSTEM = """\
-You are triaging one 3GPP specification section before OpenAPI rule extraction.
-Three small jobs, from the section's own text:
+You triage ONE 3GPP specification section before OpenAPI rule extraction. Your job
+here is narrow: find every reference this section makes to a type defined in
+ANOTHER specification, and set up its investigation.
 
-1. DECLARED IMPORTS — list every type the section declares as imported from another
-   specification. 3GPP specs put these in a "Data types imported" table whose
-   Reference column names an external spec (e.g. "NotificationHeader — TS 28.623",
-   "ErrorResponse — TS 28.623"). Return each as {{type_name, source_spec}}. These
-   get remembered so later sections can resolve a type they use. If the section has
-   no such table, return an empty list.
+A reference to another spec is a TRIGGER to look it up — you do not resolve it
+now, you say how to fetch it and why it is here:
 
-2. EMBEDDED BASE — if this section DEFINES a data type (a "Definition of type
-   <Name>" table) that embeds an imported common type as its base — recognisable
-   because its attribute table repeats that imported type's fields (a notification
-   type typically embeds NotificationHeader) — return that base type's name.
-   Otherwise leave it empty.
+  - Find references. They appear as a "Data types imported" table whose Reference
+    column names an external spec (e.g. "NotificationHeader — TS 28.623",
+    "ErrorResponse — TS 28.623"), or as a data type cited in an attribute table
+    that the reference memory below already attributes to another spec.
+  - For each referenced type, write a retrieval query (rag_query) that will fetch
+    that type's OWN definition from its source spec — aimed at the definition
+    block, not at mentions of it. Keep it general; do not hard-code field names.
+  - Write one explanation covering why these other specs are referenced in this
+    section and what the referenced types are used for here.
 
-3. BASE TYPE QUERY — only if you set an embedded base: write a retrieval query that
-   will fetch THAT type's own definition from the other spec. Aim it at the
-   definition block (the type name with its `type: object` / `properties:` /
-   `required:` shape) and include the source spec, so it matches where the type is
-   DEFINED, not the many places it is merely listed or referenced. Keep it general:
-   describe an OpenAPI schema definition of the named type — do not hard-code field
-   names. Leave empty when there is no embedded base.
+USE THE REFERENCE MEMORY (below): types already seen in earlier sections, with the
+spec each comes from. If this section uses a type the memory attributes to another
+spec — even if this section does not restate the import — include it as a
+reference so it gets looked up and understood in this section's context.
 
-USE THE REFERENCE MEMORY: the known imported types listed below were collected
-from earlier sections (each shown as 'type → source spec'). A section that defines a type often
-does NOT restate that it imports a common base — it just lists all the fields.
-When the attributes this section lists include the fields of a type in the memory
-(e.g. it lists the header fields of a known 'NotificationHeader'), treat that
-memory type as the embedded base even though the section's own text does not name
-it. That is exactly what the memory is for.
-
-Judge from the section text plus the reference memory. Do not invent a type or a
-spec that appears in neither.
+Judge from the section text plus the memory. Do not invent a type or a spec that
+appears in neither. If the section references no external types, return an empty
+list.
 """
 
 _STEP1_USER = """\
-Known imported types so far (reference memory — {{type: source spec}}):
+Reference memory so far (types seen in earlier sections, 'type -> source spec'):
 {ref_memory}
 
 Section Title: {section_title}
@@ -117,7 +120,8 @@ Section Title: {section_title}
 Section content:
 {section_content}
 
-Return the declared imports, the embedded base type, and (if any) its fetch query.
+Return the external references this section makes, each with a fetch query, plus
+one explanation of why they are referenced here.
 """
 
 section_import_ref_prompt = ChatPromptTemplate.from_messages([
@@ -126,116 +130,153 @@ section_import_ref_prompt = ChatPromptTemplate.from_messages([
 ])
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 — update the reference memory and draft the extractor guidance
+# ---------------------------------------------------------------------------
+
+class ReferenceMemoryEntry(BaseModel):
+    """What Phase 2 learned about one referenced type, to add to the memory."""
+
+    type_name: str = Field(description="The referenced type's name.")
+    source_spec: str = Field(default="", description="The spec it is defined in.")
+    fields: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The type's own PROPERTY NAMES from the fetched definition — the members "
+            "it declares (the keys under `properties:`, or the attribute-table rows), "
+            "not the schema keywords that structure them (allOf, type, properties, "
+            "required, items, $ref are structure, never property names). Empty if no "
+            "definition was retrieved. These let a later section recognise, by field "
+            "overlap, when it embeds this type as a base."
+        )
+    )
+    note: str = Field(
+        default="",
+        description="One short line on what this type is / how it is used."
+    )
+
+
 class SectionAnalysis(BaseModel):
-    """Up-front verdict about one section, guiding the Extractor's main call."""
+    """Phase 2 output: memory updates + guidance for the Extractor."""
+
+    memory_updates: list[ReferenceMemoryEntry] = Field(
+        default_factory=list,
+        description=(
+            "Entries to add/refresh in the running reference memory, built from the "
+            "Phase 1 references, the RAG results and this section. Record each "
+            "referenced type with its spec, its own fields (from the fetched "
+            "definition), and a short note. Empty when the section referenced no "
+            "external types."
+        )
+    )
 
     section_kind: str = Field(
         description=(
             "What this section fundamentally is, from its own content: "
-            "'type_definition' (defines a data type's attributes — a table titled "
-            "'Definition of type <Name>'), 'enumeration' (defines an enum's values), "
-            "'mapping' (maps an IS operation/notification to its HTTP method, URI and "
-            "SS parameters — text says parameters are 'mapped to SS equivalents'), "
+            "'type_definition' (a 'Definition of type <Name>' attribute table), "
+            "'enumeration' (defines an enum's values), 'mapping' (maps an IS "
+            "operation/notification to its HTTP form — 'mapped to SS equivalents'), "
             "'resource' (a resource URI and its HTTP methods), or 'other'."
         )
     )
     emits_schema_properties: bool = Field(
         description=(
-            "True only when section_kind is 'type_definition' or 'enumeration' — "
-            "the section is the HOME of a schema, so it is the source of "
-            "schema_property rules. False for 'mapping'/'resource'/'other': those "
-            "yield HTTP-level rules (path_operation, callback, request_body, "
-            "response) but MUST NOT emit schema_property — the attributes they list "
-            "belong to the type-definition section, not here."
+            "True ONLY when section_kind is 'type_definition' or 'enumeration' — the "
+            "section is the HOME of a schema. False for 'mapping'/'resource'/'other': "
+            "they yield HTTP-level rules but MUST NOT emit schema_property; those "
+            "attributes belong to the type-definition section."
         )
     )
     schema_name: str = Field(
         default="",
         description=(
             "For a type_definition/enumeration, the canonical schema name exactly as "
-            "written in the defining heading ('Type <Name>' / 'Enumeration <Name>'), "
-            "with its exact casing. Empty otherwise."
+            "in the defining heading ('Type <Name>'/'Enumeration <Name>'), with its "
+            "exact casing. Empty otherwise."
         )
     )
     base_ref: str = Field(
         default="",
         description=(
-            "When a type_definition embeds an imported common type as its base "
-            "(e.g. it lists that type in the section's 'Data types imported' table "
-            "and its own table repeats that type's fields), the OpenAPI $ref to it, "
-            "e.g. \"$ref: 'TS28623_ComDefs.yaml#/components/schemas/NotificationHeader'\". "
-            "Empty when the type has no imported base."
+            "When this type embeds an imported common type as its base — its "
+            "attribute table repeats that type's fields (known from the memory/RAG) "
+            "— the OpenAPI $ref to it, e.g. "
+            "\"$ref: 'TS28623_ComDefs.yaml#/components/schemas/NotificationHeader'\". "
+            "Empty when there is no imported base."
         )
     )
     inherited_fields: list[str] = Field(
         default_factory=list,
         description=(
-            "The attribute names the type INHERITS from base_ref (taken from the "
-            "imported type's composition provided in the corpus context), which must "
-            "therefore NOT be emitted as this type's own properties. Empty when "
-            "base_ref is empty."
+            "The attribute names this type INHERITS from base_ref (the ones in BOTH "
+            "this type's table and the imported type's fields), which must NOT be "
+            "emitted as own properties. Empty when base_ref is empty."
         )
     )
     guidance: str = Field(
         description=(
             "One or two imperative sentences telling the Extractor how to build this "
-            "section's rules, reflecting the fields above. E.g. 'This is a mapping "
-            "section: emit the callback/request_body/response, no schema_property.' "
-            "or 'Type NotifyThresholdCrossing embeds NotificationHeader: emit one "
-            "allOf $ref to it and only these own properties: <list>.'"
+            "section's rules. E.g. 'Mapping section: emit callback/request_body/"
+            "response, no schema_property.' or 'Type NotifyThresholdCrossing embeds "
+            "NotificationHeader: emit one allOf $ref to it and only these own "
+            "properties: <list>.'"
         )
     )
 
 
-_SYSTEM = """\
-You are an expert in 3GPP specifications and OpenAPI. You perform a quick triage
-of ONE specification section before another agent extracts OpenAPI rules from it.
-You do not extract rules — you make two judgements the extractor tends to get
-wrong, and hand it clear instructions.
+_STEP2_SYSTEM = """\
+You are an expert in 3GPP specifications and OpenAPI. You finish triaging ONE
+section before another agent extracts rules from it. You are given the section,
+the running reference memory, Phase 1's explanation of the section's external
+references, and the fetched definitions of those references (RAG). Two jobs:
 
-1. CLASSIFY the section by its own content (not its title):
-   - type_definition — a table "Definition of type <Name>" listing attributes and
-     their data types. It is the HOME of that schema.
-   - enumeration — defines the allowed values of an enum type.
-   - mapping — maps an IS operation or notification to its SS (HTTP) form; its text
-     says parameters are "mapped to SS equivalents" and its table is a "Mapping of
-     ... to SS equivalents". It lists parameter names but is NOT a type definition.
-   - resource — a resource URI and the HTTP methods on it.
-   - other — anything else (intro, overview, void).
-   Set emits_schema_properties True ONLY for type_definition/enumeration.
+A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
+   record what it is: its name, its source spec, its OWN property names, and a
+   short note. Read the property names out of the fetched definition — they are the
+   members the type declares, NOT the schema keywords that structure them (allOf,
+   type, properties, required, items, $ref are structure, never property names).
+   The fetched text may be split across several chunks and interleaved with other
+   types; gather this type's own members from wherever they appear. This is generic
+   — any imported type from any spec (imports and allOf composition are pervasive
+   in these specs). Return empty when the section references no external types.
 
-2. RESOLVE IMPORTED BASE TYPES (composition/inheritance):
-   Some defined types embed a common type imported from another spec — listed in
-   the section's (or service's) "Data types imported" table with a Reference to an
-   external spec such as "TS 28.623". When THIS type's attribute table repeats the
-   fields of such an imported type, those fields are INHERITED, not own.
-   The imported type's composition is given below under "Imported type context".
-   In that case:
-     - set base_ref to the OpenAPI $ref of the imported type;
-     - set inherited_fields to exactly the attribute names that come from it
-       (the ones appearing in BOTH this type's table and the imported type);
-     - the type's OWN properties are the remaining attributes.
-   If the type embeds no imported base, leave base_ref empty and inherited_fields [].
+B. GUIDE THE EXTRACTOR:
+   1. CLASSIFY the section by its content: type_definition, enumeration, mapping,
+      resource, or other. emits_schema_properties is True ONLY for
+      type_definition/enumeration.
+   2. RESOLVE AN EMBEDDED BASE. A defined type embeds a common imported type when
+      its attribute table repeats that type's OWN fields (known from the memory or
+      the fetched definition). When it does:
+        - set base_ref to the OpenAPI $ref of the imported type;
+        - set inherited_fields to the attributes that come from it (present in BOTH
+          this type's table and the imported type's fields);
+        - the type's OWN properties are the remaining attributes.
+      If there is no embedded base, leave base_ref empty and inherited_fields [].
 
-Base every judgement on the section content and the imported-type context provided
-— never invent field names or a base type that is not evidenced there.
+Base every judgement on the section content, the memory, and the fetched
+definitions — never invent a field or a base type not evidenced there.
 """
 
-_USER = """\
+_STEP2_USER = """\
 Section ID   : {section_id}
 Section Title: {section_title}
 
 Section content:
 {section_content}
 
-Imported type context (definitions of common types this section may import,
-retrieved from the 3GPP corpus — use ONLY to decide which fields are inherited):
-{imported_type_context}
+Reference memory so far ('type -> {{spec, fields}}'):
+{ref_memory}
 
-Produce a SectionAnalysis for this section.
+Phase 1 explanation of this section's external references:
+{phase1_explanation}
+
+Fetched definitions of the referenced types (RAG results):
+{rag_results}
+
+Produce the memory updates and the extractor guidance for this section.
 """
 
 section_analyzer_prompt = ChatPromptTemplate.from_messages([
-    ("system", _SYSTEM),
-    ("human",  _USER),
+    ("system", _STEP2_SYSTEM),
+    ("human",  _STEP2_USER),
 ])

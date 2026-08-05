@@ -83,6 +83,12 @@ SPEC_CHUNK_OVERLAP      = 200          # overlap for the temporary spec RAG
 # back to the 28-series subset that is enough for management-service specs.
 GPP_CORPUS_COLLECTIONS  = ["3gpp_rel18_all", "3gpp_rel18_28"]
 GPP_CORPUS_RETRIEVE_CHUNKS = 5              # chunks returned by search_3gpp_corpus()
+# Looking up an imported common type's definition needs a wider net: the corpus
+# was chunked small, so a type's fields (e.g. NotificationHeader's href,
+# notificationId, eventTime, systemDN) are spread across several chunks. At k=5
+# they don't all come back; ~20 gathers the whole field set even though the
+# fields sit in different chunks. Used by search_imported_type_ref().
+IMPORTED_TYPE_RETRIEVE_CHUNKS = 20
 
 # Validated-rules RAG — rules are indexed into a temporary collection as they are
 # validated, so the Validator can spot a rule that duplicates one already accepted

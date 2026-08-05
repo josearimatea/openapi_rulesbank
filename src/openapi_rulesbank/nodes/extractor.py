@@ -76,73 +76,79 @@ def _build_sections_index(parsed_sections: list[dict]) -> dict[str, dict]:
     return {s["section_id"]: s for s in parsed_sections}
 
 
+def _format_ref_memory(ref_memory: dict) -> str:
+    """Render the reference memory ({type: {spec, fields}}) for a prompt."""
+    if not ref_memory:
+        return "None yet."
+    lines = []
+    for t, info in ref_memory.items():
+        spec = info.get("spec", "")
+        fields = info.get("fields", [])
+        f = f" fields={fields}" if fields else ""
+        lines.append(f"{t} -> {spec}{f}")
+    return "\n".join(lines)
+
+
 def _analyze_section(
     section_id: str,
     section_title: str,
     section_content: str,
     ref_memory: dict,
 ) -> tuple[SectionAnalysis | None, dict]:
-    """Triage a section before extraction: classify it and resolve inheritance.
+    """Triage a section before extraction: build reference memory + extractor guidance.
 
-    Two focused steps that resolve what the crowded main extraction keeps getting
-    wrong, using the running other-spec reference memory:
-      Step 1 — read THIS section's own text for (a) any types it declares as
-        imported from another spec (rows of a 'Data types imported' table), and
-        (b) whether the type it defines embeds an imported common type as its base.
-        The declared imports are returned to be merged into the memory, so a
-        'General' clause seen earlier makes its references available to the later
-        'Type' clauses — no need for the reference to be in the Type's own text.
-      Step 2 — if the section's type embeds a base, look that base up in the memory
-        to learn its source spec, fetch its real field list, and let the analyzer
-        classify the section and split inherited fields (one `allOf $ref`) from the
-        type's own properties.
+    Phase 1 (find & fetch): read the section, with the running reference memory in
+    view, and list every type it references from another spec — each with a query
+    to fetch that type's own definition — plus a note on why the other spec is
+    mentioned. Any reference is a trigger to look it up, so a 'General' clause's
+    imports and a 'Type' clause's embedded base both get investigated. The node
+    runs the queries (RAG).
 
-    Returns (analysis, new_refs) — new_refs are this section's declared imports to
-    merge into other_spec_ref_memory. analysis is None if a call fails (extraction
-    then proceeds without the extra guidance).
+    Phase 2 (write memory & guide): given the section, the memory, Phase 1's
+    explanation and the fetched definitions, it (A) returns memory updates — each
+    referenced type with its spec, its own fields (from the fetch) and a note, so
+    later sections recognise a type they embed by field overlap; and (B) classifies
+    the section and drafts the extractor guidance (schema home or not, embedded
+    base -> one allOf $ref + inherited fields).
+
+    Returns (analysis, new_refs); new_refs are memory entries {type: {spec, fields,
+    note}} to merge into other_spec_ref_memory. analysis is None if a call fails
+    (extraction then proceeds without the extra guidance).
     """
+    ref_memory = ref_memory or {}
     try:
-        # Step 1 — read this section's declared imports and any embedded base type,
-        # WITH the reference memory in view: a type-definition section often lists a
-        # common base's fields without naming the base, so step 1 needs the memory
-        # of imports seen in earlier sections to recognise the embedded base.
-        ref_memory = ref_memory or {}
-        imports_chain = section_import_ref_prompt | llm.with_structured_output(SectionImports)
-        imports: SectionImports = imports_chain.invoke({
-            "ref_memory":      ", ".join(f"{t} → {s}" for t, s in ref_memory.items()) or "None yet.",
+        # Phase 1 — find references to other specs and how to look each one up.
+        p1_chain = section_import_ref_prompt | llm.with_structured_output(SectionImports)
+        imports: SectionImports = p1_chain.invoke({
+            "ref_memory":      _format_ref_memory(ref_memory),
             "section_title":   section_title,
             "section_content": section_content,
         })
-        new_refs = {r.type_name: r.source_spec for r in imports.declared_refs if r.type_name}
 
-        # Known references = memory seen so far + what this section just declared.
-        known_refs = {**ref_memory, **new_refs}
+        # Run the RAG for each reference the section makes (a reference triggers a
+        # lookup of what that type/spec is), collecting the fetched definitions.
+        rag_blocks = []
+        for ref in imports.references:
+            fetched = search_imported_type_ref(ref.rag_query) if ref.rag_query else ""
+            if fetched:
+                rag_blocks.append(f"### {ref.type_name} (from {ref.source_spec}):\n{fetched}")
+        rag_results = "\n\n".join(rag_blocks) or "No definitions retrieved."
 
-        # Step 2 input — if the section's type embeds a base, fetch that base's real
-        # definition from the other-spec corpus using the query step 1 wrote for it,
-        # so step 2 can tell inherited fields from the type's own.
-        base_type = imports.embedded_base_type
-        if base_type:
-            source_spec = known_refs.get(base_type, "")
-            fetched = search_imported_type_ref(imports.base_type_query)
-            where = f" (from {source_spec})" if source_spec else ""
-            imported_type_context = (
-                f"The type defined here embeds base type {base_type}{where}. Its own "
-                f"definition (its fields are inherited, not this type's own):\n{fetched}"
-                if fetched else
-                f"The type defined here embeds base type {base_type}{where}, but its "
-                f"definition was not found — treat its repeated header fields as inherited."
-            )
-        else:
-            imported_type_context = "This section's type embeds no imported base type."
-
-        analysis_chain = section_analyzer_prompt | llm.with_structured_output(SectionAnalysis)
-        analysis = analysis_chain.invoke({
-            "section_id":             section_id,
-            "section_title":          section_title,
-            "section_content":        section_content,
-            "imported_type_context":  imported_type_context,
+        # Phase 2 — write the memory updates and the extractor guidance.
+        p2_chain = section_analyzer_prompt | llm.with_structured_output(SectionAnalysis)
+        analysis: SectionAnalysis = p2_chain.invoke({
+            "section_id":         section_id,
+            "section_title":      section_title,
+            "section_content":    section_content,
+            "ref_memory":         _format_ref_memory(ref_memory),
+            "phase1_explanation": imports.explanation or "None.",
+            "rag_results":        rag_results,
         })
+
+        new_refs = {
+            e.type_name: {"spec": e.source_spec, "fields": e.fields, "note": e.note}
+            for e in analysis.memory_updates if e.type_name
+        }
         return analysis, new_refs
     except Exception as e:
         logger.warning(f"Section analyzer failed for [{section_id}] ({e}); extracting without it.")
