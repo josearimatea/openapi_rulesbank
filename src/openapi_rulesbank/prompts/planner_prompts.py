@@ -65,11 +65,13 @@ class ExtractionPlan(BaseModel):
     )
     sections_to_extract: list[SectionPlan] = Field(
         description=(
-            "Ordered list of ALL sections selected for rule extraction, "
-            "including 'low' priority ones. Exclude only sections that are "
-            "clearly irrelevant (e.g. cover page, table of contents, list of "
-            "abbreviations, normative references). "
-            "Ordered from highest to lowest priority."
+            "List of ALL sections selected for rule extraction, including 'low' "
+            "priority ones. Exclude only sections that are clearly irrelevant "
+            "(e.g. cover page, table of contents, list of abbreviations, normative "
+            "references). Keep them in DOCUMENT ORDER (ascending clause number), "
+            "NOT reordered by priority: a section often relies on one that precedes "
+            "it (e.g. a 'General' clause declares the imported types a later 'Type' "
+            "clause uses), and downstream processing follows this order."
         )
     )
 
@@ -159,7 +161,8 @@ Document sections to analyze (section_id | title | content preview):
 Auxiliary context (from supporting 3GPP documents, if any):
 {helper_context}
 
-Produce an ExtractionPlan with all relevant sections ordered by priority.
+Produce an ExtractionPlan with all relevant sections in document order (ascending
+clause number). Still assign each a priority, but do not let it change the order.
 """
 
 

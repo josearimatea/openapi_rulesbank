@@ -139,6 +139,15 @@ def planner_node(state: RuleBankState) -> dict:
         logger.warning(
             f"Planner returned {dropped} section id(s) not in the stage 3 subset — dropped."
         )
+
+    # Force document order regardless of how the LLM ordered its answer. section_id
+    # is the sequential document index, so sorting by it makes the Extractor process
+    # sections top to bottom — a clause that declares something (e.g. a 'General'
+    # clause listing imported types) is then handled before the clauses that use it.
+    def _doc_order(s) -> int:
+        return int(s.section_id) if s.section_id.isdigit() else 1_000_000
+    valid_plan_sections.sort(key=_doc_order)
+
     plan.sections_to_extract = valid_plan_sections
 
     selected_ids = {s.section_id for s in valid_plan_sections}
