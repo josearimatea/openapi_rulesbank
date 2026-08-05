@@ -366,21 +366,27 @@ def search_3gpp_corpus(
     return "\n\n---\n\n".join(doc.page_content for doc in result.docs)
 
 
-def search_imported_type_ref(query: str, k: int = IMPORTED_TYPE_RETRIEVE_CHUNKS) -> str:
+def search_imported_type_ref(
+    type_name: str, key_terms: str = "", k: int = IMPORTED_TYPE_RETRIEVE_CHUNKS
+) -> str:
     """Fetch a common type's definition from the corpus of other 3GPP specs.
 
     3GPP management-service specs reuse common types (e.g. NotificationHeader,
     ErrorResponse) defined in a shared spec like TS 28.623 and referenced via an
-    `allOf $ref`. A section that embeds such a type lists the type's fields inline
-    without saying which are inherited; to tell them apart we need the imported
-    type's OWN fields. The corpus is chunked small, so those fields are spread over
-    several chunks — hence the wider default k (IMPORTED_TYPE_RETRIEVE_CHUNKS) than
-    a normal corpus query, so the whole field set comes back. The query is supplied
-    by the caller (analyzer step 1). Returns the matching chunks, or "" when the
-    corpus is absent or nothing matches.
+    `allOf $ref`. To tell a section's own fields from the inherited ones we need
+    the imported type's OWN definition block.
+
+    The query is assembled here (deterministic), not written by the LLM: the type
+    name plus the shape of an OpenAPI schema definition ("type: object properties
+    required"), optionally seeded with the analyzer's key_terms to disambiguate
+    similar names. This shape matches the definition chunk itself — a prose
+    question ("retrieve the definition of ... including its properties") matched
+    every type and buried the target; this form surfaces it. Returns the matching
+    chunks, or "" when the type is unknown or the corpus is absent.
     """
-    if not query:
+    if not type_name:
         return ""
+    query = f"{type_name} type: object properties required {key_terms}".strip()
     return search_3gpp_corpus(query, k=k)
 
 

@@ -129,7 +129,7 @@ def _analyze_section(
         # lookup of what that type/spec is), collecting the fetched definitions.
         rag_blocks = []
         for ref in imports.references:
-            fetched = search_imported_type_ref(ref.rag_query) if ref.rag_query else ""
+            fetched = search_imported_type_ref(ref.type_name, ref.key_terms)
             if fetched:
                 rag_blocks.append(f"### {ref.type_name} (from {ref.source_spec}):\n{fetched}")
         rag_results = "\n\n".join(rag_blocks) or "No definitions retrieved."

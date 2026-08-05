@@ -46,14 +46,15 @@ class SpecReference(BaseModel):
     source_spec: str = Field(
         description="The spec it comes from, as written here, e.g. 'TS 28.623'."
     )
-    rag_query: str = Field(
+    key_terms: str = Field(
+        default="",
         description=(
-            "A retrieval query to fetch this type's OWN definition from the corpus "
-            "of other specs — aim it at the definition block (the type name with its "
-            "'type: object' / 'properties:' / 'required:' shape) in its source spec, "
-            "so it matches where the type is DEFINED, not the many one-line mentions "
-            "of it. Keep it general: describe an OpenAPI schema definition of the "
-            "named type; do not hard-code field names."
+            "A few distinctive words about what this type IS (its role/domain, e.g. "
+            "'notification header common fields' or 'error response body'), to help "
+            "single its definition out from similarly named types. Just the terms — "
+            "the retrieval query is assembled in code around the type name and the "
+            "shape of an OpenAPI schema definition, so do NOT write a full sentence "
+            "or guess field names here."
         )
     )
 
@@ -95,9 +96,10 @@ now, you say how to fetch it and why it is here:
     column names an external spec (e.g. "NotificationHeader — TS 28.623",
     "ErrorResponse — TS 28.623"), or as a data type cited in an attribute table
     that the reference memory below already attributes to another spec.
-  - For each referenced type, write a retrieval query (rag_query) that will fetch
-    that type's OWN definition from its source spec — aimed at the definition
-    block, not at mentions of it. Keep it general; do not hard-code field names.
+  - For each referenced type, give its name, its source spec, and a few key_terms
+    describing what it IS (its role/domain). You do NOT write the retrieval query —
+    the code assembles it from the type name and the shape of a schema definition;
+    your key_terms only help disambiguate similar names. Do not guess field names.
   - Write one explanation covering why these other specs are referenced in this
     section and what the referenced types are used for here.
 
@@ -244,17 +246,26 @@ B. GUIDE THE EXTRACTOR:
    1. CLASSIFY the section by its content: type_definition, enumeration, mapping,
       resource, or other. emits_schema_properties is True ONLY for
       type_definition/enumeration.
-   2. RESOLVE AN EMBEDDED BASE. A defined type embeds a common imported type when
-      its attribute table repeats that type's OWN fields (known from the memory or
-      the fetched definition). When it does:
-        - set base_ref to the OpenAPI $ref of the imported type;
-        - set inherited_fields to the attributes that come from it (present in BOTH
-          this type's table and the imported type's fields);
+   2. RESOLVE AN EMBEDDED BASE. A type-definition section rarely names the common
+      base it builds on — it just lists all its attributes, the inherited ones
+      mixed in with its own. To find the base, compare the section's attribute
+      names against the known types in the reference memory: go through each memory
+      type that has a `fields` list, and if this section's attributes INCLUDE that
+      type's fields (all or nearly all of them), the section embeds that type as
+      its base. When one matches:
+        - set base_ref to the OpenAPI $ref of that memory type
+          (e.g. "$ref: '<source spec file>#/components/schemas/<TypeName>'");
+        - set inherited_fields to the section attributes that are that type's
+          fields;
         - the type's OWN properties are the remaining attributes.
-      If there is no embedded base, leave base_ref empty and inherited_fields [].
+      Judge the overlap sensibly (a field may be spelled slightly differently);
+      you decide the match, it is not a literal string test. If no memory type's
+      fields are covered by this section, leave base_ref empty and inherited_fields
+      []. The fetched definitions (RAG) are secondary evidence when the memory
+      lacks fields.
 
-Base every judgement on the section content, the memory, and the fetched
-definitions — never invent a field or a base type not evidenced there.
+Base every judgement on the section content, the reference memory, and the fetched
+definitions — never invent a field or a base type not evidenced in them.
 """
 
 _STEP2_USER = """\
