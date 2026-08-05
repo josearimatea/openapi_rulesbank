@@ -365,6 +365,22 @@ def search_3gpp_corpus(
     return "\n\n---\n\n".join(doc.page_content for doc in result.docs)
 
 
+def search_imported_type_ref(query: str, k: int = GPP_CORPUS_RETRIEVE_CHUNKS) -> str:
+    """Fetch a common type's definition from the corpus of other 3GPP specs.
+
+    3GPP management-service specs reuse common types (e.g. NotificationHeader,
+    ErrorResponse) defined in a shared spec like TS 28.623 and referenced via an
+    `allOf $ref`. A section that embeds such a type lists the type's fields inline
+    without saying which are inherited; to tell them apart we need the imported
+    type's OWN definition. The query is supplied by the caller (the analyzer's
+    step 1 writes it to match the definition block), and this returns the matching
+    corpus chunks, or "" when the corpus is absent or nothing matches.
+    """
+    if not query:
+        return ""
+    return search_3gpp_corpus(query, k=k)
+
+
 # ---------------------------------------------------------------------------
 # Cached singletons — loaded once per process, reused across all calls
 # ---------------------------------------------------------------------------

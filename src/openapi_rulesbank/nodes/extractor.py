@@ -51,11 +51,18 @@ from openapi_rulesbank.config.settings import (
 )
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.prompts.extractor_prompts import SectionRules, extractor_prompt
+from openapi_rulesbank.prompts.section_analyzer_prompts import (
+    SectionImports,
+    SectionAnalysis,
+    section_import_ref_prompt,
+    section_analyzer_prompt,
+)
 from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.tools.rag_tools import (
     search_openapi_reference,
     search_target_spec,
     search_rules_by_text,
+    search_imported_type_ref,
     umbrella_mns_for as _umbrella_mns,
 )
 
@@ -67,6 +74,100 @@ def _build_sections_index(parsed_sections: list[dict]) -> dict[str, dict]:
     Builds a lookup dict from section_id to section dict for O(1) access.
     """
     return {s["section_id"]: s for s in parsed_sections}
+
+
+def _analyze_section(
+    section_id: str,
+    section_title: str,
+    section_content: str,
+    ref_memory: dict,
+) -> tuple[SectionAnalysis | None, dict]:
+    """Triage a section before extraction: classify it and resolve inheritance.
+
+    Two focused steps that resolve what the crowded main extraction keeps getting
+    wrong, using the running other-spec reference memory:
+      Step 1 — read THIS section's own text for (a) any types it declares as
+        imported from another spec (rows of a 'Data types imported' table), and
+        (b) whether the type it defines embeds an imported common type as its base.
+        The declared imports are returned to be merged into the memory, so a
+        'General' clause seen earlier makes its references available to the later
+        'Type' clauses — no need for the reference to be in the Type's own text.
+      Step 2 — if the section's type embeds a base, look that base up in the memory
+        to learn its source spec, fetch its real field list, and let the analyzer
+        classify the section and split inherited fields (one `allOf $ref`) from the
+        type's own properties.
+
+    Returns (analysis, new_refs) — new_refs are this section's declared imports to
+    merge into other_spec_ref_memory. analysis is None if a call fails (extraction
+    then proceeds without the extra guidance).
+    """
+    try:
+        # Step 1 — read this section's declared imports and any embedded base type,
+        # WITH the reference memory in view: a type-definition section often lists a
+        # common base's fields without naming the base, so step 1 needs the memory
+        # of imports seen in earlier sections to recognise the embedded base.
+        ref_memory = ref_memory or {}
+        imports_chain = section_import_ref_prompt | llm.with_structured_output(SectionImports)
+        imports: SectionImports = imports_chain.invoke({
+            "ref_memory":      ", ".join(f"{t} → {s}" for t, s in ref_memory.items()) or "None yet.",
+            "section_title":   section_title,
+            "section_content": section_content,
+        })
+        new_refs = {r.type_name: r.source_spec for r in imports.declared_refs if r.type_name}
+
+        # Known references = memory seen so far + what this section just declared.
+        known_refs = {**ref_memory, **new_refs}
+
+        # Step 2 input — if the section's type embeds a base, fetch that base's real
+        # definition from the other-spec corpus using the query step 1 wrote for it,
+        # so step 2 can tell inherited fields from the type's own.
+        base_type = imports.embedded_base_type
+        if base_type:
+            source_spec = known_refs.get(base_type, "")
+            fetched = search_imported_type_ref(imports.base_type_query)
+            where = f" (from {source_spec})" if source_spec else ""
+            imported_type_context = (
+                f"The type defined here embeds base type {base_type}{where}. Its own "
+                f"definition (its fields are inherited, not this type's own):\n{fetched}"
+                if fetched else
+                f"The type defined here embeds base type {base_type}{where}, but its "
+                f"definition was not found — treat its repeated header fields as inherited."
+            )
+        else:
+            imported_type_context = "This section's type embeds no imported base type."
+
+        analysis_chain = section_analyzer_prompt | llm.with_structured_output(SectionAnalysis)
+        analysis = analysis_chain.invoke({
+            "section_id":             section_id,
+            "section_title":          section_title,
+            "section_content":        section_content,
+            "imported_type_context":  imported_type_context,
+        })
+        return analysis, new_refs
+    except Exception as e:
+        logger.warning(f"Section analyzer failed for [{section_id}] ({e}); extracting without it.")
+        return None, {}
+
+
+def _format_analysis_guidance(analysis: SectionAnalysis | None) -> str:
+    """Render the analyzer's verdict as directives injected into the main prompt."""
+    if analysis is None:
+        return "No pre-analysis available; apply the general rules."
+    lines = [
+        f"Section kind: {analysis.section_kind}.",
+        f"Emit schema_property rules: {'YES' if analysis.emits_schema_properties else 'NO — this section is not a schema home; emit only its HTTP-level rules.'}",
+    ]
+    if analysis.schema_name:
+        lines.append(f"Canonical schema name (exact casing): {analysis.schema_name}.")
+    if analysis.base_ref:
+        lines.append(
+            f"This type embeds an imported base: emit ONE schema_property with "
+            f"openapi_field 'allOf' and value \"{analysis.base_ref}\". Do NOT emit "
+            f"these inherited fields as own properties: {', '.join(analysis.inherited_fields)}."
+        )
+    if analysis.guidance:
+        lines.append(analysis.guidance)
+    return "\n".join(lines)
 
 
 def _format_rules_compact(rules: list[dict]) -> list[str]:
@@ -278,6 +379,18 @@ def extractor_node(state: RuleBankState) -> dict:
         SPEC_SIBLING_RETRIEVE_CHUNKS,
     ) or "No related stage 3 section retrieved."
 
+    # Triage the section up front (two focused steps): classify it (definition vs
+    # mapping) and resolve any imported base type into an allOf $ref + inherited
+    # fields, so the main extraction receives those subtle judgements ready-made.
+    # It reads this section's own declared imports and reuses the running memory of
+    # references seen in earlier sections (a 'General' clause feeds the later
+    # 'Type' clauses); new_refs are merged back into that memory below.
+    analysis, new_refs = _analyze_section(
+        section_id, section_title, section["content"],
+        state.get("other_spec_ref_memory", {}),
+    )
+    section_analysis = _format_analysis_guidance(analysis)
+
     # Rules already validated in OTHER sections that resemble this one, so the
     # Extractor does not re-emit a rule that another section already owns — even
     # when it would phrase the value differently (the deterministic dedup misses
@@ -298,6 +411,7 @@ def extractor_node(state: RuleBankState) -> dict:
         "section_id":                 section_id,
         "section_title":              section_title,
         "extraction_focus":           focus,
+        "section_analysis":           section_analysis,
         "section_content":            section["content"],
         "openapi_reference_overview": openapi_reference_overview,
         "stage2_context":             stage2_context,
@@ -317,4 +431,7 @@ def extractor_node(state: RuleBankState) -> dict:
     return {
         "raw_rules":               raw_rules,
         "section_iteration_count": section_iteration_count + 1,
+        # Merge this section's newly declared other-spec references into the running
+        # memory (see _merge_ref_memory), so later sections can resolve them.
+        "other_spec_ref_memory":   new_refs,
     }

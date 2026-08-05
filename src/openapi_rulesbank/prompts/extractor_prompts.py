@@ -332,6 +332,11 @@ Section Title: {section_title}
 Extraction focus (defined by the Planner):
 {extraction_focus}
 
+Pre-analysis of this section (a focused triage done BEFORE this extraction —
+follow it: it already resolved this section's kind, whether it is a schema home,
+and any imported base type / inherited fields):
+{section_analysis}
+
 Section content (the ONLY source from which rules must be extracted — every rule
 you return must trace to a line or row BELOW; if this content is empty or is just
 a heading/marker, return an empty list, do NOT draw rules from the contexts):

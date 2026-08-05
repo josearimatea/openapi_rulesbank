@@ -26,6 +26,18 @@ from typing import TypedDict, Annotated
 from langgraph.graph.message import add_messages
 
 
+def _merge_ref_memory(left: dict, right: dict) -> dict:
+    """Reducer for other_spec_ref_memory (right wins on key clash).
+
+    The Extractor's pre-analyzer collects references to types imported from other
+    specs (e.g. {"NotificationHeader": "TS 28.623"}) section by section. Each call
+    returns only the refs it saw; LangGraph merges them into the running memory
+    instead of overwriting it, so a reference declared in an earlier section (a
+    'General' clause) stays available to the later sections that use it.
+    """
+    return {**(left or {}), **(right or {})}
+
+
 class RuleBankState(TypedDict):
 
     # -------------------------------------------------------------------------
@@ -161,6 +173,15 @@ class RuleBankState(TypedDict):
     # Written by Validator. Read by Extractor (on loop-back) and conditions.py.
     # Reset to [] by Builder when advancing to the next section.
     validator_section_reflection: list[dict]
+
+    # Running memory of types imported from OTHER specs, collected by the
+    # Extractor's pre-analyzer as it reads each section in document order:
+    # {imported_type_name: source_spec}, e.g. {"NotificationHeader": "TS 28.623"}.
+    # A 'General' clause declares these before the 'Type' clauses that use them; the
+    # merge reducer keeps earlier entries so a later section can resolve a type it
+    # embeds (fetch its fields, emit an allOf $ref) without the reference being in
+    # its own text. Accumulates across sections; never reset.
+    other_spec_ref_memory: Annotated[dict, _merge_ref_memory]
 
     # -------------------------------------------------------------------------
     # BUILDER OUTPUT — produced by the Builder Node
