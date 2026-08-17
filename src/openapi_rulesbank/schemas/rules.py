@@ -61,6 +61,31 @@ MODEL HIERARCHY
 from pydantic import BaseModel, Field
 
 
+class SchemaRef(BaseModel):
+    """A single OpenAPI schema reference, structured so the YAML builder needs no
+    string parsing.
+
+    Every 3GPP $ref has the shape `[file]#/components/schemas/<schema>`:
+      - internal reference (same document): file is "" and the builder emits
+        "$ref: '#/components/schemas/<schema>'";
+      - external reference (another spec): file is that spec's YAML filename, e.g.
+        "TS28623_ComDefs.yaml", and the builder emits
+        "$ref: '<file>#/components/schemas/<schema>'".
+    """
+
+    file: str = Field(
+        default="",
+        description=(
+            "The YAML filename the schema is defined in for an EXTERNAL reference "
+            "(e.g. 'TS28623_ComDefs.yaml'); empty string for an INTERNAL reference "
+            "(a schema in this same document)."
+        )
+    )
+    schema_name: str = Field(
+        description="The referenced schema's name, e.g. 'NotificationHeader'."
+    )
+
+
 class OpenAPIMapping(BaseModel):
     """
     Represents the mapping between a 3GPP NRM element and an OpenAPI construct.
@@ -81,6 +106,19 @@ class OpenAPIMapping(BaseModel):
     openapi_value: str = Field(
         description="The value or constraint that applies to the field. "
                     "E.g. 'string', 'int64', 'GET', '#/components/schemas/NrCellDu'."
+    )
+    references: list[SchemaRef] = Field(
+        default_factory=list,
+        description=(
+            "Every schema this rule's value points to via a $ref, listed structured "
+            "so the YAML builder does not parse openapi_value. Fill it whenever the "
+            "value is or contains a $ref: one entry for a single ref "
+            "(properties.<x> -> a type, a response body, an allOf base), several for "
+            "a oneOf/anyOf/allOf over multiple schemas. Each entry is "
+            "{file, schema_name} — file empty for an internal ref, the spec's YAML "
+            "filename for an external one. Empty list when the value has no $ref "
+            "(a plain 'string'/'integer', an enum, an HTTP method, etc.)."
+        )
     )
 
 
