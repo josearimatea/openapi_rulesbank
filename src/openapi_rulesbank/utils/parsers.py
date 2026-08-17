@@ -47,6 +47,21 @@ def _has_real_words(title: str) -> bool:
     return bool(re.search(r'[a-zA-Z]{3,}', title))
 
 
+def is_content_empty(content: str) -> bool:
+    """True when a section body carries no prose of its own.
+
+    An umbrella clause is split from its children, so its body is left holding
+    only their markdown markers ("#", "###") or nothing. Such a section states
+    nothing to extract. This is a FACT about the text (no alphanumeric content),
+    not a relevance judgement — used to keep the Planner from selecting these
+    sections and the Extractor from mining the RAG context for them. It does NOT
+    remove the section from the document (the ContractBuilder's locator still sees
+    every heading); it only guards selection and extraction downstream.
+    """
+    stripped = content.strip()
+    return not stripped or not re.search(r'[a-zA-Z0-9]', stripped.replace("#", ""))
+
+
 def _is_embedded_openapi_annex(title: str, content: str) -> bool:
     """
     Returns True for an annex section that embeds a finished OpenAPI document.

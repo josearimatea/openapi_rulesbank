@@ -117,6 +117,10 @@ def _analyze_section(
     """
     ref_memory = ref_memory or {}
     try:
+        logger.info(
+            f"[analyzer {section_id}] memory in: "
+            f"{ {t: v.get('fields', []) for t, v in ref_memory.items()} }"
+        )
         # Phase 1 — find references to other specs and how to look each one up.
         p1_chain = section_import_ref_prompt | llm.with_structured_output(SectionImports)
         imports: SectionImports = p1_chain.invoke({
@@ -124,6 +128,10 @@ def _analyze_section(
             "section_title":   section_title,
             "section_content": section_content,
         })
+        logger.info(
+            f"[analyzer {section_id}] phase1 refs: "
+            f"{[(r.type_name, r.source_spec) for r in imports.references]}"
+        )
 
         # Run the RAG for each reference the section makes (a reference triggers a
         # lookup of what that type/spec is), collecting the fetched definitions.
@@ -149,6 +157,12 @@ def _analyze_section(
             e.type_name: {"spec": e.source_spec, "fields": e.fields, "note": e.note}
             for e in analysis.memory_updates if e.type_name
         }
+        logger.info(
+            f"[analyzer {section_id}] phase2: kind={analysis.section_kind} "
+            f"emits_schema={analysis.emits_schema_properties} "
+            f"base_ref={analysis.base_ref!r} inherited={analysis.inherited_fields} "
+            f"| memory_updates: { {t: v['fields'] for t, v in new_refs.items()} }"
+        )
         return analysis, new_refs
     except Exception as e:
         logger.warning(f"Section analyzer failed for [{section_id}] ({e}); extracting without it.")
@@ -159,20 +173,35 @@ def _format_analysis_guidance(analysis: SectionAnalysis | None) -> str:
     """Render the analyzer's verdict as directives injected into the main prompt."""
     if analysis is None:
         return "No pre-analysis available; apply the general rules."
-    lines = [
-        f"Section kind: {analysis.section_kind}.",
-        f"Emit schema_property rules: {'YES' if analysis.emits_schema_properties else 'NO — this section is not a schema home; emit only its HTTP-level rules.'}",
-    ]
-    if analysis.schema_name:
-        lines.append(f"Canonical schema name (exact casing): {analysis.schema_name}.")
-    if analysis.base_ref:
+    lines = [f"Section kind: {analysis.section_kind}."]
+
+    if analysis.emits_schema_properties:
+        lines.append("This section IS a schema home: emit its schema_property rules.")
+        if analysis.schema_name:
+            lines.append(f"Canonical schema name (exact casing): {analysis.schema_name}.")
+        if analysis.base_ref:
+            inh = ', '.join(analysis.inherited_fields)
+            lines.append(
+                f"EMBEDDED BASE — this type is allOf of an imported base plus its own "
+                f"properties. Emit EXACTLY ONE schema_property with openapi_field "
+                f"'allOf' and value \"{analysis.base_ref}\". These fields are INHERITED "
+                f"from that base: [{inh}] — do NOT emit any of them as "
+                f"properties.<name>, and do NOT put them in 'required'. Emit "
+                f"properties only for the REMAINING (own) attributes."
+            )
+        if analysis.guidance:
+            lines.append(analysis.guidance)
+    else:
+        # The structured flag wins over the prose. A non-home section must emit no
+        # schema_property whatever the free-text guidance says, so we state the hard
+        # rule and omit the analyzer's prose (which has slipped into "emit ... schema
+        # with properties ..." and misled the Extractor).
         lines.append(
-            f"This type embeds an imported base: emit ONE schema_property with "
-            f"openapi_field 'allOf' and value \"{analysis.base_ref}\". Do NOT emit "
-            f"these inherited fields as own properties: {', '.join(analysis.inherited_fields)}."
+            "This section is NOT a schema home — do NOT emit ANY schema_property "
+            "rule (no properties.<name>, no allOf, no enum, no required). Emit only "
+            "its HTTP-level rules (path_operation, callback, request_body, response). "
+            "Any attributes it lists are defined in their own 'Type <Name>' section."
         )
-    if analysis.guidance:
-        lines.append(analysis.guidance)
     return "\n".join(lines)
 
 

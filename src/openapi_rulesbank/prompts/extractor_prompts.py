@@ -70,8 +70,11 @@ from; everything else only helps you phrase what is already there:
     an EMPTY list. Never populate it from the contexts.
   - Do NOT infer or hallucinate rules not explicitly stated or clearly implied by
     the section text.
-  - If the section content contains a table, extract one rule per relevant row.
-  - If the section content defines multiple attributes, extract one rule per attribute.
+  - If the section content contains a table, extract one rule per relevant row —
+    EXCEPT rows the pre-analysis marks as inherited (see below): those are covered
+    by the single allOf $ref, so skip them, do not also emit them as properties.
+  - If the section content defines multiple attributes, extract one rule per
+    attribute, again SKIPPING any the pre-analysis lists as inherited.
   - Ignore introductory or background text with no concrete mappable content.
 
 SERVICE SCOPE — the rules must belong to the target service's OpenAPI YAML:
@@ -134,12 +137,19 @@ context". Neither is a rule source; use them to get THIS section's rules right:
     (e.g. "string" in the mapping vs {{"type":"string","format":"date-time"}} in
     the definition).
 
-  - OWN vs INHERITED PROPERTIES — when a type is defined as `allOf` of a common
-    header schema plus its own properties (e.g. it includes NotificationHeader),
-    extract ONLY the properties this section lists as its own. Do NOT re-emit the
-    header's inherited fields (e.g. objectClass, objectInstance, notificationId,
-    notificationType, eventTime, systemDN, href) as properties of this schema —
-    they belong to the referenced common schema, not here.
+  - OWN vs INHERITED PROPERTIES — when the pre-analysis (see "Pre-analysis of this
+    section" in the user message) reports an imported base, it gives you TWO things:
+    the base's $ref and the exact list of INHERITED field names. Then:
+      * emit exactly ONE schema_property rule with openapi_field "allOf" and the
+        base's $ref as its value;
+      * emit a properties.<name> rule for every OTHER attribute — the type's own;
+      * do NOT emit any properties.<name>, and do NOT list in "required", the
+        inherited field names from that list. They already come from the base via
+        the allOf $ref; repeating them here duplicates the header (once by $ref,
+        once inline) and is wrong.
+    This overrides "one rule per attribute" above: an inherited attribute is not an
+    own attribute. When the pre-analysis reports no base, treat all attributes as
+    own.
 
   - DO NOT REPEAT A SIBLING'S RULE — if a rule clearly belongs to a sibling stage 3
     section (its path, its schema, its properties), leave it to that section. Emit
@@ -166,15 +176,17 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     nested path (no ".../properties/<x>/..." and never a keyword such
                     as additionalProperties as the schema name).
                     <SchemaName> MUST be the name the spec gives the data type in the
-                    HEADING of the section that defines it — headings of the form
-                    "<clause> Type <Name>" or "<clause> Enumeration <Name>" — copied
-                    with the heading's exact spelling and casing.
+                    HEADING of the section that defines it. These headings read
+                    "<clause> Type <Name>" or "<clause> Enumeration <Name>", and
+                    <SchemaName> is ONLY the <Name> part — copied with its exact
+                    spelling and casing. The leading clause number and the label word
+                    "Type" / "Enumeration" are NOT part of the name: strip them.
+                    e.g. heading "12.3.1.2.4.6.4 Enumeration PerfMetricDirection"
+                         → SchemaName "PerfMetricDirection" (NOT "Enumeration
+                         PerfMetricDirection", NOT "12.3.1.2.4.6.4 ...").
                     Do NOT use the name of a property, of a notification, or of a table
                     column as the schema name, and never append a suffix the spec does
                     not use (no "Request", "RequestBody", "Response").
-                    Example of the mistake to avoid: in a section titled
-                    "Enumeration CmNotificationTypes" the schema is CmNotificationTypes,
-                    not the property that happens to carry it.
    openapi_field  : EITHER a named property: "properties.<propertyName>" e.g. "properties.nrCellDuId"
                     OR a schema-level keyword that constrains the whole schema:
                     "enum" | "required" | "oneOf" | "anyOf" | "allOf" | "items" |
@@ -296,6 +308,24 @@ NOTIFICATIONS ARE CALLBACKS, NEVER PATHS:
                    field "content", value the media type
     response     : object "paths.<path>.<method>.callbacks.<name>.<cbMethod>.responses",
                    field the status code, value the schema $ref or description
+
+REFERENCES — structure every schema reference so the YAML builder needs no parsing:
+
+  Whenever a rule's openapi_value is, or contains, a reference to another schema
+  (a "$ref"), ALSO fill the mapping's `references` list. Every 3GPP $ref has the
+  shape `[file]#/components/schemas/<schema>`, so each entry is {{file, schema_name}}:
+    - INTERNAL reference (a schema defined in THIS same YAML): file is "" (empty).
+      e.g. value "$ref: '#/components/schemas/PerfMetricValue'"
+           → references: [{{"file": "", "schema_name": "PerfMetricValue"}}]
+    - EXTERNAL reference (a schema from another spec): file is that spec's YAML
+      filename exactly as the spec writes it (e.g. "TS28623_ComDefs.yaml").
+      e.g. value "$ref: 'TS28623_ComDefs.yaml#/components/schemas/NotificationHeader'"
+           → references: [{{"file": "TS28623_ComDefs.yaml", "schema_name": "NotificationHeader"}}]
+  Give ONE entry per referenced schema: one for a property/response/allOf that
+  points to a single schema, several for a oneOf/anyOf/allOf over multiple schemas
+  (list every referenced schema; ignore inline non-ref members like "type: integer").
+  Leave `references` empty ([]) when the value has no $ref (a plain type such as
+  "string"/"integer", an enum, an HTTP method, a media type).
 
 RULES ABOUT WHAT NOT TO EXTRACT:
 

@@ -192,9 +192,12 @@ class SectionAnalysis(BaseModel):
     schema_name: str = Field(
         default="",
         description=(
-            "For a type_definition/enumeration, the canonical schema name exactly as "
-            "in the defining heading ('Type <Name>'/'Enumeration <Name>'), with its "
-            "exact casing. Empty otherwise."
+            "For a type_definition/enumeration, the canonical schema name: ONLY the "
+            "<Name> part of the defining heading ('<clause> Type <Name>' / '<clause> "
+            "Enumeration <Name>'), with its exact casing. Strip the leading clause "
+            "number and the label word 'Type'/'Enumeration' — they are not part of "
+            "the name (heading 'Enumeration PerfMetricDirection' → 'PerfMetric"
+            "Direction'). Empty otherwise."
         )
     )
     base_ref: str = Field(
@@ -218,10 +221,14 @@ class SectionAnalysis(BaseModel):
     guidance: str = Field(
         description=(
             "One or two imperative sentences telling the Extractor how to build this "
-            "section's rules. E.g. 'Mapping section: emit callback/request_body/"
-            "response, no schema_property.' or 'Type NotifyThresholdCrossing embeds "
-            "NotificationHeader: emit one allOf $ref to it and only these own "
-            "properties: <list>.'"
+            "section's rules. It MUST stay consistent with emits_schema_properties: "
+            "when that is False, the guidance must NOT tell the Extractor to emit a "
+            "schema or its properties (say what it DOES emit — callback/request_body/"
+            "response — and that schema_property is not this section's job). "
+            "E.g. 'Mapping section: emit the callback/request_body/response; do NOT "
+            "emit schema_property — the parameters belong to their Type section.' or "
+            "'Type NotifyThresholdCrossing embeds NotificationHeader: emit one allOf "
+            "$ref to it and only these own properties: <list>.'"
         )
     )
 
@@ -245,7 +252,11 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
 B. GUIDE THE EXTRACTOR:
    1. CLASSIFY the section by its content: type_definition, enumeration, mapping,
       resource, or other. emits_schema_properties is True ONLY for
-      type_definition/enumeration.
+      type_definition/enumeration. Keep `guidance` CONSISTENT with this flag —
+      when emits_schema_properties is False, the guidance must not tell the
+      Extractor to emit a schema or its properties (a mapping section maps
+      parameters to a request body that references types defined elsewhere; it
+      does not define those types here).
    2. RESOLVE AN EMBEDDED BASE. A type-definition section rarely names the common
       base it builds on — it just lists all its attributes, the inherited ones
       mixed in with its own. To find the base, compare the section's attribute

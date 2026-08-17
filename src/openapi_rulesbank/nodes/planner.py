@@ -39,6 +39,7 @@ from openapi_rulesbank.config.llm_config import llm
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.prompts.planner_prompts import ExtractionPlan, planner_prompt
 from openapi_rulesbank.schemas.contract import format_contract_summary
+from openapi_rulesbank.utils.parsers import is_content_empty
 
 logger = get_logger(__name__)
 
@@ -72,15 +73,23 @@ def _stage3_sections(sections: list[dict], service_contract: dict) -> list[dict]
         return sections
 
     prefix = stage3_clause + "."
-    kept = [
+    in_scope = [
         s for s in sections
         if (clause := s["title"].strip().split(" ", 1)[0]) == stage3_clause
         or clause.startswith(prefix)
     ]
+    # Drop umbrella clauses whose body is only markdown markers ("###") with no
+    # prose: they define nothing, and offering them to the Planner lets it pick one
+    # (non-deterministically) as an extraction target, after which the Extractor
+    # mines the RAG context and invents rules for an empty section. This is a fact
+    # about the text, not a relevance call. The sections stay in the document (the
+    # locator already ran); they are only withheld from the Planner's choice.
+    kept = [s for s in in_scope if not is_content_empty(s["content"])]
+    dropped_empty = len(in_scope) - len(kept)
     logger.info(
-        f"Planner scope: {len(kept)} of {len(sections)} section(s) are in the "
-        f"stage 3 block (clause {stage3_clause}.x); the rest are stage 2 or "
-        f"other-service sections and are not sent to the LLM."
+        f"Planner scope: {len(kept)} of {len(sections)} section(s) are extractable "
+        f"stage 3 content (clause {stage3_clause}.x); dropped {dropped_empty} "
+        f"empty umbrella clause(s) and the out-of-scope / stage 2 rest."
     )
     return kept
 
