@@ -93,17 +93,17 @@ class RulesBankMetadata(BaseModel):
     excluded_by_planner_count: int = Field(description="Count of sections the Planner did not select.")
 
     # --- Excluded section details (full list for traceability) ---
-    excluded_by_reader:  list[dict] = Field(
+    excluded_by_reader:  list[str] = Field(
         description=(
-            "Sections excluded by reader-level filters (symbolic titles, keyword filter). "
-            "Each entry: {section_id, title, reason}."
+            "section_ids excluded by reader-level filters (symbolic titles, keyword "
+            "filter). Ids only, to keep the report compact."
         ),
         default_factory=list,
     )
-    excluded_by_planner: list[dict] = Field(
+    excluded_by_planner: list[str] = Field(
         description=(
-            "Sections the Planner did not select for extraction. "
-            "Each entry: {section_id, title}."
+            "section_ids the Planner did not select for extraction. Ids only, to "
+            "keep the report compact."
         ),
         default_factory=list,
     )

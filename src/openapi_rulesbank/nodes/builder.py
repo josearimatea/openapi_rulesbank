@@ -55,6 +55,7 @@ State writes:
 
 import json
 import os
+import re
 from collections import Counter
 from datetime import datetime
 
@@ -70,6 +71,44 @@ from openapi_rulesbank.tools.rag_tools import (
 )
 
 logger = get_logger(__name__)
+
+
+def _clause_number(section: dict) -> str:
+    """Document clause number of an excluded section, read from its title.
+
+    3GPP titles start with the clause number (e.g. "12.3.1.2.4.1 General"), so we
+    take that leading dotted-number token. Falls back to the internal section_id
+    when the title has no clause number.
+    """
+    title = (section.get("title") or "").strip()
+    head = title.split(" ", 1)[0]
+    return head if re.match(r'^\d+(\.\d+)*$', head) else section.get("section_id", "")
+
+
+def _dump_json_inlining(obj: dict, inline_keys: set[str]) -> str:
+    """Serialize obj with indent=2, but render the named list keys on one line.
+
+    Python's json indents every list across many lines. For the excluded-section
+    clause lists that is hundreds of near-empty lines, so we keep those specific
+    keys compact. Each inline key's value is dumped to a placeholder token first,
+    then the token line is replaced by the compact one-line array — the array is
+    still real JSON, just not spread out. Other lists are unaffected.
+    """
+    placeholders: dict[str, str] = {}
+    staged = dict(obj)
+    metadata = dict(staged.get("metadata", {}))
+    for key in inline_keys:
+        if key in metadata:
+            token = f"__INLINE_{key}__"
+            placeholders[token] = json.dumps(metadata[key], ensure_ascii=False)
+            metadata[key] = token
+    staged["metadata"] = metadata
+
+    text = json.dumps(staged, ensure_ascii=False, indent=2)
+    for token, inline in placeholders.items():
+        text = text.replace(f'"{token}"', inline)
+    return text
+
 
 # Fields stripped from a failed rule before constructing a forced ValidatedRule.
 _FORCE_EXCLUDE_FIELDS = {
@@ -196,6 +235,13 @@ def builder_node(state: RuleBankState) -> dict:
     excluded_by_reader  = state.get("excluded_sections_reader",  []) or []
     excluded_by_planner = state.get("excluded_sections_planner", []) or []
 
+    # In the output, list the excluded sections by their document clause number
+    # (e.g. "12.3.1.2.4.1"), read from the title, not the internal section_id — the
+    # clause number is what a reader recognises. Full dicts (title + reason) bloated
+    # the report; the counts plus this compact list are enough to see what dropped.
+    excluded_by_reader_clauses  = [_clause_number(s) for s in excluded_by_reader]
+    excluded_by_planner_clauses = [_clause_number(s) for s in excluded_by_planner]
+
     sections_total       = len(parsed_sections) + len(excluded_by_reader)
     sections_for_planner = len(parsed_sections)
     planner_accounted    = len(plan_sections) + len(excluded_by_planner)
@@ -233,8 +279,8 @@ def builder_node(state: RuleBankState) -> dict:
             sections_with_rules=       len(sections_with_rules),
             excluded_by_reader_count=  len(excluded_by_reader),
             excluded_by_planner_count= len(excluded_by_planner),
-            excluded_by_reader=        excluded_by_reader,
-            excluded_by_planner=       excluded_by_planner,
+            excluded_by_reader=        excluded_by_reader_clauses,
+            excluded_by_planner=       excluded_by_planner_clauses,
         ),
         summary=RulesBankSummary(
             rules_validated_count= len([r for r in rule_outputs if r.validation_passed]),
@@ -259,7 +305,10 @@ def builder_node(state: RuleBankState) -> dict:
         output_path = os.path.join(out_dir, filename)
 
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(rules_bank.model_dump(), f, ensure_ascii=False, indent=2)
+        f.write(_dump_json_inlining(
+            rules_bank.model_dump(),
+            inline_keys={"excluded_by_reader", "excluded_by_planner"},
+        ))
         f.flush()
 
     sections_done = current_section_idx + 1
