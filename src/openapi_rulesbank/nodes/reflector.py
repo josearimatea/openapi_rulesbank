@@ -52,6 +52,7 @@ from openapi_rulesbank.tools.rag_tools import (
     search_target_spec,
     umbrella_mns_for as _umbrella_mns,
 )
+from openapi_rulesbank.utils.parsers import format_section_verdict
 
 logger = get_logger(__name__)
 
@@ -89,6 +90,10 @@ def reflector_node(state: RuleBankState) -> dict:
         s["section_id"]: s
         for s in (state.get("parsed_sections", []) or [])
     }
+    # Per-section verdict from the Extractor's pre-analyzer, to enforce it here
+    # instead of re-judging the raw table. Only the current rule's section entry is
+    # injected into each prompt — the map stays in state.
+    analysis_by_id = state.get("section_analysis_by_id", {}) or {}
 
     # -------------------------------------------------------------------------
     # Fase 1 — Per-rule reflection
@@ -136,6 +141,7 @@ def reflector_node(state: RuleBankState) -> dict:
             "openapi_object": mapping.get("openapi_object", ""),
             "openapi_field":  mapping.get("openapi_field", ""),
             "openapi_value":  mapping.get("openapi_value", ""),
+            "section_verdict": format_section_verdict(analysis_by_id.get(section_id)),
             "section_content": section_content,
         })
 

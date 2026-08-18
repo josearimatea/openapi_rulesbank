@@ -183,6 +183,16 @@ class RuleBankState(TypedDict):
     # its own text. Accumulates across sections; never reset.
     other_spec_ref_memory: Annotated[dict, _merge_ref_memory]
 
+    # The Extractor pre-analyzer's verdict for each section it processed, kept so
+    # the Reflector and Validator can enforce it instead of re-judging the raw text
+    # (a mapping table looks like a schema). Keyed by section_id:
+    # {section_kind, emits_schema_properties, base_ref, inherited_fields}. Merged
+    # across sections with the same dict reducer. The Extractor writes it; the
+    # Reflector flags rules that violate it; the Validator rejects them and asks for
+    # a fix. Each node reads ONLY its current section's entry into its prompt — the
+    # map accumulates in state, the prompt context stays flat.
+    section_analysis_by_id: Annotated[dict, _merge_ref_memory]
+
     # -------------------------------------------------------------------------
     # BUILDER OUTPUT — produced by the Builder Node
     # -------------------------------------------------------------------------

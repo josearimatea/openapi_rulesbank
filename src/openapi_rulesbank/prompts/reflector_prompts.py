@@ -120,6 +120,18 @@ Rule to assess:
   OpenAPI field  : {openapi_field}
   OpenAPI value  : {openapi_value}
 
+Pre-analysis verdict for THIS section (decided before extraction):
+{section_verdict}
+  Enforce it — when the rule above violates it, set discard_suggestion True and
+  explain in reflection_reasoning:
+  - If it says this section is NOT a schema home and the rule above is a
+    schema_property, the rule is WRONG here: this is a mapping/resource section,
+    and the attribute belongs to its own "Type <Name>" definition section, not here.
+  - If it lists inherited fields and the rule above is a properties.<name> (or a
+    "required") for one of those inherited names, the rule is WRONG: that field
+    comes from the base via the single allOf $ref, so it must not also be emitted
+    as an own property here.
+
 Section content (the source from which this rule was extracted):
 {section_content}
 

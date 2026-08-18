@@ -295,6 +295,14 @@ Phase 1 explanation of this section's external references:
 Fetched definitions of the referenced types (RAG results):
 {rag_results}
 
+Sibling sections in this same service (id, title, and the kind already decided for
+each — titles only, for context on the neighbourhood):
+{sibling_summary}
+  Use them to place this section relative to its neighbours: e.g. if a sibling is
+  the "Type <Name>" definition that owns a schema, then a "Mapping"/"Resource"
+  sibling only references that schema and is not its home. Judge THIS section by
+  its own content; the siblings are context, not a substitute for it.
+
 Produce the memory updates and the extractor guidance for this section.
 """
 

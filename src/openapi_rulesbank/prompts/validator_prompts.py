@@ -291,6 +291,16 @@ restates one of them — see DUPLICATES ACROSS SECTIONS):
 Missing rules identified so far for this section (do NOT repeat these):
 {current_missing_rules}
 
+Pre-analysis verdict for this section (decided before extraction):
+{section_verdict}
+  Enforce it — a rule that violates it is a discard (valid=False,
+  error_type='discard'):
+  - a schema_property in a section that is NOT a schema home → the attribute is
+    defined in its own "Type <Name>" section, not in this mapping/resource one.
+  - a properties.<name> (or a "required") for a name in the inherited-fields list →
+    that field comes from the base via the single allOf $ref, so it must not also
+    be emitted as an own property here.
+
 Section content (source of the rule):
 {section_content}
 

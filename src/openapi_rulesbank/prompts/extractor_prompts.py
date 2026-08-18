@@ -156,6 +156,24 @@ context". Neither is a rule source; use them to get THIS section's rules right:
     only the rules this section is the home of, so one operation/property is not
     extracted twice under slightly different mappings.
 
+SCHEMA_PROPERTY IS GATED BY THE PRE-ANALYSIS — read this before the rule types:
+  Emit `schema_property` rules ONLY when the "Pre-analysis of this section" marks
+  this section a schema home (a type definition or an enumeration). If the
+  pre-analysis says it is NOT a schema home (a mapping or a resource section),
+  emit NO schema_property at all — only its HTTP-level rules (path_operation,
+  callback, request_body, response). A "Mapping of ... to SS equivalents" table is
+  NOT a type definition, however many attribute-name + type rows it lists: those
+  attributes are defined in their own "Type <Name>" section, which is their home.
+  This gate overrides "extract one rule per attribute/row" below — that rule
+  applies to attribute ROWS only inside a schema-home section.
+
+  SECOND GATE — inherited fields vs allOf: when the pre-analysis reports an
+  embedded base ($ref) and a list of inherited fields, those fields come from the
+  base via the single allOf $ref. NEVER also emit them as properties.<name> or
+  list them in "required" — a field is EITHER inherited (via allOf) OR an own
+  property, never both. Emit properties only for attributes NOT in the inherited
+  list. Emitting an inherited field inline duplicates the base and is wrong.
+
 RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapping accordingly:
 
 1. path_operation  — one rule per HTTP method on a resource path

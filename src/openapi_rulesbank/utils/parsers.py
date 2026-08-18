@@ -47,6 +47,27 @@ def _has_real_words(title: str) -> bool:
     return bool(re.search(r'[a-zA-Z]{3,}', title))
 
 
+def format_section_verdict(verdict: dict | None) -> str:
+    """Render one section's pre-analysis verdict for a Reflector/Validator prompt.
+
+    verdict is section_analysis_by_id[section_id] = {section_kind,
+    emits_schema_properties, base_ref, inherited_fields}, or None when the
+    pre-analyzer produced nothing for the section. Kept to a couple of lines so the
+    prompt context stays flat — only the current section's entry is ever passed.
+    """
+    if not verdict:
+        return "No pre-analysis verdict for this section."
+    home = verdict.get("emits_schema_properties", False)
+    lines = [
+        f"section_kind: {verdict.get('section_kind', 'unknown')}",
+        f"is_schema_home: {home}",
+    ]
+    if verdict.get("base_ref"):
+        lines.append(f"embedded base: {verdict['base_ref']}")
+        lines.append(f"inherited fields (not own): {verdict.get('inherited_fields', [])}")
+    return "\n".join(lines)
+
+
 def is_content_empty(content: str) -> bool:
     """True when a section body carries no prose of its own.
 

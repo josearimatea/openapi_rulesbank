@@ -89,11 +89,45 @@ def _format_ref_memory(ref_memory: dict) -> str:
     return "\n".join(lines)
 
 
+def _build_sibling_summary(
+    section_title: str,
+    parsed_sections: list[dict],
+    analysis_by_id: dict,
+    exclude_id: str,
+    levels: int = 4,
+) -> str:
+    """A light summary of the sibling sections in the same service block.
+
+    Siblings share the section's clause prefix at `levels` (e.g. "12.3.1.2" groups
+    the performance-threshold service's clauses). Each line is id + title + the kind
+    already decided for it (from section_analysis_by_id), or "not yet analyzed" for
+    ones not processed yet. Titles only — no content — so the Phase 2 prompt can see
+    the neighbourhood's shape without ballooning. Empty when there are no siblings.
+    """
+    def prefix(title: str) -> str:
+        head = title.strip().split(" ", 1)[0]
+        return ".".join(head.split(".")[:levels])
+
+    my_prefix = prefix(section_title)
+    if not my_prefix:
+        return ""
+    lines = []
+    for s in parsed_sections:
+        if s["section_id"] == exclude_id:
+            continue
+        if prefix(s["title"]) != my_prefix:
+            continue
+        kind = analysis_by_id.get(s["section_id"], {}).get("section_kind", "not yet analyzed")
+        lines.append(f"  [{s['section_id']}] {s['title'][:60]} — {kind}")
+    return "\n".join(lines)
+
+
 def _analyze_section(
     section_id: str,
     section_title: str,
     section_content: str,
     ref_memory: dict,
+    sibling_summary: str = "",
 ) -> tuple[SectionAnalysis | None, dict]:
     """Triage a section before extraction: build reference memory + extractor guidance.
 
@@ -151,6 +185,7 @@ def _analyze_section(
             "ref_memory":         _format_ref_memory(ref_memory),
             "phase1_explanation": imports.explanation or "None.",
             "rag_results":        rag_results,
+            "sibling_summary":    sibling_summary or "No sibling sections summarized yet.",
         })
 
         new_refs = {
@@ -420,9 +455,18 @@ def extractor_node(state: RuleBankState) -> dict:
     # It reads this section's own declared imports and reuses the running memory of
     # references seen in earlier sections (a 'General' clause feeds the later
     # 'Type' clauses); new_refs are merged back into that memory below.
+    # It also gets a light summary of the SIBLING sections in the same service (id +
+    # title + the kind of those already classified), so it can judge this section
+    # relative to its neighbours (e.g. a Type section owns a schema a Mapping
+    # section only references) without their content bloating the prompt.
+    sibling_summary = _build_sibling_summary(
+        section_title, state["parsed_sections"], state.get("section_analysis_by_id", {}),
+        exclude_id=section_id,
+    )
     analysis, new_refs = _analyze_section(
         section_id, section_title, section["content"],
         state.get("other_spec_ref_memory", {}),
+        sibling_summary,
     )
     section_analysis = _format_analysis_guidance(analysis)
 
@@ -463,10 +507,24 @@ def extractor_node(state: RuleBankState) -> dict:
         f"(section attempt {section_iteration_count + 1})."
     )
 
+    # Record the pre-analysis verdict for this section so the Reflector and Validator
+    # can enforce it (e.g. reject schema_property from a section that is not a schema
+    # home) instead of re-judging the raw table. Keyed by section_id; the reducer
+    # merges it into the running map.
+    verdict_update = {}
+    if analysis is not None:
+        verdict_update = {section_id: {
+            "section_kind":            analysis.section_kind,
+            "emits_schema_properties": analysis.emits_schema_properties,
+            "base_ref":                analysis.base_ref,
+            "inherited_fields":        analysis.inherited_fields,
+        }}
+
     return {
         "raw_rules":               raw_rules,
         "section_iteration_count": section_iteration_count + 1,
         # Merge this section's newly declared other-spec references into the running
         # memory (see _merge_ref_memory), so later sections can resolve them.
         "other_spec_ref_memory":   new_refs,
+        "section_analysis_by_id":  verdict_update,
     }

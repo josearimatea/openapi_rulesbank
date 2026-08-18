@@ -304,5 +304,7 @@ def build_initial_state(
         "validator_section_reflection": [],  # Validator final missing-rules; reset by Builder
         "current_section_idx":          0,   # advanced by Builder after each section
         "section_iteration_count":      0,   # reset by Builder after each section
+        "other_spec_ref_memory":        {},  # Extractor pre-analyzer: type->spec refs, merged across sections
+        "section_analysis_by_id":       {},  # Extractor pre-analyzer: per-section verdict, read by Reflector/Validator
         "messages":                     [],  # LLM message history across all nodes
     }

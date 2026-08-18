@@ -53,6 +53,7 @@ from openapi_rulesbank.prompts.validator_prompts import (
 from openapi_rulesbank.schemas.rules import ValidatedRule, ValidationError
 from openapi_rulesbank.tools.rag_tools import index_validated_rule, search_similar_rules
 from openapi_rulesbank.utils.diagnostic import _diagnostic
+from openapi_rulesbank.utils.parsers import format_section_verdict
 from openapi_rulesbank.utils.rules_check import check_mapping_for_type
 
 logger = get_logger(__name__)
@@ -200,6 +201,7 @@ def _validate_semantically(
     already_validated_this_iteration: list[dict],
     current_missing_rules: list[str],
     similar_rules_other_sections: str = "",
+    section_verdict: str = "",
 ) -> tuple[dict | None, dict | None, list[str]]:
     """
     Semantic verdict for one rule.
@@ -234,6 +236,7 @@ def _validate_semantically(
         "already_validated_rules": already_validated_str,
         "similar_rules_other_sections": similar_rules_other_sections or "None",
         "current_missing_rules":   _format_missing_rules(current_missing_rules),
+        "section_verdict":         section_verdict or "No pre-analysis verdict for this section.",
         "section_content":         section_content,
     })
 
@@ -306,6 +309,10 @@ def validator_node(state: RuleBankState) -> dict:
     reflector_section_reflection = state.get("section_reflection", []) or []
     prior_validated_rules        = state.get("validated_rules", []) or []
     rules_collection_name        = state.get("rules_collection_name", "") or ""
+    # Per-section pre-analysis verdict, to enforce it here (e.g. reject a
+    # schema_property from a section that is not a schema home) instead of
+    # re-judging the raw table. Only the current section's entry goes into a prompt.
+    analysis_by_id               = state.get("section_analysis_by_id", {}) or {}
 
     if not reflected_rules:
         logger.warning("Validator received no reflected_rules — returning empty results.")
@@ -404,6 +411,7 @@ def validator_node(state: RuleBankState) -> dict:
         section_content = sections_index.get(section_id, {}).get(
             "content", "Section content not available."
         )
+        section_verdict = format_section_verdict(analysis_by_id.get(section_id))
         already_validated_for_section = [
             r for r in prior_validated_rules if r.get("section_id") == section_id
         ]
@@ -460,6 +468,7 @@ def validator_node(state: RuleBankState) -> dict:
                 already_validated_this_iteration= validated_this_section,
                 current_missing_rules=          current_missing,
                 similar_rules_other_sections=   similar_other_sections,
+                section_verdict=                section_verdict,
             )
 
             # Accumulate new missing rules (deduplicated)
