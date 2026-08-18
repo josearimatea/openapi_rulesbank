@@ -212,17 +212,17 @@ def _scope_section(
     section_content: str,
     section_verdict: str,
     existing_rules: str,
-) -> str:
-    """Phase 3 — the precise per-rule SKIP list for this section.
+) -> tuple[str, str]:
+    """Phase 3 — the section's candidate rules (from its text) and the skip list.
 
-    Given the section, its verdict, and the rules already created elsewhere, decide
-    which of this section's rules exactly duplicate an existing one (skip) and leave
-    everything else for the Extractor to emit. Returns the skip list rendered for the
-    Extractor prompt, or "None — emit everything this section defines." when nothing
-    overlaps or the call fails (so the Extractor never wrongly suppresses itself).
+    Always runs. Anchored in the section's own content, it lists the rules the
+    section supports (candidate_rules) and marks the subset another section already
+    owns (skip). The candidates are a HINT, not a ceiling: they help the Extractor
+    stay in the section's content (and not mine the RAG context for rules the text
+    does not state), while the Extractor still discerns and may emit a legitimate
+    rule the analysis did not list. Returns (candidate_str, skip_str) for the
+    Extractor prompt; on failure, neutral text so extraction still proceeds.
     """
-    if not existing_rules or existing_rules.strip() in ("", "None yet."):
-        return "None — emit everything this section defines."
     try:
         chain = section_scope_prompt | llm.with_structured_output(SectionScope)
         scope: SectionScope = chain.invoke({
@@ -230,15 +230,21 @@ def _scope_section(
             "section_title":   section_title,
             "section_content": section_content,
             "section_verdict": section_verdict,
-            "existing_rules":  existing_rules,
+            "existing_rules":  existing_rules or "None yet.",
         })
-        logger.info(f"[scope {section_id}] skip: {scope.skip}")
-        if not scope.skip:
-            return "None — emit everything this section defines."
-        return "\n".join(f"  - {s}" for s in scope.skip)
+        logger.info(f"[scope {section_id}] candidates: {scope.candidate_rules} | skip: {scope.skip}")
+        if scope.candidate_rules:
+            candidates = "\n".join(f"  - {c}" for c in scope.candidate_rules)
+        else:
+            candidates = ("The prior analysis found no rule anchored in this section's "
+                          "text. Extract only if the content clearly supports a rule; "
+                          "do NOT pull rules from the retrieved context.")
+        skip = "\n".join(f"  - {s}" for s in scope.skip) or "None — no candidate already exists elsewhere."
+        return candidates, skip
     except Exception as e:
-        logger.warning(f"Section scope failed for [{section_id}] ({e}); emitting without a skip list.")
-        return "None — emit everything this section defines."
+        logger.warning(f"Section scope failed for [{section_id}] ({e}); extracting without pre-scope.")
+        return ("No pre-scoped candidates available — extract every rule THIS section's "
+                "content states.", "None.")
 
 
 def _format_analysis_guidance(analysis: SectionAnalysis | None) -> str:
@@ -518,13 +524,13 @@ def extractor_node(state: RuleBankState) -> dict:
         exclude_section_id=section_id,
     ) or "None yet."
 
-    # Phase 3 — scope: from the verdict + the already-created rules, decide the
-    # precise per-rule SKIP list (rules another section already owns), so the
-    # Extractor drops exactly those and still emits everything else this section
-    # defines (e.g. a POST section's responses even if its path/request_body exist).
-    skip_rules = _scope_section(
+    # Phase 3 — scope: anchored in the section's text, list the candidate rules the
+    # section supports (a hint that keeps the Extractor in the content, not the RAG
+    # context) and the subset another section already owns (skip). The Extractor
+    # still discerns and may emit a legitimate rule not listed.
+    candidate_rules, skip_rules = _scope_section(
         section_id, section_title, section["content"],
-        _format_analysis_guidance(analysis), existing_rules,
+        section_analysis, existing_rules,
     )
 
     logger.debug(
@@ -541,6 +547,7 @@ def extractor_node(state: RuleBankState) -> dict:
         "openapi_reference_overview": openapi_reference_overview,
         "stage2_context":             stage2_context,
         "stage3_context":             stage3_context,
+        "candidate_rules":            candidate_rules,
         "skip_rules":                 skip_rules,
         "helper_context":             helper_context,
         "contract_summary":           contract_summary,

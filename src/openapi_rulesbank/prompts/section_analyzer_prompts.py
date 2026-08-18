@@ -317,42 +317,70 @@ section_analyzer_prompt = ChatPromptTemplate.from_messages([
 # ---------------------------------------------------------------------------
 
 class SectionScope(BaseModel):
-    """Phase 3 output: the precise rules this section must NOT emit."""
+    """Phase 3 output: the rules this section's TEXT supports, and which to skip."""
 
+    candidate_rules: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The rules this section's OWN CONTENT supports — one short line each, "
+            "anchored strictly in the section text (a row, a table, a stated code or "
+            "media type). This is the positive scope: the Extractor should emit these "
+            "and nothing beyond them. Do NOT list a rule the text does not state, "
+            "even if a related section or the retrieved context has it — a mapping "
+            "table that lists no response codes yields NO response candidates. List "
+            "each item separately; never merge concatenated items (e.g. a '4xx/5xx' "
+            "cell is TWO candidates, one 4XX and one 5XX)."
+        )
+    )
     skip: list[str] = Field(
         default_factory=list,
         description=(
-            "The specific rules this section should NOT emit because another section "
-            "already owns them (they appear in 'Rules already created'). One short "
-            "line each, naming the rule precisely so the Extractor can match it — "
-            "e.g. 'path_operation POST /notificationSink (already in another section)' "
-            "or 'request_body POST /notificationSink'. Include ONLY exact matches: "
-            "same rule_type and same target (same path+method, same schema+property, "
-            "or same path+method+status code). A rule this section defines that is "
-            "NOT already created is NOT a skip — leave it out of this list so the "
-            "Extractor emits it (e.g. a response 204/4XX/5XX only this POST section "
-            "gives). Empty when nothing overlaps."
+            "The subset of candidate_rules that another section PROVABLY already "
+            "owns. A candidate belongs here ONLY IF a line LITERALLY PRESENT in "
+            "'Rules already created' covers the same rule_type and same single "
+            "target (same path+method, same schema+property, or same "
+            "path+method+one specific status code). If no such line exists — including "
+            "when 'Rules already created' is empty — the candidate MUST NOT be "
+            "skipped. Never skip on a hunch or because the verdict says 'mapping'; "
+            "presence in 'Rules already created' is the only evidence. Same wording "
+            "as the candidate it refers to. A concatenated '4XX/5XX' is never one "
+            "match, check each code. Empty when nothing provably overlaps."
         )
     )
     reasoning: str = Field(
         default="",
-        description="One line on what overlaps and what remains this section's to emit."
+        description="One line on what the section's text supports and what overlaps."
     )
 
 
 _STEP3_SYSTEM = """\
-You decide, for ONE section about to be extracted, which of its rules are already
-owned by another section and must be SKIPPED — so the Extractor does not duplicate
-them, WITHOUT suppressing the rest.
+You scope ONE section about to be extracted, in two steps, from its OWN content.
 
-You are given the section, its pre-analysis verdict, and the rules already created
-in other sections of this service. List in `skip` only the rules this section
-would produce that EXACTLY match an already-created one (same rule_type and same
-target). Everything else this section defines stays — especially rules that only
-THIS section provides (e.g. a POST section's responses 204/4xx/5xx when only the
-path or request_body was created elsewhere). When nothing overlaps, return an empty
-skip list. Never list a rule that is not already created; never skip a whole
-section just because some of its rules exist.
+1. CANDIDATE RULES — list the rules this section's TEXT actually supports, each
+   anchored in a specific line, row, table cell, stated status code or media type
+   of the section content. This is the positive scope handed to the Extractor: it
+   should emit these and nothing beyond them. Anchor strictly in the text — if the
+   section does not state something, it is NOT a candidate, no matter what a related
+   section or the retrieved context contains (a notification-parameter mapping
+   table that lists no response codes produces NO response candidates). List each
+   item on its own; NEVER merge concatenated items — a "4xx/5xx" cell is two
+   candidates (4XX and 5XX), a "PUT/PATCH" is two, etc.
+
+2. SKIP — from those candidates, mark the ones another section already owns. A
+   candidate may be skipped ONLY IF a rule LITERALLY LISTED in 'Rules already
+   created' covers the same rule_type and the same single target (same path+method,
+   same schema+property, or same path+method+one specific status code). Before you
+   put any candidate in skip, find the exact line in 'Rules already created' that
+   covers it — if you cannot point to such a line, it is NOT a skip. A candidate is
+   NOT skippable just because it feels like it belongs to another section, or
+   because the verdict calls this a mapping section: presence in 'Rules already
+   created' is the only evidence. If 'Rules already created' is empty or lists none
+   of a candidate's target, that candidate MUST NOT be skipped. A "4XX/5XX" is never
+   one match — decide 4XX and 5XX separately. When in doubt, leave it OUT of skip
+   (the Validator removes true duplicates later; wrongly skipping silently drops a
+   real rule). Everything not provably owned elsewhere stays for the Extractor.
+
+Never invent a candidate the text does not support; never skip a whole section.
 """
 
 _STEP3_USER = """\

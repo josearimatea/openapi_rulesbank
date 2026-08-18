@@ -69,8 +69,15 @@ _VALID_SCHEMA_KEYWORDS = {
 }
 # Accepts 3-digit codes ("200", "404"), OpenAPI wildcards ("1XX"–"5XX"), and the
 # OpenAPI "default" keyword (the response for all undeclared status codes).
-# Rejects combined forms ("4XX/5XX"), lowercase wildcards ("4xx"), and "n/a".
+# Rejects combined forms ("4XX/5XX") and "n/a". A lowercase wildcard ("4xx") is
+# not rejected but normalized to uppercase first (see below) — only the case of
+# the "XX" is wrong, the code is valid OpenAPI once upper-cased.
 _VALID_RESPONSE_FIELD = re.compile(r"^(\d{3}|[1-5]XX|default)$")
+# Matches a bare wildcard in either case ("4xx", "4XX") so the field can be
+# normalized to the canonical uppercase form before validation. Deliberately does
+# NOT match combined forms like "4xx/5xx" — those are a real fusion error the
+# Extractor must split, so they still fail _VALID_RESPONSE_FIELD.
+_WILDCARD_RESPONSE_FIELD = re.compile(r"^[1-5]xx$", re.IGNORECASE)
 
 
 def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
@@ -140,6 +147,12 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
             )
 
     elif rule_type == "response":
+        # Normalize a lowercase wildcard ("4xx" -> "4XX") in place before checking,
+        # so a rule that is valid apart from its casing is fixed, not rejected.
+        # Combined forms ("4xx/5xx") do not match here and still fail below.
+        if _WILDCARD_RESPONSE_FIELD.match(field):
+            field = field.upper()
+            mapping["openapi_field"] = field
         if not _VALID_RESPONSE_FIELD.match(field):
             errors.append(
                 f"openapi_field must be an HTTP status code string ('200', '404', etc.), "

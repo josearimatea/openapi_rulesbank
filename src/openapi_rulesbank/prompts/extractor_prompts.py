@@ -255,6 +255,14 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                       or defines a fallback for all other codes): "default"
                     Do NOT invent a field not present in the section. Follow what
                     the section says exactly.
+                    TWO HARD RULES FOR RANGES — no exceptions:
+                    1. ALWAYS UPPERCASE the X. The section may write "4xx"/"5xx";
+                       you MUST emit "4XX"/"5XX". Lowercase "4xx" is INVALID.
+                    2. ONE code per rule, NEVER combined. A cell that reads
+                       "4xx/5xx" or "4xx or 5xx" is TWO SEPARATE response rules —
+                       one with openapi_field "4XX" and one with "5XX". Never emit a
+                       single rule for both, and never let the rule's description say
+                       "4xx or 5xx" — each rule names ONLY its own single range.
    openapi_value  : "$ref: '#/components/responses/<Name>'" or
                     "$ref: '#/components/schemas/<Name>'" or
                     "$ref: '<OtherFile>.yaml#/components/schemas/<Name>'" or
@@ -359,10 +367,12 @@ ONE RULE PER ITEM — never combine into a single rule:
 
   - HTTP methods: create one path_operation rule per method.
     Wrong: one rule for "PUT and PATCH". Right: two rules, one for PUT, one for PATCH.
-  - HTTP status codes: create one response rule per code or per range.
-    Wrong: one rule for "4xx/5xx responses".
-    Right: one rule per specific code (200, 201, 400, etc.) or one rule per
-    explicit range (4XX, 5XX), exactly as defined in the section.
+  - HTTP status codes: create one response rule per code or per range, and write
+    every range in UPPERCASE ("4XX", not "4xx").
+    Wrong: one rule with openapi_field "4xx/5xx", or "4xx or 5xx", or lowercase "4xx".
+    Right: for a section that lists "4xx" and "5xx", emit TWO rules — one openapi_field
+    "4XX" and one "5XX" — plus one rule per specific code (200, 201, 400, ...).
+    A concatenated cell is NEVER one rule; split it, always, every time.
   - Media types in request_body: create one request_body rule per media type.
     Wrong: one rule for "application/json and application/merge-patch+json".
     Right: two rules, one per media type.
@@ -385,29 +395,45 @@ follow it: it already resolved this section's kind, whether it is a schema home,
 and any imported base type / inherited fields):
 {section_analysis}
 
-Section content (the ONLY source from which rules must be extracted — every rule
-you return must trace to a line or row BELOW; if this content is empty or is just
-a heading/marker, return an empty list, do NOT draw rules from the contexts):
+>>>>> BEGIN SECTION CONTENT — THE ONLY TEXT YOU MAY EXTRACT RULES FROM <<<<<
+Every rule you return MUST trace to a specific line or row BETWEEN these markers.
+Extract ONLY from here. If this is empty or just a heading/marker, return an empty
+list.
 {section_content}
+>>>>> END SECTION CONTENT — DO NOT EXTRACT ANY RULE FROM ANYTHING BELOW THIS LINE <<<<<
 
-Stage 2 context (abstract definitions of THIS service, retrieved from the source
-3GPP document — use ONLY for the canonical IS operation name, NOT as a rule source):
+Everything below is REFERENCE ONLY. You may READ it to phrase a rule already found
+above (a canonical name, the real path, the exact casing), but you must NEVER turn
+anything below into a rule of this section. If a code, property, body or path
+appears below but NOT in the section content above, it is another section's rule —
+never emit it here.
+
+Stage 2 context (abstract definitions of THIS service — reference for the canonical
+IS operation name only; NEVER a rule source):
 {stage2_context}
 
-Sibling stage 3 context (other HTTP-solution-set sections of THIS SAME service,
-retrieved from the source document — use to resolve the real resource path, the
-exact schema name and casing, and which properties are defined where. NOT a rule
-source, and do NOT re-extract rules that clearly belong to those sibling sections):
+Sibling stage 3 context (other sections of THIS service — reference for the real
+resource path, exact schema name/casing, and where properties are defined; NEVER a
+rule source; never re-extract a rule that belongs to those sibling sections):
 {stage3_context}
 
-Rules to SKIP — already owned by another section (decided by the pre-analysis;
-do NOT emit these specific rules, they belong elsewhere):
+Candidate rules from a prior analysis of THIS section's content (a HINT, not a
+ceiling):
+{candidate_rules}
+  Use these to stay anchored in the section's own content and to NOT turn the
+  reference contexts above into rules the section does not state. They are not a
+  closed list: if the section content clearly supports a rule not listed here,
+  extract it; if the analysis lists none, extract only what the text genuinely
+  states — do not pull rules from the retrieved context.
+
+Rules to SKIP — of the above, already owned by another section (do NOT re-emit
+these specific rules; they belong elsewhere):
 {skip_rules}
-  This is the ONLY reason to skip a rule. It is a precise, per-rule list — NOT a
-  reason to suppress the section. Emit every OTHER rule this section defines. If a
-  skip entry names this operation's path or request_body but NOT its responses,
-  you MUST still emit the responses (204, 4XX, 5XX): they are this section's to
-  give and are not in the skip list.
+  This is the ONLY reason to skip a candidate. It is a precise, per-rule list — NOT
+  a reason to suppress the section. Emit every OTHER rule this section supports. If
+  a skip entry names this operation's path or request_body but NOT a given response
+  code, you MUST still emit that response (e.g. 204, 4XX, 5XX are separate — one
+  being skipped does not skip the others).
 
 Auxiliary context from supporting 3GPP documents (if relevant):
 {helper_context}

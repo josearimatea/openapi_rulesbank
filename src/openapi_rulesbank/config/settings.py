@@ -39,6 +39,12 @@ MODEL = "gpt-4.1-mini"
 # MODEL = "gpt-5-mini"
 # MODEL = "gpt-5.4-nano"
 TEMPERATURE = 0
+# Per-request timeout (seconds) and automatic retries for the OpenAI client.
+# Without a timeout the SDK waits on a hung request for its long default, which
+# stalled a whole run for ~6 minutes on a single Phase-2/3 call. A short timeout
+# makes a hung call fail fast so max_retries can reissue it instead.
+LLM_REQUEST_TIMEOUT = 60
+LLM_MAX_RETRIES = 2
 
 # OpenAPI reference version to fetch.
 # The 3GPP ProvMnS specs under data/inputs/3gpp declare `openapi: 3.0.1`, so the
