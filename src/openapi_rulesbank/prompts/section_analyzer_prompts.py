@@ -310,3 +310,68 @@ section_analyzer_prompt = ChatPromptTemplate.from_messages([
     ("system", _STEP2_SYSTEM),
     ("human",  _STEP2_USER),
 ])
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — decide which of this section's rules to SKIP (already owned elsewhere)
+# ---------------------------------------------------------------------------
+
+class SectionScope(BaseModel):
+    """Phase 3 output: the precise rules this section must NOT emit."""
+
+    skip: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The specific rules this section should NOT emit because another section "
+            "already owns them (they appear in 'Rules already created'). One short "
+            "line each, naming the rule precisely so the Extractor can match it — "
+            "e.g. 'path_operation POST /notificationSink (already in another section)' "
+            "or 'request_body POST /notificationSink'. Include ONLY exact matches: "
+            "same rule_type and same target (same path+method, same schema+property, "
+            "or same path+method+status code). A rule this section defines that is "
+            "NOT already created is NOT a skip — leave it out of this list so the "
+            "Extractor emits it (e.g. a response 204/4XX/5XX only this POST section "
+            "gives). Empty when nothing overlaps."
+        )
+    )
+    reasoning: str = Field(
+        default="",
+        description="One line on what overlaps and what remains this section's to emit."
+    )
+
+
+_STEP3_SYSTEM = """\
+You decide, for ONE section about to be extracted, which of its rules are already
+owned by another section and must be SKIPPED — so the Extractor does not duplicate
+them, WITHOUT suppressing the rest.
+
+You are given the section, its pre-analysis verdict, and the rules already created
+in other sections of this service. List in `skip` only the rules this section
+would produce that EXACTLY match an already-created one (same rule_type and same
+target). Everything else this section defines stays — especially rules that only
+THIS section provides (e.g. a POST section's responses 204/4xx/5xx when only the
+path or request_body was created elsewhere). When nothing overlaps, return an empty
+skip list. Never list a rule that is not already created; never skip a whole
+section just because some of its rules exist.
+"""
+
+_STEP3_USER = """\
+Section ID   : {section_id}
+Section Title: {section_title}
+
+Section content:
+{section_content}
+
+Pre-analysis verdict for this section:
+{section_verdict}
+
+Rules already created in other sections of this service:
+{existing_rules}
+
+Return the precise skip list for this section (empty if nothing overlaps).
+"""
+
+section_scope_prompt = ChatPromptTemplate.from_messages([
+    ("system", _STEP3_SYSTEM),
+    ("human",  _STEP3_USER),
+])

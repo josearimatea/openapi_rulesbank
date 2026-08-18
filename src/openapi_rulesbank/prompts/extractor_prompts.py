@@ -400,10 +400,14 @@ exact schema name and casing, and which properties are defined where. NOT a rule
 source, and do NOT re-extract rules that clearly belong to those sibling sections):
 {stage3_context}
 
-Rules ALREADY extracted from other sections of this service (do NOT produce a rule
-that restates any of these — same operation, property, or response, even if you
-would phrase the value differently; that section is its home):
-{existing_rules}
+Rules to SKIP — already owned by another section (decided by the pre-analysis;
+do NOT emit these specific rules, they belong elsewhere):
+{skip_rules}
+  This is the ONLY reason to skip a rule. It is a precise, per-rule list — NOT a
+  reason to suppress the section. Emit every OTHER rule this section defines. If a
+  skip entry names this operation's path or request_body but NOT its responses,
+  you MUST still emit the responses (204, 4XX, 5XX): they are this section's to
+  give and are not in the skip list.
 
 Auxiliary context from supporting 3GPP documents (if relevant):
 {helper_context}

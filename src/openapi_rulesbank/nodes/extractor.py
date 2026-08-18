@@ -54,8 +54,10 @@ from openapi_rulesbank.prompts.extractor_prompts import SectionRules, extractor_
 from openapi_rulesbank.prompts.section_analyzer_prompts import (
     SectionImports,
     SectionAnalysis,
+    SectionScope,
     section_import_ref_prompt,
     section_analyzer_prompt,
+    section_scope_prompt,
 )
 from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.tools.rag_tools import (
@@ -202,6 +204,41 @@ def _analyze_section(
     except Exception as e:
         logger.warning(f"Section analyzer failed for [{section_id}] ({e}); extracting without it.")
         return None, {}
+
+
+def _scope_section(
+    section_id: str,
+    section_title: str,
+    section_content: str,
+    section_verdict: str,
+    existing_rules: str,
+) -> str:
+    """Phase 3 — the precise per-rule SKIP list for this section.
+
+    Given the section, its verdict, and the rules already created elsewhere, decide
+    which of this section's rules exactly duplicate an existing one (skip) and leave
+    everything else for the Extractor to emit. Returns the skip list rendered for the
+    Extractor prompt, or "None — emit everything this section defines." when nothing
+    overlaps or the call fails (so the Extractor never wrongly suppresses itself).
+    """
+    if not existing_rules or existing_rules.strip() in ("", "None yet."):
+        return "None — emit everything this section defines."
+    try:
+        chain = section_scope_prompt | llm.with_structured_output(SectionScope)
+        scope: SectionScope = chain.invoke({
+            "section_id":      section_id,
+            "section_title":   section_title,
+            "section_content": section_content,
+            "section_verdict": section_verdict,
+            "existing_rules":  existing_rules,
+        })
+        logger.info(f"[scope {section_id}] skip: {scope.skip}")
+        if not scope.skip:
+            return "None — emit everything this section defines."
+        return "\n".join(f"  - {s}" for s in scope.skip)
+    except Exception as e:
+        logger.warning(f"Section scope failed for [{section_id}] ({e}); emitting without a skip list.")
+        return "None — emit everything this section defines."
 
 
 def _format_analysis_guidance(analysis: SectionAnalysis | None) -> str:
@@ -470,16 +507,25 @@ def extractor_node(state: RuleBankState) -> dict:
     )
     section_analysis = _format_analysis_guidance(analysis)
 
-    # Rules already validated in OTHER sections that resemble this one, so the
-    # Extractor does not re-emit a rule that another section already owns — even
-    # when it would phrase the value differently (the deterministic dedup misses
-    # those, since the value differs). Empty until earlier sections are validated.
+    # Rules already validated in OTHER sections that resemble this one. Fed to the
+    # scope phase (below), NOT straight to the Extractor: handing the raw list to
+    # the big prompt made it self-censor and drop the whole section. Empty until
+    # earlier sections are validated.
     existing_rules = search_rules_by_text(
         seed,
         state.get("rules_collection_name", ""),
         k=RULES_EXTRACTOR_RETRIEVE_CHUNKS,
         exclude_section_id=section_id,
     ) or "None yet."
+
+    # Phase 3 — scope: from the verdict + the already-created rules, decide the
+    # precise per-rule SKIP list (rules another section already owns), so the
+    # Extractor drops exactly those and still emits everything else this section
+    # defines (e.g. a POST section's responses even if its path/request_body exist).
+    skip_rules = _scope_section(
+        section_id, section_title, section["content"],
+        _format_analysis_guidance(analysis), existing_rules,
+    )
 
     logger.debug(
         f"Extracting [{section_id}] '{section_title}' "
@@ -495,7 +541,7 @@ def extractor_node(state: RuleBankState) -> dict:
         "openapi_reference_overview": openapi_reference_overview,
         "stage2_context":             stage2_context,
         "stage3_context":             stage3_context,
-        "existing_rules":             existing_rules,
+        "skip_rules":                 skip_rules,
         "helper_context":             helper_context,
         "contract_summary":           contract_summary,
         "correction_task":            correction_task,
