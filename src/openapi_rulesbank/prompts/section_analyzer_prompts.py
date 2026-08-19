@@ -257,6 +257,20 @@ B. GUIDE THE EXTRACTOR:
       Extractor to emit a schema or its properties (a mapping section maps
       parameters to a request body that references types defined elsewhere; it
       does not define those types here).
+      DECIDE 'resource' vs 'mapping' BY THIS TEST, in this order:
+        - If the section's title is an HTTP method (POST, GET, PUT, PATCH, DELETE)
+          OR its body defines one operation via the operation tables — URI query
+          parameters, request data type, and RESPONSE codes (204/2xx and 4xx/5xx) —
+          then it is 'resource'. A resource section OWNS that operation and its
+          responses; they are defined HERE and nowhere else. This is true even
+          though the tables "map" IS elements to HTTP: a per-operation table with
+          response codes is a resource, never a mapping.
+        - 'mapping' is ONLY a "Mapping of <IS operation/notification> input/output
+          parameters to SS equivalents" table: rows of parameter-name ↔ SS-type,
+          with NO response-code rows. It references types defined elsewhere and
+          owns no responses.
+      When unsure between the two, the presence of response-code rows (204, 4xx,
+      5xx) decides it as 'resource'.
    2. RESOLVE AN EMBEDDED BASE. A type-definition section rarely names the common
       base it builds on — it just lists all its attributes, the inherited ones
       mixed in with its own. To find the base, compare the section's attribute
@@ -327,9 +341,15 @@ class SectionScope(BaseModel):
             "media type). This is the positive scope: the Extractor should emit these "
             "and nothing beyond them. Do NOT list a rule the text does not state, "
             "even if a related section or the retrieved context has it — a mapping "
-            "table that lists no response codes yields NO response candidates. List "
-            "each item separately; never merge concatenated items (e.g. a '4xx/5xx' "
-            "cell is TWO candidates, one 4XX and one 5XX)."
+            "table that lists no response codes yields NO response candidates. "
+            "EXCLUDE INHERITED FIELDS: when the pre-analysis verdict lists inherited "
+            "fields (this type is an allOf of a base), those fields come from the base "
+            "via the single allOf $ref and are NOT this section's to emit — never make "
+            "one of them a candidate, even though the 3GPP attribute table lists them "
+            "alongside the own attributes. Candidate the allOf base itself and the "
+            "type's OWN (non-inherited) attributes only. List each item separately; "
+            "never merge concatenated items (e.g. a '4xx/5xx' cell is TWO candidates, "
+            "one 4XX and one 5XX)."
         )
     )
     skip: list[str] = Field(
@@ -362,23 +382,35 @@ You scope ONE section about to be extracted, in two steps, from its OWN content.
    should emit these and nothing beyond them. Anchor strictly in the text — if the
    section does not state something, it is NOT a candidate, no matter what a related
    section or the retrieved context contains (a notification-parameter mapping
-   table that lists no response codes produces NO response candidates). List each
-   item on its own; NEVER merge concatenated items — a "4xx/5xx" cell is two
-   candidates (4XX and 5XX), a "PUT/PATCH" is two, etc.
+   table that lists no response codes produces NO response candidates).
+   INHERITED FIELDS ARE NOT CANDIDATES: if the pre-analysis verdict lists inherited
+   fields (this type is an allOf of a base), never candidate any of them — they come
+   from the base via the single allOf $ref, not from this section, even though the
+   attribute table lists them next to the own attributes. Candidate the allOf base
+   and the OWN (non-inherited) attributes only. Listing an inherited field here would
+   send the Extractor to emit a rule the Validator only discards again.
+   List each item on its own; NEVER merge concatenated items — a "4xx/5xx" cell is
+   two candidates (4XX and 5XX), a "PUT/PATCH" is two, etc.
 
-2. SKIP — from those candidates, mark the ones another section already owns. A
-   candidate may be skipped ONLY IF a rule LITERALLY LISTED in 'Rules already
-   created' covers the same rule_type and the same single target (same path+method,
-   same schema+property, or same path+method+one specific status code). Before you
-   put any candidate in skip, find the exact line in 'Rules already created' that
-   covers it — if you cannot point to such a line, it is NOT a skip. A candidate is
-   NOT skippable just because it feels like it belongs to another section, or
-   because the verdict calls this a mapping section: presence in 'Rules already
-   created' is the only evidence. If 'Rules already created' is empty or lists none
-   of a candidate's target, that candidate MUST NOT be skipped. A "4XX/5XX" is never
-   one match — decide 4XX and 5XX separately. When in doubt, leave it OUT of skip
-   (the Validator removes true duplicates later; wrongly skipping silently drops a
-   real rule). Everything not provably owned elsewhere stays for the Extractor.
+2. SKIP — decide, on your own judgement, which candidates another section has
+   ALREADY created, so this section does not duplicate them. This is YOUR call from
+   the evidence, not an instruction to copy: weigh the section content, the sibling
+   sections listed below, and the rules already created. A candidate goes in skip
+   when the evidence shows another section already emitted that exact rule
+   (same rule_type and same single target: same path+method, or same
+   schema+property, or same path+method+one specific status code).
+   THE SINGLE HARD LIMIT — read it literally:
+     A response code, path, or property this section's OWN operation table defines
+     is OWNED BY THIS SECTION. You may skip it ONLY when a line in 'Rules already
+     created' literally shows another section already emitted that same target.
+     If 'Rules already created' does not contain that target — or is empty — the
+     candidate is NOT a duplicate: it STAYS, you MUST NOT skip it.
+   Do NOT infer a skip from the pre-analysis kind. A section labelled 'mapping'
+   still owns every response code and parameter its own table lists; the label is
+   context, never a reason to skip. A "4XX/5XX" is two separate targets — decide
+   4XX and 5XX independently. When the evidence is not clear, leave the candidate
+   OUT of skip: a wrong skip silently deletes a real rule, while a missed skip is
+   caught later by the Validator.
 
 Never invent a candidate the text does not support; never skip a whole section.
 """
@@ -387,16 +419,23 @@ _STEP3_USER = """\
 Section ID   : {section_id}
 Section Title: {section_title}
 
-Section content:
+Section content (your PRIMARY evidence — candidates and skips are judged from here):
 {section_content}
 
-Pre-analysis verdict for this section:
+Pre-analysis of this section (CONTEXT ONLY — an earlier pass's opinion, not an
+order; you may disagree with it based on the content above):
 {section_verdict}
 
-Rules already created in other sections of this service:
+Sibling sections in this same service (id, title, and their decided kind) — use
+this to tell whether ANOTHER section is the real owner of a candidate:
+{sibling_summary}
+
+Rules already created in other sections of this service (the ONLY evidence that a
+candidate is already owned; if a target is absent here it is NOT owned):
 {existing_rules}
 
-Return the precise skip list for this section (empty if nothing overlaps).
+List the candidate rules, then the skip subset your own judgement supports (empty
+if nothing is provably owned elsewhere).
 """
 
 section_scope_prompt = ChatPromptTemplate.from_messages([

@@ -68,6 +68,73 @@ def format_section_verdict(verdict: dict | None) -> str:
     return "\n".join(lines)
 
 
+def discards_for_section(validation_errors: list[dict], section_id: str) -> list[dict]:
+    """The Validator's discard errors for one section, from state['validation_errors'].
+
+    A single source of truth for "which rules were discarded in this section" — the
+    Extractor (to not re-emit them), the Validator (to skip re-validating them), and
+    the Reflector (to not re-list them as missing) all need the same set, so they
+    all filter through here instead of repeating the predicate.
+    """
+    out = []
+    for e in (validation_errors or []):
+        if e.get("error_type") != "discard":
+            continue
+        rule = e.get("rule", {})
+        sid = e.get("section_id", "") or rule.get("section_id", "")
+        if sid == section_id:
+            out.append(e)
+    return out
+
+
+def format_discards(discards: list[dict]) -> str:
+    """Render discard errors for a prompt: rule_type, field, and the reason."""
+    if not discards:
+        return "None"
+    lines = []
+    for e in discards:
+        rule = e.get("rule", {})
+        m = rule.get("openapi_mapping", {})
+        lines.append(
+            f"  [{rule.get('rule_type', '?')}] {m.get('openapi_object', '')} "
+            f"{m.get('openapi_field', '')} — {e.get('instruction', 'discarded')[:80]}"
+        )
+    return "\n".join(lines)
+
+
+def corrections_for_section(validation_errors: list[dict], section_id: str) -> list[dict]:
+    """The Validator's correction errors for one section, from validation_errors.
+
+    A correction means the rule EXISTS but needs a fix — so its target must not be
+    listed as missing. The missing-side phases (Reflector Fase 2, Validator Stage 3)
+    use this to avoid duplicating a target as both correction and missing.
+    """
+    out = []
+    for e in (validation_errors or []):
+        if e.get("error_type") != "correction":
+            continue
+        rule = e.get("rule", {})
+        sid = e.get("section_id", "") or rule.get("section_id", "")
+        if sid == section_id:
+            out.append(e)
+    return out
+
+
+def format_corrections(corrections: list[dict]) -> str:
+    """Render correction errors for a prompt: rule_type, field, and the fix asked."""
+    if not corrections:
+        return "None"
+    lines = []
+    for e in corrections:
+        rule = e.get("rule", {})
+        m = rule.get("openapi_mapping", {})
+        lines.append(
+            f"  [{rule.get('rule_type', '?')}] {m.get('openapi_object', '')} "
+            f"{m.get('openapi_field', '')} — being corrected: {e.get('instruction', '')[:70]}"
+        )
+    return "\n".join(lines)
+
+
 def is_content_empty(content: str) -> bool:
     """True when a section body carries no prose of its own.
 

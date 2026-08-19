@@ -30,12 +30,21 @@ from pydantic import BaseModel, Field
 class ReflectionResult(BaseModel):
     """Self-reflection assessment produced by the Reflector Node for one rule."""
 
-    reflection_confidence: float = Field(
+    reflector_score: float = Field(
         ge=0.0, le=1.0,
         description=(
-            "Confidence score between 0.0 and 1.0. "
-            "1.0 = rule is fully grounded in the section content and aligns with the "
-            "OpenAPI specification. 0.0 = rule is uncertain, hallucinated, or incorrect."
+            "How sure you are that this rule SHOULD BE IN THE FINAL RULE SET — NOT "
+            "how faithfully it copies the section text. Separating rules that belong "
+            "from rules that must go is your whole job. "
+            "1.0 = the rule is correct AND belongs to THIS section: right rule_type, "
+            "this section is its owner, it is not an inherited field, mapping valid. "
+            "0.0 = the rule must NOT be in the final set — it is an inherited field "
+            "(comes from a base type via an allOf $ref), it is owned by another "
+            "section, it duplicates one already validated elsewhere, its mapping is "
+            "invalid, or it is not mappable to OpenAPI. "
+            "A rule can be copied word-for-word from the section and still score LOW "
+            "when it does not belong in the final output. When this score is below "
+            "0.5 you MUST set discard_suggestion True."
         )
     )
     reflection_reasoning: str = Field(
@@ -48,7 +57,7 @@ class ReflectionResult(BaseModel):
     reflection_flagged: bool = Field(
         description=(
             "True if this rule should receive priority attention during validation. "
-            "Flag when: confidence < 0.7, the openapi_mapping is ambiguous, "
+            "Flag when: reflector_score < 0.7, the openapi_mapping is ambiguous, "
             "the rule is not explicitly stated in the section, or the RAG context "
             "suggests a different mapping."
         )
@@ -56,22 +65,38 @@ class ReflectionResult(BaseModel):
     split_suggestion: str = Field(
         default="",
         description=(
-            "If this rule should be split into multiple more specific rules, "
-            "describe exactly how. Empty string if no split needed. "
-            "Example: 'Split into two rules: one for 400 and one for 500'. "
-            "For a path_operation rule: a split is only valid if the rule combines "
-            "multiple HTTP methods in one field (e.g. 'put, patch'). In that case "
-            "each split target must also be a path_operation, one per method. "
+            "Suggest a split ONLY when THIS rule's own openapi_field literally packs "
+            "two or more targets into one field. Empty string otherwise. "
+            "Example: a single field 'put, patch' → split into one rule per method; a "
+            "single field '4xx/5xx' → split into a 4XX rule and a 5XX rule. In every "
+            "case each split target keeps the SAME rule_type. "
             "Do NOT suggest splitting a path_operation into request_body, response, "
             "or other rule_types — those are separate complementary rules, not a "
-            "decomposition of path_operation."
+            "decomposition of path_operation. "
+            "NEVER suggest a split for a rule that is already atomic — one field with "
+            "a single method, a single status code (e.g. '4XX' alone, or '5XX' "
+            "alone), or a single property. A lone 5XX rule is NOT a split of a 4XX "
+            "rule; they coexist. If a sibling code is missing, that is a coverage gap "
+            "for the Validator, not a split of this rule."
         )
     )
     discard_suggestion: bool = Field(
         default=False,
         description=(
-            "True if this rule should not exist — e.g. it describes the absence "
-            "of a construct, which cannot be mapped to OpenAPI."
+            "True whenever this rule should NOT be in the final rule set — i.e. "
+            "whenever reflector_score is low. Set it in ALL of these cases, not just "
+            "unmappable ones:\n"
+            "  - the field is INHERITED from a base type (present via an allOf $ref "
+            "    to another schema) — it must not be re-emitted as an own property "
+            "    or 'required' of the subtype from this section;\n"
+            "  - the rule is OWNED BY ANOTHER SECTION (this section only references a "
+            "    type/operation whose real definition lives elsewhere);\n"
+            "  - the rule DUPLICATES one already validated in another section;\n"
+            "  - the rule describes the ABSENCE of a construct (e.g. 'no query "
+            "    parameters'), or otherwise cannot be mapped to OpenAPI.\n"
+            "Use the pre-analysis verdict (inherited fields, schema-home flag) as "
+            "evidence. When in doubt whether a field is inherited or owned elsewhere, "
+            "flag it True — the Validator makes the final call."
         )
     )
 
@@ -83,20 +108,32 @@ class ReflectionResult(BaseModel):
 _SYSTEM = """\
 You are an expert in 3GPP technical specifications and OpenAPI design.
 
-Your task is to review an OpenAPI rule that was automatically extracted from a 3GPP
-document and assess its quality using Chain-of-Thought reasoning.
+Your job is to decide, for one extracted rule, whether it BELONGS IN THE FINAL
+RULE SET — and to mark clearly what is right, what must go, and what needs a split.
+Judging fidelity to the text is not enough: a rule can quote the section perfectly
+and still not belong here.
 
 For each rule, reason through the following questions:
   1. Is the rule explicitly stated or clearly implied by the section content?
   2. Is the openapi_mapping (object, field, value) correct and complete?
   3. Does the OpenAPI reference context below confirm or contradict this rule?
-  4. How confident are you that this rule is accurate and actionable?
+  4. Does this rule BELONG in the final set for THIS section? It does NOT when it is
+     an inherited field (present via an allOf $ref to a base type), when another
+     section is the real owner of the type/operation, when it duplicates a rule
+     already validated elsewhere, or when its mapping is invalid/unmappable. Set
+     reflector_score to reflect this belonging (1.0 = clearly belongs, 0.0 = clearly
+     must go), NOT how closely it echoes the text.
   5. Should this rule be split into multiple more specific rules?
-     For example: a rule about '4xx/5xx responses' should be split into individual
-     rules per status code if the section content lists them separately.
-  6. Should this rule be discarded entirely?
-     Discard if: the rule describes the absence of a construct (e.g. 'no query
-     parameters'), or if the rule_text contains no mappable OpenAPI information.
+     Split ONLY a rule whose own field packs several targets together — e.g. one
+     field '4xx/5xx' becomes a 4XX rule and a 5XX rule, one field 'put, patch'
+     becomes two. A rule already carrying a SINGLE target (a lone 4XX, a lone 5XX,
+     one method, one property) is atomic: do NOT split it. A lone 5XX is never a
+     split of 4XX — they are separate co-existing rules.
+  6. Should this rule be discarded? Set discard_suggestion True whenever it does NOT
+     belong (question 4): an inherited field re-emitted here, a rule owned by another
+     section, a cross-section duplicate, the absence of a construct (e.g. 'no query
+     parameters'), or anything not mappable to OpenAPI. A low reflector_score and
+     discard_suggestion=True must agree.
 
 Then produce:
   - A confidence score (0.0 to 1.0)
@@ -131,6 +168,16 @@ Pre-analysis verdict for THIS section (decided before extraction):
     "required") for one of those inherited names, the rule is WRONG: that field
     comes from the base via the single allOf $ref, so it must not also be emitted
     as an own property here.
+
+Other rules of THIS section (extracted in this batch, plus ones already validated
+in earlier iterations of the section):
+{sibling_rules}
+  Use this only as context to judge the rule above as part of the whole — do NOT
+  re-assess the siblings. In particular, a rule that has a natural counterpart
+  (e.g. a 4XX response whose sibling is 5XX, or a PUT whose sibling is PATCH) is
+  NOT incomplete when that counterpart already appears in the list above: the
+  counterpart exists (extracted or already validated), so do not treat the rule as
+  missing its sibling.
 
 Section content (the source from which this rule was extracted):
 {section_content}
@@ -222,9 +269,22 @@ A rule is MISSING if ALL of the following are true:
   1. The section content clearly implies it should exist as an OpenAPI construct
   2. It is NOT present in current_rules
   3. It is NOT present in already_validated_rules
+  4. It is NOT already covered by the section's inherited base (see below)
+
+INHERITED FIELDS ARE NOT MISSING — read the pre-analysis verdict below. When the
+verdict says this section is a schema with an allOf base and lists inherited fields,
+those fields are ALREADY PROVIDED by the base via the single allOf $ref. They are
+NOT missing, even though the section's attribute table lists them (3GPP tables list
+inherited and own attributes together). NEVER report an inherited field as a missing
+schema_property or 'required'. Only the type's OWN attributes (those NOT in the
+inherited list) can be missing. Reporting an inherited field as missing forces the
+Extractor to re-emit a rule the Validator will only discard again — do not do it.
 
 Do NOT suggest:
   - Rules already covered by current_rules or already_validated_rules
+  - Any inherited field named in the pre-analysis verdict (covered by the allOf base)
+  - Rules the pre-analysis verdict shows belong to ANOTHER section (this section only
+    references a type/operation whose definition lives elsewhere)
   - Rules about the absence of a construct (e.g. 'no query parameters')
   - Vague or non-actionable rules
   - Rules that duplicate what is already extracted under a different phrasing
@@ -242,6 +302,29 @@ Section ID: {section_id}
 Section content:
 {section_content}
 
+Pre-analysis verdict for this section (its kind, whether it is a schema home, its
+allOf base, and the INHERITED fields that the base already provides — never report
+those as missing):
+{section_verdict}
+
+Pre-scoped candidate rules for this section (the positive scope: what this section
+is supposed to emit, anchored in its text). Judge "missing" against THIS scope, not
+the raw attribute table — anything outside it is not this section's to produce:
+{candidate_rules}
+
+Rules another section already owns (Phase-3 skip) — NEVER list any of these as
+missing here; their home is elsewhere:
+{skip_rules}
+
+Rules the Validator ALREADY DISCARDED in this section (rejected on purpose — NEVER
+list any of these as missing; doing so loops them back only to be discarded again):
+{discarded_rules}
+
+Rules the Validator is CORRECTING in this section (they EXIST, they just need a fix
+— so they are NOT missing). Never list any of these targets as a missing rule; the
+correction already covers them:
+{corrections}
+
 Rules extracted and reflected in this iteration:
 {current_rules}
 
@@ -251,7 +334,9 @@ Rules already validated in previous iterations (do NOT suggest these as missing)
 Rules identified as missing in the previous iteration (check if now resolved):
 {previous_missing_rules}
 
-What is still genuinely missing from this section?
+What is still genuinely missing from this section? (Exclude inherited fields, rules
+owned by another section, skipped rules, anything already discarded, and any target
+already being corrected.)
 """
 
 reflector_section_prompt = ChatPromptTemplate.from_messages([

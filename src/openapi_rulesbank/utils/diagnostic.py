@@ -86,7 +86,7 @@ class DiagnosticCollector:
                 "openapi_field": rule.get("openapi_mapping", {}).get("openapi_field", ""),
                 "rule_text":     rule.get("rule_text", "")[:120],
                 "reflector": {
-                    "confidence":         rule.get("reflection_confidence"),
+                    "score":              rule.get("reflector_score"),
                     "flagged":            rule.get("reflection_flagged"),
                     "reasoning":          rule.get("reflection_reasoning", ""),
                     "rag_context":        rule.get("reflection_rag_context", "")[:200],

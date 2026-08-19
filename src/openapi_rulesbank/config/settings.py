@@ -35,7 +35,8 @@ if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY not found in .env file")
 
 # LLM Settings
-MODEL = "gpt-4.1-mini"
+MODEL = "gpt-5.6-luna"
+# MODEL = "gpt-4.1-mini"
 # MODEL = "gpt-5-mini"
 # MODEL = "gpt-5.4-nano"
 TEMPERATURE = 0

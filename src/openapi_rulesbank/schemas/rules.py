@@ -34,7 +34,7 @@ MODEL HIERARCHY
           └── openapi_value   str   — value or constraint  (e.g. "string", "int64", "200")
 
   ReflectedRule(RawRule)
-    ├── reflection_confidence   float — 0.0–1.0; how grounded the rule is in the spec
+    ├── reflector_score         float — 0.0–1.0; how sure the rule belongs in the final set
     ├── reflection_reasoning    str   — CoT explanation from the Reflector
     ├── reflection_flagged      bool  — True if the rule should receive priority validation
     ├── reflection_rag_context  str   — Qdrant chunks used to ground the self-reflection
@@ -176,10 +176,12 @@ class ReflectedRule(RawRule):
     Consumed by: Validator Node
     """
 
-    reflection_confidence: float = Field(
+    reflector_score: float = Field(
         ge=0.0, le=1.0,
-        description="Confidence score between 0 and 1 assigned by the Reflector. "
-                    "1.0 = fully grounded in the spec, 0.0 = uncertain or hallucinated."
+        description="Score between 0 and 1 assigned by the Reflector for whether the "
+                    "rule belongs in the final rule set. 1.0 = clearly belongs to this "
+                    "section, 0.0 = must be discarded (inherited, owned elsewhere, "
+                    "duplicate, or unmappable)."
     )
     reflection_reasoning: str = Field(
         description="Chain-of-Thought explanation produced by the Reflector: why the "

@@ -33,7 +33,7 @@ RULE_OUTPUT_FIELDS = {
     "source_name",
     "rule_text",
     "openapi_mapping",
-    "reflection_confidence",
+    "reflector_score",
     "reflection_reasoning",
     "reflection_flagged",
     "split_suggestion",
@@ -55,7 +55,7 @@ class RuleOutput(BaseModel):
     source_name:           str   = Field(...)
     rule_text:             str   = Field(...)
     openapi_mapping:       dict  = Field(...)
-    reflection_confidence: float = Field(...)
+    reflector_score:       float = Field(...)
     reflection_reasoning:  str   = Field(default="")
     reflection_flagged:    bool  = Field(default=False)
     split_suggestion:      str   = Field(default="")

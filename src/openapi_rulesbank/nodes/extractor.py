@@ -212,6 +212,7 @@ def _scope_section(
     section_content: str,
     section_verdict: str,
     existing_rules: str,
+    sibling_summary: str,
 ) -> tuple[str, str]:
     """Phase 3 — the section's candidate rules (from its text) and the skip list.
 
@@ -230,6 +231,7 @@ def _scope_section(
             "section_title":   section_title,
             "section_content": section_content,
             "section_verdict": section_verdict,
+            "sibling_summary": sibling_summary or "No sibling sections listed.",
             "existing_rules":  existing_rules or "None yet.",
         })
         logger.info(f"[scope {section_id}] candidates: {scope.candidate_rules} | skip: {scope.skip}")
@@ -333,15 +335,27 @@ def _build_correction_task(
 
     if discarded_errors:
         lines.append(
-            "DISCARDED — the Validator rejected these (duplicates of other sections, "
-            "or not mappable to OpenAPI). Do NOT extract them again:"
-        )
-        for err in discarded_errors:
+            ">>>>> FORBIDDEN RULES — DO NOT EMIT ANY OF THESE, IN ANY FORM <<<<<")
+        lines.append(
+            "The Validator already REJECTED each rule below and it MUST NOT exist. "
+            "These are not rules to fix — they are BANNED. Producing any of them "
+            "again (same target, same field, reworded, split, or renamed) is a hard "
+            "error: the rule will be rejected again and the whole extraction fails "
+            "its purpose. Each was rejected because it does not belong to THIS "
+            "section (e.g. an inherited field that comes from a base type via allOf, "
+            "or a rule another section owns). Leave every one of them OUT:")
+        for i, err in enumerate(discarded_errors, start=1):
             rule = err.get("rule", {})
+            mapping = rule.get("openapi_mapping", {})
             lines.append(
-                f"  [{rule.get('rule_type', '?')}] {rule.get('source_name', '?')}: "
-                f"{err.get('instruction', 'discarded')}"
+                f"  {i}. BANNED [{rule.get('rule_type', '?')}] "
+                f"object={mapping.get('openapi_object', '?')} "
+                f"field={mapping.get('openapi_field', '?')} "
+                f"(source={rule.get('source_name', '?')})\n"
+                f"     reason: {err.get('instruction', 'discarded')}"
             )
+        lines.append(
+            ">>>>> END FORBIDDEN RULES — none of the above may appear in your output <<<<<")
         lines.append("")
 
     if validation_errors:
@@ -530,7 +544,7 @@ def extractor_node(state: RuleBankState) -> dict:
     # still discerns and may emit a legitimate rule not listed.
     candidate_rules, skip_rules = _scope_section(
         section_id, section_title, section["content"],
-        section_analysis, existing_rules,
+        section_analysis, existing_rules, sibling_summary,
     )
 
     logger.debug(
@@ -571,6 +585,13 @@ def extractor_node(state: RuleBankState) -> dict:
             "emits_schema_properties": analysis.emits_schema_properties,
             "base_ref":                analysis.base_ref,
             "inherited_fields":        analysis.inherited_fields,
+            # Phase-3 positive scope for this section, so the Reflector's
+            # completeness check measures "missing" against what the section is
+            # actually supposed to emit — not the raw attribute table.
+            "candidate_rules":         candidate_rules,
+            # Phase-3 skip list — rules another section already owns. Handed to the
+            # Reflector so it never lists one of these as "missing" here.
+            "skip_rules":              skip_rules,
         }}
 
     return {

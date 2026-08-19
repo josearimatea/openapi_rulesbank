@@ -44,7 +44,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.llm_config import llm
-from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE
+from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE, MAX_ITERATIONS
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.prompts.validator_prompts import (
     SectionAnalysisResult, ValidationVerdict, ReflectorReviewResult,
@@ -53,7 +53,7 @@ from openapi_rulesbank.prompts.validator_prompts import (
 from openapi_rulesbank.schemas.rules import ValidatedRule, ValidationError
 from openapi_rulesbank.tools.rag_tools import index_validated_rule, search_similar_rules
 from openapi_rulesbank.utils.diagnostic import _diagnostic
-from openapi_rulesbank.utils.parsers import format_section_verdict
+from openapi_rulesbank.utils.parsers import format_section_verdict, format_corrections
 from openapi_rulesbank.utils.rules_check import check_mapping_for_type
 
 logger = get_logger(__name__)
@@ -172,10 +172,15 @@ def _run_section_init(
     already_validated: list[dict],
     previous_missing: list[str],
     chain_init,
+    section_verdict: str = "",
 ) -> list[str]:
     """
     Filters previous_missing_rules against current coverage.
     Returns the updated missing_rules list (may be empty).
+
+    section_verdict carries the pre-analysis (inherited fields, ownership) so an
+    inherited field is not carried forward as still-missing — it is covered by the
+    allOf base and would only loop back to be discarded again.
     """
     if not previous_missing:
         return []
@@ -185,6 +190,7 @@ def _run_section_init(
         "current_rules":         _format_rules_compact(current_rules),
         "already_validated_rules": _format_rules_compact(already_validated),
         "previous_missing_rules":  _format_missing_rules(previous_missing),
+        "section_verdict":         section_verdict or "No pre-analysis verdict for this section.",
     })
     return result.missing_rules or []
 
@@ -202,6 +208,7 @@ def _validate_semantically(
     current_missing_rules: list[str],
     similar_rules_other_sections: str = "",
     section_verdict: str = "",
+    sibling_rules: str = "",
 ) -> tuple[dict | None, dict | None, list[str]]:
     """
     Semantic verdict for one rule.
@@ -210,6 +217,11 @@ def _validate_semantically(
     similar_rules_other_sections: rules already accepted in OTHER sections that
     resemble this one (from the rules RAG), so the verdict can discard a rule that
     merely restates one already validated elsewhere.
+
+    sibling_rules: the OTHER rules of this section in this iteration (not yet
+    validated) plus those already validated in earlier iterations. It stops the
+    verdict from reporting a counterpart as missing when it was already extracted
+    (e.g. flagging 5XX absent while judging 4XX, though 5XX is a sibling).
     """
     mapping = rule.get("openapi_mapping", {})
     section_id = rule.get("section_id", "")
@@ -228,7 +240,7 @@ def _validate_semantically(
         "openapi_object": mapping.get("openapi_object", ""),
         "openapi_field":  mapping.get("openapi_field", ""),
         "openapi_value":  mapping.get("openapi_value", ""),
-        "reflection_confidence": f"{rule.get('reflection_confidence', 0.0):.2f}",
+        "reflector_score": f"{rule.get('reflector_score', 0.0):.2f}",
         "reflection_flagged":    str(rule.get("reflection_flagged", False)),
         "reflection_reasoning":  rule.get("reflection_reasoning", ""),
         "split_suggestion":      rule.get("split_suggestion", ""),
@@ -237,6 +249,7 @@ def _validate_semantically(
         "similar_rules_other_sections": similar_rules_other_sections or "None",
         "current_missing_rules":   _format_missing_rules(current_missing_rules),
         "section_verdict":         section_verdict or "No pre-analysis verdict for this section.",
+        "sibling_rules":           sibling_rules or "None — only this rule in this section.",
         "section_content":         section_content,
     })
 
@@ -272,10 +285,16 @@ def _run_reflector_review(
     current_missing_rules: list[str],
     reflector_section_reflection: list[dict],
     chain_review,
+    section_verdict: str = "",
+    corrections: str = "",
 ) -> list[str]:
     """
     Incorporates the Reflector's section analysis into the final missing_rules.
     Returns the definitive missing_rules list.
+
+    section_verdict carries the pre-analysis (inherited fields, ownership) so the
+    consolidated missing list never keeps an inherited field — it is covered by the
+    allOf base and would only be re-extracted and discarded again.
     """
     reflector_missing_str = _format_reflector_missing(
         section_id, reflector_section_reflection
@@ -289,6 +308,8 @@ def _run_reflector_review(
         "already_validated_rules":        _format_rules_compact(already_validated),
         "current_missing_rules":          _format_missing_rules(current_missing_rules),
         "reflector_missing_rules":        reflector_missing_str,
+        "section_verdict":                section_verdict or "No pre-analysis verdict for this section.",
+        "corrections":                    corrections or "None",
     })
     return result.missing_rules or []
 
@@ -339,15 +360,34 @@ def validator_node(state: RuleBankState) -> dict:
         for r in prior_validated_rules
     }
 
-    # Keys of rules marked for discard — skip re-validation on loop-back
-    discard_keys: set[tuple] = {
-        (e.get("section_id", ""),
-         e.get("rule", {}).get("rule_type",   ""),
-         e.get("rule", {}).get("source_name", ""),
-         e.get("rule", {}).get("openapi_mapping", {}).get("openapi_field", ""))
-        for e in (state.get("validation_errors", []) or [])
+    # Discards from EARLIER iterations of this same section. validation_errors holds
+    # only the last iteration's errors, so a rule discarded in iteration 1 would be
+    # forgotten by iteration 3 — the Extractor could re-emit it and the Builder would
+    # force-include it. We carry every prior discard forward here and re-attach them
+    # to this iteration's errors on return, so a discarded rule stays discarded for
+    # the whole retry loop. The Builder resets validation_errors when it advances.
+    prior_discards: list[dict] = [
+        e for e in (state.get("validation_errors", []) or [])
         if e.get("error_type") == "discard"
-    }
+    ]
+    # After this many attempts conditions.py sends the section to the Builder, not
+    # back to the Extractor. On that last pass we stop accumulating discards (see
+    # _with_prior_discards) so they are not force-included into the final output.
+    is_last_iteration = (state.get("section_iteration_count", 0) or 0) >= MAX_ITERATIONS
+
+    def _discard_key(e: dict) -> tuple:
+        r = e.get("rule", {})
+        return (
+            e.get("section_id", "") or r.get("section_id", ""),
+            r.get("rule_type",   ""),
+            r.get("source_name", ""),
+            r.get("openapi_mapping", {}).get("openapi_field", ""),
+        )
+
+    # Keys of rules marked for discard — skip re-validation on loop-back. Seeded with
+    # the accumulated prior discards so a rule discarded in any earlier iteration of
+    # this section is skipped again, not re-validated and re-added.
+    discard_keys: set[tuple] = {_discard_key(e) for e in prior_discards}
 
     # -------------------------------------------------------------------------
     # Structural validation — pass 1 (no LLM)
@@ -380,11 +420,24 @@ def validator_node(state: RuleBankState) -> dict:
         f"{len(validation_errors)} failed out of {len(reflected_rules)} rule(s)."
     )
 
+    def _with_prior_discards(errors: list[dict]) -> list[dict]:
+        """Re-attach discards from earlier iterations, so they are never forgotten
+        WHILE the section still loops back to the Extractor. Deduplicated by key.
+        On the LAST iteration (no more retries — this result goes straight to the
+        Builder) we do NOT carry them: the Builder force-includes leftover errors,
+        and a discarded rule must not be resurrected there. So the accumulation only
+        serves the retry loop, never the final output."""
+        if is_last_iteration:
+            return errors
+        present = {_discard_key(e) for e in errors if e.get("error_type") == "discard"}
+        carried = [e for e in prior_discards if _discard_key(e) not in present]
+        return errors + carried
+
     if not structurally_valid:
         # Nothing to semantically validate — skip LLM stages
         return {
             "validated_rules":              [],
-            "validation_errors":            validation_errors,
+            "validation_errors":            _with_prior_discards(validation_errors),
             "validator_section_reflection": [],
             "validated_rules_by_section":   _build_validated_by_section(prior_validated_rules, []),
         }
@@ -423,14 +476,22 @@ def validator_node(state: RuleBankState) -> dict:
             f"{len(previous_missing)} previous missing rule(s)."
         )
 
-        # Stage 1 — Filter previous missing rules
-        current_missing: list[str] = _run_section_init(
-            section_id=        section_id,
-            current_rules=     section_rules,
-            already_validated= already_validated_for_section,
-            previous_missing=  previous_missing,
-            chain_init=        chain_init,
-        )
+        # Stage 1 — Filter previous missing rules. Skipped on the last attempt: the
+        # missing list feeds the Extractor's next retry, which will not happen (the
+        # section goes to the Builder). Stage 2 (per-rule verdict, incl. discards
+        # that the force-include depends on) still runs.
+        if is_last_iteration:
+            current_missing = []
+            logger.debug("  Stage 1 skipped — last attempt (missing not acted on).")
+        else:
+            current_missing = _run_section_init(
+                section_id=        section_id,
+                current_rules=     section_rules,
+                already_validated= already_validated_for_section,
+                previous_missing=  previous_missing,
+                chain_init=        chain_init,
+                section_verdict=   section_verdict,
+            )
         logger.debug(
             f"  Stage 1: {len(current_missing)} missing rule(s) carried forward "
             f"from previous {len(previous_missing)}."
@@ -460,6 +521,14 @@ def validator_node(state: RuleBankState) -> dict:
                 rule, rules_collection_name, exclude_section_id=section_id,
             )
 
+            # This section's OTHER rules — the ones extracted in this iteration (not
+            # yet validated) plus those validated in earlier iterations — so the
+            # verdict does not report a counterpart as missing when it is a sibling
+            # already present (e.g. 5XX while judging 4XX).
+            sibling_rules_str = _format_rules_compact(
+                [r for r in section_rules if r is not rule] + already_validated_for_section
+            )
+
             valid_dict, error_dict, new_missing = _validate_semantically(
                 rule=                           rule,
                 section_content=                section_content,
@@ -469,6 +538,7 @@ def validator_node(state: RuleBankState) -> dict:
                 current_missing_rules=          current_missing,
                 similar_rules_other_sections=   similar_other_sections,
                 section_verdict=                section_verdict,
+                sibling_rules=                  sibling_rules_str,
             )
 
             # Accumulate new missing rules (deduplicated)
@@ -488,7 +558,7 @@ def validator_node(state: RuleBankState) -> dict:
                 if rule_key in existing_keys:
                     logger.debug(f"    → SKIP (already validated in prior iteration): {rule_key}")
                     continue
-                logger.debug(f"    → PASS (confidence={rule.get('reflection_confidence', 0):.2f})")
+                logger.debug(f"    → PASS (score={rule.get('reflector_score', 0):.2f})")
                 validated_this_section.append(valid_dict)
                 validated_rules.append(valid_dict)
                 existing_keys.add(rule_key)
@@ -501,18 +571,31 @@ def validator_node(state: RuleBankState) -> dict:
             f"{len(current_missing)} missing rule(s) so far."
         )
 
-        # Stage 3 — Reflector review
-        final_missing = _run_reflector_review(
-            section_id=                   section_id,
-            validated_this_iteration=     validated_this_section,
-            already_validated=            already_validated_for_section,
-            current_missing_rules=        current_missing,
-            reflector_section_reflection= reflector_section_reflection,
-            chain_review=                 chain_review,
-        )
-        logger.debug(
-            f"  Stage 3: final missing_rules = {len(final_missing)} rule(s)."
-        )
+        # Stage 3 — Reflector review. Skipped on the last attempt for the same
+        # reason as Stage 1: its output is the missing list for the next retry,
+        # which will not happen.
+        if is_last_iteration:
+            final_missing = []
+            logger.debug("  Stage 3 skipped — last attempt (missing not acted on).")
+        else:
+            # Corrections decided for this section in this iteration — a target
+            # under correction EXISTS, so it must not survive as a missing rule.
+            corrections_str = format_corrections(
+                [e for e in section_errors if e.get("error_type") == "correction"]
+            )
+            final_missing = _run_reflector_review(
+                section_id=                   section_id,
+                validated_this_iteration=     validated_this_section,
+                already_validated=            already_validated_for_section,
+                current_missing_rules=        current_missing,
+                reflector_section_reflection= reflector_section_reflection,
+                chain_review=                 chain_review,
+                section_verdict=              section_verdict,
+                corrections=                  corrections_str,
+            )
+            logger.debug(
+                f"  Stage 3: final missing_rules = {len(final_missing)} rule(s)."
+            )
 
         if final_missing:
             new_section_reflection.append({
@@ -549,7 +632,7 @@ def validator_node(state: RuleBankState) -> dict:
 
     return {
         "validated_rules":              validated_rules,
-        "validation_errors":            validation_errors,
+        "validation_errors":            _with_prior_discards(validation_errors),
         "validator_section_reflection": new_section_reflection,
         "validated_rules_by_section":   validated_rules_by_section,
     }

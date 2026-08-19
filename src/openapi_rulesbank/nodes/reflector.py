@@ -33,7 +33,7 @@ State reads:
 
 State writes:
     reflected_rules   (list[dict]) — ReflectedRule dicts extending each RawRule with:
-                                     reflection_confidence, reflection_reasoning,
+                                     reflector_score, reflection_reasoning,
                                      reflection_flagged, reflection_rag_context,
                                      split_suggestion, discard_suggestion
     section_reflection (list[dict]) — SectionFeedback dicts for sections with
@@ -42,6 +42,7 @@ State writes:
 
 from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.llm_config import llm
+from openapi_rulesbank.config.settings import MAX_ITERATIONS
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.prompts.reflector_prompts import (
     ReflectionResult, SectionReflection,
@@ -52,7 +53,10 @@ from openapi_rulesbank.tools.rag_tools import (
     search_target_spec,
     umbrella_mns_for as _umbrella_mns,
 )
-from openapi_rulesbank.utils.parsers import format_section_verdict
+from openapi_rulesbank.utils.parsers import (
+    format_section_verdict, discards_for_section, format_discards,
+    corrections_for_section, format_corrections,
+)
 
 logger = get_logger(__name__)
 
@@ -103,6 +107,31 @@ def reflector_node(state: RuleBankState) -> dict:
 
     reflected_rules: list[dict] = []
 
+    # Sibling rules for each section: the ones extracted in THIS iteration plus the
+    # ones already validated in EARLIER iterations of the same section. Each per-rule
+    # reflection sees them so it does not hallucinate a missing sibling that was in
+    # fact already produced — e.g. judging the 4XX rule while the 5XX rule is
+    # elsewhere in the batch, or already validated on a previous pass, and wrongly
+    # flagging 5XX as absent. On retries (iterations 2–3) the Extractor emits only a
+    # few rules, so the already-validated set is what carries the section's context.
+    # The rule being judged is excluded from its own sibling list below.
+    rules_by_section: dict[str, list[dict]] = {}
+    for r in raw_rules:
+        rules_by_section.setdefault(r.get("section_id", ""), []).append(r)
+    validated_by_section = state.get("validated_rules_by_section", {}) or {}
+
+    def _siblings_str(current: dict) -> str:
+        sid = current.get("section_id", "")
+        def line(r):
+            return (f"  [{r.get('rule_type', '?')}] "
+                    f"{r.get('openapi_mapping', {}).get('openapi_field', '')}: "
+                    f"{r.get('rule_text', '')[:70]}")
+        extracted = [line(r) for r in rules_by_section.get(sid, []) if r is not current]
+        validated = [f"{line(r)}  (already validated)"
+                     for r in validated_by_section.get(sid, [])]
+        lines = extracted + validated
+        return "\n".join(lines) or "None — this is the only rule from this section."
+
     for i, rule in enumerate(raw_rules):
         mapping = rule.get("openapi_mapping", {})
         section_id = rule.get("section_id", "")
@@ -141,6 +170,7 @@ def reflector_node(state: RuleBankState) -> dict:
             "openapi_object": mapping.get("openapi_object", ""),
             "openapi_field":  mapping.get("openapi_field", ""),
             "openapi_value":  mapping.get("openapi_value", ""),
+            "sibling_rules":  _siblings_str(rule),
             "section_verdict": format_section_verdict(analysis_by_id.get(section_id)),
             "section_content": section_content,
         })
@@ -148,7 +178,7 @@ def reflector_node(state: RuleBankState) -> dict:
         # Merge reflection fields into the rule dict → ReflectedRule
         reflected_rule = {
             **rule,
-            "reflection_confidence":  result.reflection_confidence,
+            "reflector_score":        result.reflector_score,
             "reflection_reasoning":   result.reflection_reasoning,
             "reflection_flagged":     result.reflection_flagged,
             "reflection_rag_context": rag_context,
@@ -158,7 +188,7 @@ def reflector_node(state: RuleBankState) -> dict:
         reflected_rules.append(reflected_rule)
 
         logger.debug(
-            f"  → confidence={result.reflection_confidence:.2f}  "
+            f"  → score={result.reflector_score:.2f}  "
             f"flagged={result.reflection_flagged}  "
             f"split={bool(result.split_suggestion)}  "
             f"discard={result.discard_suggestion}"
@@ -176,6 +206,18 @@ def reflector_node(state: RuleBankState) -> dict:
     # -------------------------------------------------------------------------
     # Fase 2 — Section-level completeness check
     # -------------------------------------------------------------------------
+    # On the LAST attempt the section goes straight to the Builder after the
+    # Validator — conditions.py does not loop back to the Extractor — so any missing
+    # rule found here would never be acted on. Skip the whole completeness check
+    # (one LLM call per section) on that pass. section_iteration_count was already
+    # incremented by the Extractor, so it equals MAX_ITERATIONS on the last attempt.
+    if (state.get("section_iteration_count", 0) or 0) >= MAX_ITERATIONS:
+        logger.info(
+            "Reflector Fase 2 skipped — last attempt (missing rules would not be "
+            "acted on before the Builder)."
+        )
+        return {"reflected_rules": reflected_rules, "section_reflection": []}
+
     already_validated_by_section: dict[str, list[dict]] = (
         state.get("validated_rules_by_section", {}) or {}
     )
@@ -213,6 +255,29 @@ def reflector_node(state: RuleBankState) -> dict:
             f"  - {m}" for m in previous_missing
         ) or "None"
 
+        # (2) Phase-3 positive scope: what this section is supposed to emit, so
+        # "missing" is judged against the real scope, not the raw attribute table.
+        candidate_rules_str = analysis_by_id.get(section_id, {}).get(
+            "candidate_rules", ""
+        ) or "No pre-scoped candidates."
+
+        # (4) Phase-3 skip: rules another section already owns — not missing here.
+        skip_rules_str = analysis_by_id.get(section_id, {}).get(
+            "skip_rules", ""
+        ) or "None."
+
+        # (3) Rules the Validator discarded in this section's earlier iterations —
+        # shared helper, so it is not re-listed as missing (rejected on purpose).
+        # Empty on the 1st pass (Validator has not run); useful from the 2nd pass.
+        discarded_str = format_discards(
+            discards_for_section(state.get("validation_errors", []), section_id)
+        )
+        # (5) Rules the Validator is CORRECTING (exist, only need a fix) — a target
+        # under correction is NOT missing, so it must not be listed as such.
+        corrections_str = format_corrections(
+            corrections_for_section(state.get("validation_errors", []), section_id)
+        )
+
         logger.debug(f"Reflector Fase 2 — section [{section_id}]")
 
         result: SectionReflection = section_chain.invoke({
@@ -221,6 +286,12 @@ def reflector_node(state: RuleBankState) -> dict:
             "current_rules":         "\n".join(current_rule_lines),
             "already_validated_rules": already_validated_str,
             "previous_missing_rules":  previous_missing_str,
+            # (1) pre-analysis verdict — inherited fields / ownership / allOf base
+            "section_verdict":         format_section_verdict(analysis_by_id.get(section_id)),
+            "candidate_rules":         candidate_rules_str,
+            "skip_rules":              skip_rules_str,
+            "discarded_rules":         discarded_str,
+            "corrections":             corrections_str,
         })
 
         if result.missing_rules:

@@ -64,6 +64,15 @@ def main():
         validated_rules = validated_rules + new
         kinds = [f"{x['rule_type']}:{x['openapi_mapping'].get('openapi_field','')}" for x in new]
         print(f"[{sid}] {s['title'][:40]:40} -> {len(new)} validated: {kinds}")
+        # --- instrumentation: errors (correction/discard) and missing ---
+        for e in val.get("validation_errors", []):
+            m = e.get("rule", {}).get("openapi_mapping", {})
+            print(f"    ERROR [{e.get('error_type')}] "
+                  f"{e.get('rule', {}).get('rule_type')}:{m.get('openapi_field','')}"
+                  f" -> {e.get('instruction','')[:90]}")
+        for sr in val.get("validator_section_reflection", []):
+            for mr in sr.get("missing_rules", []):
+                print(f"    MISSING [{sr.get('section_id')}] {mr[:100]}")
 
     resp = [x for x in validated_rules if x["rule_type"] == "response"]
     print()

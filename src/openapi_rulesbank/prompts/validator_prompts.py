@@ -80,7 +80,11 @@ For each rule in previous_missing_rules:
   - Check if a matching rule now exists in current_rules or already_validated_rules.
     A rule is "covered" if it has the same rule_type and openapi_field as the missing instruction.
   - If covered: remove it from the list.
-  - If still absent: keep it.
+  - ALSO remove it when the pre-analysis verdict shows it is an INHERITED field of
+    this section's allOf base (already provided by the base $ref — NOT missing), or
+    a rule the verdict shows belongs to ANOTHER section. Keeping such a rule only
+    makes the Extractor re-emit what the per-rule check then discards.
+  - If still genuinely absent (and not inherited / not owned elsewhere): keep it.
 
 Do NOT add new rules at this stage. Only filter what was previously identified.
 Do NOT list rules about the absence of a construct (e.g. 'no query parameters').
@@ -88,6 +92,10 @@ Do NOT list rules about the absence of a construct (e.g. 'no query parameters').
 
 _USER_SECTION_INIT = """\
 Section ID: {section_id}
+
+Pre-analysis verdict for this section (kind, schema-home, allOf base, and INHERITED
+fields the base already provides — an inherited field is NOT missing):
+{section_verdict}
 
 Rules extracted in this iteration:
 {current_rules}
@@ -98,7 +106,8 @@ Rules already validated in previous iterations:
 Rules identified as missing in the previous iteration:
 {previous_missing_rules}
 
-Which of the previous missing rules are still genuinely absent?
+Which of the previous missing rules are still genuinely absent? (Drop inherited
+fields and rules owned by another section.)
 """
 
 validator_section_init_prompt = ChatPromptTemplate.from_messages([
@@ -131,7 +140,12 @@ class ValidationVerdict(BaseModel):
             "'split' — this rule is invalid and must be fully replaced by N atomic "
             "           rules listed in instruction. "
             "'discard' — remove this rule entirely, no replacement. "
-            "Leave as 'correction' when valid=True."
+            "Leave as 'correction' when valid=True. "
+            "This verdict covers the rule under review, which EXISTS — so a wrong "
+            "rule is a 'correction' here, and the SAME rule must NOT also appear in "
+            "new_missing_rules (a target is one classification: correction OR "
+            "missing, never both). new_missing_rules is only for a DIFFERENT sibling "
+            "that is absent everywhere."
         )
     )
     instruction: str = Field(
@@ -151,13 +165,23 @@ class ValidationVerdict(BaseModel):
     new_missing_rules: list[str] = Field(
         default_factory=list,
         description=(
-            "New missing rules discovered while assessing this specific rule. "
-            "Use when this rule reveals a sibling rule that is absent from both "
-            "already_validated_rules and current_missing_rules. "
-            "Example: this rule covers 4XX and is valid, but 5XX is absent and "
-            "not yet listed in current_missing_rules — add it here. "
-            "Do NOT repeat entries already in current_missing_rules or already_validated_rules. "
-            "Leave empty when no new gaps are found."
+            "Sibling rules — DIFFERENT targets from the rule under review — that this "
+            "assessment reveals are genuinely ABSENT everywhere (not in "
+            "already_validated_rules, not in current_missing_rules, not in "
+            "sibling_rules). "
+            "TWO RULES, READ LITERALLY:\n"
+            "1. ONE classification per target. A single atomic target (one status "
+            "code, one method, one property) is EITHER a correction/valid rule (it "
+            "exists) OR missing (it does not) — NEVER both. The rule under review "
+            "exists by definition, so if it is wrong it is a correction; NEVER put "
+            "the rule under review itself in new_missing.\n"
+            "2. A truly-absent counterpart IS added here. If, judging the 4XX rule, "
+            "the sibling 5XX is mapped nowhere (not in sibling_rules, "
+            "already_validated_rules, or current_missing_rules), add the 5XX rule to "
+            "new_missing — it is a distinct target that is really missing. But if a "
+            "5XX rule is already present as a sibling, add nothing. "
+            "So: never double-classify the SAME rule; do add a distinct sibling that "
+            "is genuinely absent. Leave empty when no new gaps are found."
         )
     )
 
@@ -176,9 +200,20 @@ Assess whether the rule under review is correct as written:
     'discard'    → remove this rule entirely. No replacement.
                    Use when the rule describes the absence of a construct
                    (e.g. 'no query parameters') — that cannot be mapped to OpenAPI.
-    'split'      → this rule is invalid because it combines constructs that must be
-                   separate. List ALL replacement rules in instruction.
-                   This rule is discarded and fully replaced by the listed rules.
+    'split'      → ONLY when THIS rule's own openapi_field literally combines two or
+                   more targets in one field (e.g. field "put, patch", or one field
+                   naming both "4xx/5xx"). List ALL replacement rules; this rule is
+                   discarded and fully replaced by them.
+                   HARD BAN — atomic rules are never split: a rule whose openapi_field
+                   already names a SINGLE target (one method, one status code such as
+                   "4XX" or "5XX", one property) is atomic. Do NOT split it.
+                   In particular, if a single "5XX" rule is under review and "4XX"
+                   already exists (or vice-versa), that is NOT a split and NOT a
+                   replacement: 4XX and 5XX are distinct, co-existing responses. The
+                   rule under review stays valid=True. If instead the SIBLING code is
+                   the one missing (e.g. 4XX exists, 5XX does not appear anywhere),
+                   record the missing one in new_missing_rules — never by splitting
+                   or replacing this rule.
 
 Additionally: if assessing this rule reveals a sibling rule that is absent from
 both already_validated_rules and current_missing_rules, add it to new_missing_rules.
@@ -211,6 +246,11 @@ VALIDATION RULES BY RULE_TYPE:
                     Each code or range mentioned explicitly must be its own rule.
                     A rule covering only one code (e.g. 4XX) is valid on its own even
                     if a sibling (5XX) is absent — do not reject it for that reason.
+                    NEVER split or replace one response code with another: a 5XX rule
+                    is not a "split" of a 4XX rule and must not be replaced by 4XX (or
+                    vice-versa). Each is atomic. If reviewing one reveals the sibling
+                    is missing, put the sibling in new_missing_rules — keep this rule
+                    valid=True. Reject any Reflector split suggestion between codes.
   request_body    : openapi_field must be "content". openapi_value must be a media type.
   security_scheme : openapi_field must be "type". openapi_value must be a valid OAuth2/http/apiKey value.
   callback        : openapi_object must be "paths.<path>.<method>.callbacks.<name>" —
@@ -275,7 +315,7 @@ Rule to validate:
   OpenAPI value  : {openapi_value}
 
 Reflector assessment (analysis only — you decide):
-  Confidence        : {reflection_confidence}
+  Belongs-in-final score : {reflector_score}
   Flagged           : {reflection_flagged}
   Reasoning         : {reflection_reasoning}
   Split suggestion  : {split_suggestion}
@@ -283,6 +323,11 @@ Reflector assessment (analysis only — you decide):
 
 Already-validated rules for this section:
 {already_validated_rules}
+
+Other rules of THIS section right now (extracted this iteration but not yet
+validated, plus ones validated earlier) — its siblings. A counterpart present here
+is NOT missing; never add it to new_missing_rules:
+{sibling_rules}
 
 Similar rules already validated in OTHER sections (discard this rule if it merely
 restates one of them — see DUPLICATES ACROSS SECTIONS):
@@ -354,18 +399,33 @@ You have already:
 Now review the Reflector's section analysis against the full context and produce
 the definitive missing_rules list for this iteration.
 
-For each entry in reflector_missing_rules:
+For each entry in reflector_missing_rules AND current_missing_rules:
   - If already covered by validated_rules_this_iteration or already_validated_rules → exclude.
+  - If the pre-analysis verdict shows it is an INHERITED field of this section's allOf
+    base → exclude: it is provided by the base $ref, NOT missing. Also exclude any
+    rule the verdict shows belongs to ANOTHER section. This overrides the "do not
+    remove" caution below — an inherited or foreign rule must never survive as
+    missing, or the Extractor loops re-emitting what gets discarded.
+  - If its target is already being CORRECTED this iteration (see the corrections
+    list) → exclude: that rule EXISTS and the correction covers it. A target is one
+    thing — correction OR missing, never both. Never keep as missing a target that
+    is in the corrections list.
   - If already in current_missing_rules → do not duplicate.
-  - If genuinely still absent → add to the final list.
+  - If genuinely still absent (and not inherited / not owned elsewhere) → keep/add.
 
-The final missing_rules = current_missing_rules + confirmed additions from reflector_missing_rules.
-Do NOT remove from current_missing_rules unless you have clear evidence it is now covered.
+The final missing_rules = the still-genuinely-absent rules from current_missing_rules
+plus confirmed additions from reflector_missing_rules.
+Do NOT remove a genuinely-absent rule from current_missing_rules without clear evidence
+it is now covered (inheritance / foreign-ownership counts as such evidence).
 Do NOT list rules about the absence of a construct.
 """
 
 _USER_REFLECTOR_REVIEW = """\
 Section ID: {section_id}
+
+Pre-analysis verdict for this section (kind, schema-home, allOf base, and INHERITED
+fields the base already provides — an inherited field is NOT missing):
+{section_verdict}
 
 Rules validated in this iteration:
 {validated_rules_this_iteration}
@@ -378,6 +438,10 @@ Missing rules accumulated in Stages 1 and 2:
 
 Reflector's section analysis — rules it identified as missing:
 {reflector_missing_rules}
+
+Rules being CORRECTED this iteration (they exist, only need a fix — their targets
+are NOT missing, exclude them from the final list):
+{corrections}
 
 Produce the final missing_rules list for this section.
 """
