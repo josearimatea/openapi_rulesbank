@@ -254,18 +254,21 @@ VALIDATION RULES BY RULE_TYPE:
   request_body    : openapi_field must be "content". openapi_value must be a media type.
   security_scheme : openapi_field must be "type". openapi_value must be a valid OAuth2/http/apiKey value.
   callback        : openapi_object must be "paths.<path>.<method>.callbacks.<name>" —
-                    a notification is delivered to the consumer's own address, so it is
-                    never a path of this service. openapi_field is the delivery method
-                    (normally "post"); openapi_value is the runtime expression for the
-                    consumer address as the spec writes it.
-                    A rule that turns a notification into a path_operation (a path named
-                    after the notification, or after the consumer address placeholder) is
-                    wrong: set valid=False, error_type='correction', and instruct the
-                    Extractor to emit it as a callback anchored on the operation where the
-                    consumer supplies its address.
-                    The same applies to any path_operation whose resource sits on the
-                    consumer — sections describing "resources on the MnS consumer" list
-                    endpoints the consumer hosts, not paths of this service's YAML.
+                    openapi_field is the delivery method (normally "post"); openapi_value
+                    is the runtime expression for the consumer address as the spec writes
+                    it. Callback vs path_operation is decided by the DESTINATION the spec
+                    gives for the notification, not by the fact that it is a notification:
+                      - destination is a runtime expression / placeholder the CONSUMER
+                        supplies (no fixed path — the address is only known at runtime)
+                        → callback.
+                      - destination is a fixed resource path this service itself exposes
+                        (the path appears in this service's own resource/endpoint table,
+                        with a concrete method) → normal path_operation on that path.
+                    Only when the destination is a consumer-supplied runtime address is a
+                    path_operation wrong: set valid=False, error_type='correction', and
+                    instruct the Extractor to emit a callback. When the notification is
+                    received on a fixed path this service hosts, the path_operation is
+                    VALID — do not convert it to a callback.
 
 ALREADY-VALIDATED RULES:
   If the rule under review duplicates one already validated, set valid=False,

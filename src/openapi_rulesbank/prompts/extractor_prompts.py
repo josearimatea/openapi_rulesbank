@@ -300,16 +300,20 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     "{{request.body#/notificationRecipientAddress}}" or
                     "{{request.body#/consumerReference}}"
 
-NOTIFICATIONS ARE CALLBACKS, NEVER PATHS:
+CALLBACK vs PATH — DECIDE BY WHO OWNS THE URI:
 
   A `path` is an endpoint THIS service exposes and the consumer calls.
   A `callback` is an endpoint the CONSUMER exposes and this service calls back.
 
-  Decide by asking who owns the URI. Spec tables map notifications to an HTTP
-  method and a "Resource URI" that is the address the CONSUMER supplied — a
-  placeholder standing for that address rather than a resource of this service.
-  Whenever the URI is the consumer's address, emit a `callback` rule, never a
-  `path_operation`, and never invent a path named after the notification.
+  Decide by asking who owns the URI — being a notification does NOT by itself make
+  it a callback. Spec tables map a notification to an HTTP method and a URI:
+    - if that URI is the address the CONSUMER supplied — a placeholder / runtime
+      expression standing for that address, not a resource of this service — emit a
+      `callback` rule, never a `path_operation`, and never invent a path named after
+      the notification.
+    - if that URI is a fixed resource path THIS service exposes (it appears in this
+      service's own resource table with a concrete method), it is a normal
+      `path_operation` on that path — emit it as a path_operation, NOT a callback.
   (Illustrative only — the actual names differ per spec: a URI written as
   "{{notificationTarget}}" or "{{consumerReference}}" is a consumer address, so
   "paths./notifyXyz" or "paths./{{notificationTarget}}" would be wrong.)
