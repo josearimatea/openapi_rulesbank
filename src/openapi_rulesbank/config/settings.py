@@ -29,17 +29,30 @@ COLLECTION_NAME = COLLECTION_NAME_TEST_FILE if APP_ENV == 'test_file' else COLLE
 # Retrieval settings
 NUMBER_RETRIEVE_CHUNKS = 10
 
-# Load OpenAI API key from .env
+# LLM provider — "openrouter" | "openai".
+# Both speak the OpenAI chat-completions protocol, so the same ChatOpenAI client
+# serves either one; the provider only decides which key, base URL and headers it
+# is built with. The key is validated in llm_config for the selected provider, so
+# only the provider actually in use needs a key in .env.
+PROVIDER = os.getenv("RULESBANK_PROVIDER", "openrouter").strip().lower()
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY not found in .env file")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+# OpenRouter attributes usage to an app when these headers are sent; both optional.
+OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "")
+OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "openapi-rulesbank")
 
 # LLM Settings
-MODEL = "gpt-5.6-luna"
-# MODEL = "gpt-4.1-mini"
-# MODEL = "gpt-5-mini"
-# MODEL = "gpt-5.4-nano"
-TEMPERATURE = 0
+# With provider=openrouter the model needs the vendor prefix ("openai/gpt-5.6-luna");
+# with provider=openai it is the bare OpenAI name ("gpt-5.6-luna").
+MODEL = os.getenv("RULESBANK_MODEL", "openai/gpt-5.6-luna")
+TEMPERATURE = float(os.getenv("RULESBANK_TEMPERATURE", "0"))
+# Reasoning models reject function-calling tools on /v1/chat/completions unless
+# reasoning is switched off, and every node here uses structured output via
+# function calling. "none" turns reasoning off; low | medium | high enable it;
+# empty omits the parameter, which is what models without a reasoning mode expect.
+REASONING_EFFORT = os.getenv("RULESBANK_REASONING_EFFORT", "none").strip().lower()
 # Per-request timeout (seconds) and automatic retries for the OpenAI client.
 # Without a timeout the SDK waits on a hung request for its long default, which
 # stalled a whole run for ~6 minutes on a single Phase-2/3 call. A short timeout
