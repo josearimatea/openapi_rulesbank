@@ -44,9 +44,21 @@ OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "")
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "openapi-rulesbank")
 
 # LLM Settings
-# With provider=openrouter the model needs the vendor prefix ("openai/gpt-5.6-luna");
-# with provider=openai it is the bare OpenAI name ("gpt-5.6-luna").
-MODEL = os.getenv("RULESBANK_MODEL", "openai/gpt-5.6-luna")
+# The same model is named differently by each provider: OpenRouter needs the
+# vendor prefix ("openai/gpt-5.6-luna"), OpenAI takes the bare name
+# ("gpt-5.6-luna"). Switching RULESBANK_PROVIDER therefore has to switch the
+# model name too, and doing that by hand is easy to forget — a provider=openai
+# run with the prefixed name fails at the first call with model_not_found.
+# So the default follows the selected provider, exactly as the API key does.
+# RULESBANK_MODEL still overrides it when a run needs a different model.
+DEFAULT_MODEL_BY_PROVIDER = {
+    "openrouter": "openai/gpt-5.6-luna",
+    "openai":     "gpt-5.6-luna",
+}
+MODEL = (
+    os.getenv("RULESBANK_MODEL")
+    or DEFAULT_MODEL_BY_PROVIDER.get(PROVIDER, "gpt-5.6-luna")
+)
 TEMPERATURE = float(os.getenv("RULESBANK_TEMPERATURE", "0"))
 # Reasoning models reject function-calling tools on /v1/chat/completions unless
 # reasoning is switched off, and every node here uses structured output via
@@ -162,7 +174,7 @@ FILTER_BY_KEYWORDS = False
 # It is the single switch for local testing: change it to run the notebooks and
 # the integration tests against another Management Service in the same document
 # (e.g. "PerfMnS", "FaultMnS"). Outputs follow it into that service's folder.
-TARGET_YAML = "PerfMnS"
+TARGET_YAML = "ProvMnS"
 
 # Optional legacy OpenAPI YAML — a previous release's YAML (e.g. Rel-17) given as
 # extra context for building Rel-18 rules. Provided via main.py --legacy-yaml; no
