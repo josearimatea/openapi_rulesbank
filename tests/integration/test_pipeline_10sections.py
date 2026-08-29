@@ -25,7 +25,9 @@ import pytest
 from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE
 from openapi_rulesbank.nodes.reader import reader_node
 from openapi_rulesbank.nodes.contract_builder import contract_builder_node
-from openapi_rulesbank.graph.rule_bank_flow import get_compiled_graph_from_planner
+from openapi_rulesbank.graph.rule_bank_flow import (
+    build_initial_state, get_compiled_graph_from_planner,
+)
 
 TARGET_IDS = {"323", "325", "326", "327", "328", "346", "347", "348", "349", "356"}
 
@@ -66,20 +68,29 @@ def pipeline_output(qdrant):
         "target_yaml":     TARGET_SERVICE,
     })
 
+    # Start from build_initial_state() — the same defaults the CLI uses — so a
+    # field added to the pipeline reaches this test too, instead of the state
+    # being spelled out here and silently drifting behind (which is how the
+    # pre-analyzer's other_spec_ref_memory / section_analysis_by_id went
+    # missing). Only what this scoped run overrides is listed after it: the
+    # Reader's output, the sections filtered to TARGET_IDS, and the contract
+    # built above (the graph starts at the Planner, so neither node runs in it).
     initial_state = {
+        **build_initial_state(
+            main_doc_path=os.path.abspath(TSPEC_DATA_TEST_FILE),
+            target_yaml=TARGET_SERVICE,
+        ),
         **reader_result,
-        "parsed_sections":              target_parsed,
-        "main_doc_path":                os.path.abspath(TSPEC_DATA_TEST_FILE),
-        "auxiliary_doc_paths":          [],
-        "target_yaml":                  TARGET_SERVICE,
-        "service_contract":             contract_result["service_contract"],
-        "validated_rules":              [],
-        "validation_errors":            [],
-        "section_reflection":           [],
-        "validator_section_reflection": [],
-        "current_section_idx":          0,
-        "section_iteration_count":      0,
-        "messages":                     [],
+        "parsed_sections":  target_parsed,
+        "service_contract": contract_result["service_contract"],
+        # The ContractBuilder also creates the two temporary Qdrant collections
+        # (the spec RAG the Extractor/Reflector query, and the rules collection
+        # the Validator grows for cross-section duplicate detection). Because it
+        # runs outside the graph here, its names must be carried over explicitly
+        # — without them the nodes fall back to "" and both RAGs are silently
+        # skipped, and the Builder has nothing to drop at the end of the run.
+        "spec_collection_name":  contract_result.get("spec_collection_name", ""),
+        "rules_collection_name": contract_result.get("rules_collection_name", ""),
     }
 
     pipeline = get_compiled_graph_from_planner()
