@@ -19,7 +19,7 @@ from datetime import datetime
 
 import pytest
 
-from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE, rules_dir_for
+from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE, final_rules_dir_for
 from openapi_rulesbank.config.settings import TARGET_YAML
 from openapi_rulesbank.graph.rule_bank_flow import build_initial_state, get_compiled_graph
 
@@ -32,8 +32,10 @@ TARGET_SERVICE = TARGET_YAML
 
 # Outputs live under the target service's directory, so runs for different MnS do
 # not mix. Full-document runs go to its Final_rules/ subfolder, apart from the
-# scoped/exploratory runs that land directly in the service's folder.
-FINAL_RULES_DIR = os.path.join(rules_dir_for(TARGET_SERVICE), "Final_rules")
+# scoped/exploratory runs that land directly in the service's folder. The Builder
+# resolves the same directory on its own now, so this only pre-computes the file
+# name; both come from final_rules_dir_for() to stay in step.
+FINAL_RULES_DIR = final_rules_dir_for(TARGET_SERVICE)
 
 
 @pytest.fixture(scope="module")

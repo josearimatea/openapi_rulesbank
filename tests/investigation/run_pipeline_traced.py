@@ -11,11 +11,11 @@ whether the 'Type' clause then resolves the embedded base (allOf).
 import os
 from datetime import datetime
 
-from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE, rules_dir_for
+from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE, final_rules_dir_for
 from openapi_rulesbank.config.settings import TARGET_YAML
 from openapi_rulesbank.graph.rule_bank_flow import build_initial_state, get_compiled_graph
 
-FINAL_RULES_DIR = os.path.join(rules_dir_for(TARGET_YAML), "Final_rules")
+FINAL_RULES_DIR = final_rules_dir_for(TARGET_YAML)
 os.makedirs(FINAL_RULES_DIR, exist_ok=True)
 stem = os.path.splitext(os.path.basename(TSPEC_DATA_TEST_FILE))[0]
 ts = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -60,7 +60,7 @@ from collections import Counter
 from datetime import datetime
 
 from openapi_rulesbank.config import get_logger
-from openapi_rulesbank.config.paths import rules_dir_for
+from openapi_rulesbank.config.paths import final_rules_dir_for, rules_dir_for
 from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE, MODEL, MAX_ITERATIONS
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.schemas.output import RulesBank, RulesBankMetadata, RulesBankSummary, RuleOutput, RULE_OUTPUT_FIELDS
@@ -300,7 +300,14 @@ def builder_node(state: RuleBankState) -> dict:
         timestamp = now.strftime("%Y%m%d_%H%M%S")
         filename  = f"rules_bank_{doc_stem}_{run_scope}_{timestamp}.json"
         # One directory per target service, so runs for different MnS do not mix.
-        out_dir = rules_dir_for(state.get("target_yaml", "") or "")
+        # Within it, a run that covered the whole document goes to Final_rules/ —
+        # that is the result worth keeping — while a partial run (a scoped test,
+        # an interrupted run) stays in the service's root folder.
+        service = state.get("target_yaml", "") or ""
+        out_dir = (
+            final_rules_dir_for(service) if run_scope == "full"
+            else rules_dir_for(service)
+        )
         os.makedirs(out_dir, exist_ok=True)
         output_path = os.path.join(out_dir, filename)
 

@@ -76,6 +76,21 @@ def rules_dir_for(service_name: str = "") -> str:
     return service_output_dir(OUTPUTS_RULES_DIR, service_name)
 
 
+# Name of the subdirectory holding the full-document runs of a service.
+FINAL_RULES_SUBDIR = "Final_rules"
+
+
+def final_rules_dir_for(service_name: str = "") -> str:
+    """Directory for a service's full-document rule banks.
+
+    A full run over the whole spec is the result worth keeping, so it lands in
+    <service>/Final_rules/ while the scoped and exploratory runs stay in the
+    service's root folder. Both the CLI and the full-pipeline test resolve the
+    directory here, so they cannot drift apart.
+    """
+    return os.path.join(rules_dir_for(service_name), FINAL_RULES_SUBDIR)
+
+
 def diagnostic_dir_for(service_name: str = "") -> str:
     """Directory for a service's diagnostic reports."""
     return service_output_dir(OUTPUTS_DIAGNOSTIC_DIR, service_name)
