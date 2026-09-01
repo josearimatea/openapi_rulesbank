@@ -270,6 +270,23 @@ VALIDATION RULES BY RULE_TYPE:
                     received on a fixed path this service hosts, the path_operation is
                     VALID — do not convert it to a callback.
 
+RULES BUILT ON A DECLARED GAP — do not pass them:
+  declared_gaps lists facts the Extractor says it needed for THIS section and did
+  not have. It emitted its rules anyway, so a rule a gap describes is not a rule
+  that happens to be right — it is one produced without the fact that decides it,
+  and the gap usually says so ("emitted as a path because it could not tell which
+  operation to anchor the callback on", "no media type, so the content could not
+  be mapped"). Those rules look well-formed, which is exactly why they slip
+  through: the section's own text supports them, and only the missing fact does
+  not.
+
+  So for each gap, find the rules it affected and set valid=False,
+  error_type='correction', with an instruction naming the fact to apply — the
+  answer is being retrieved and the next attempt will have it. A rule the gap did
+  NOT touch is unaffected: judge it normally. When the gap describes something
+  the Extractor could not emit at all (a rule absent, not wrong), that belongs in
+  new_missing_rules instead, not as a correction to an unrelated rule.
+
 ALREADY-VALIDATED RULES:
   If the rule under review duplicates one already validated, set valid=False,
   error_type='discard', instruction='Duplicate of already-validated rule'.
@@ -338,6 +355,10 @@ restates one of them — see DUPLICATES ACROSS SECTIONS):
 
 Missing rules identified so far for this section (do NOT repeat these):
 {current_missing_rules}
+
+Facts the Extractor said it lacked when it produced this section, and that are
+being fetched for the next attempt (empty when it declared none):
+{declared_gaps}
 
 Pre-analysis verdict for this section (decided before extraction):
 {section_verdict}

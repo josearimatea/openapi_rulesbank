@@ -209,6 +209,7 @@ def _validate_semantically(
     similar_rules_other_sections: str = "",
     section_verdict: str = "",
     sibling_rules: str = "",
+    declared_gaps: str = "",
 ) -> tuple[dict | None, dict | None, list[str]]:
     """
     Semantic verdict for one rule.
@@ -251,6 +252,7 @@ def _validate_semantically(
         "section_verdict":         section_verdict or "No pre-analysis verdict for this section.",
         "sibling_rules":           sibling_rules or "None — only this rule in this section.",
         "section_content":         section_content,
+        "declared_gaps":           declared_gaps or "None declared.",
     })
 
     new_missing = verdict.new_missing_rules or []
@@ -334,6 +336,14 @@ def validator_node(state: RuleBankState) -> dict:
     # schema_property from a section that is not a schema home) instead of
     # re-judging the raw table. Only the current section's entry goes into a prompt.
     analysis_by_id               = state.get("section_analysis_by_id", {}) or {}
+    # Facts the Extractor declared it lacked while producing this iteration's
+    # rules. A rule built on one of these is not to be passed: it was emitted
+    # without the fact that decides it, and the answer is already being fetched
+    # for the next attempt. Same list for every rule of the iteration — the
+    # Extractor reports per section, and one section is processed at a time.
+    declared_gaps_str = "\n".join(
+        f"  - {g}" for g in (state.get("missing_context", []) or [])
+    ) or "None declared."
 
     if not reflected_rules:
         logger.warning("Validator received no reflected_rules — returning empty results.")
@@ -539,6 +549,7 @@ def validator_node(state: RuleBankState) -> dict:
                 similar_rules_other_sections=   similar_other_sections,
                 section_verdict=                section_verdict,
                 sibling_rules=                  sibling_rules_str,
+                declared_gaps=                  declared_gaps_str,
             )
 
             # Accumulate new missing rules (deduplicated)

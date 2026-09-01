@@ -303,18 +303,27 @@ def _build_correction_task(
     section_reflection: list[dict],
     already_validated: list[dict] | None = None,
     discarded_errors: list[dict] | None = None,
+    retrieved_context: str = "",
 ) -> str:
     """
     Returns a correction instruction for retry attempts on a section.
 
-    Lists, in order: the rules already validated and the ones the Validator
-    discarded (neither must be produced again), the rules that failed and how to
-    fix them, and the missing rules to add. Without those first two lists the LLM
-    cannot honour "do not duplicate", so it re-extracts the whole section on every
-    retry — including rules just thrown away.
-    Returns "" on the first attempt (no errors and no missing rules).
+    Lists, in order: the facts fetched for the gaps this section declared last
+    time, the rules already validated and the ones the Validator discarded
+    (neither must be produced again), the rules that failed and how to fix them,
+    and the missing rules to add. Without those lists the LLM cannot honour "do
+    not duplicate", so it re-extracts the whole section on every retry —
+    including rules just thrown away.
+
+    retrieved_context belongs here rather than among the standing reference
+    contexts: it answers what THIS section reported missing on its previous
+    attempt, so it exists only on a retry and is read as part of the correction,
+    next to the rules it is meant to fix.
+
+    Returns "" on the first attempt (no errors, no missing rules, no fetched
+    context).
     """
-    if not validation_errors and not section_reflection:
+    if not validation_errors and not section_reflection and not retrieved_context:
         return ""
 
     lines = [
@@ -324,6 +333,19 @@ def _build_correction_task(
         "You may produce more or fewer rules than before — quality over quantity.",
         "",
     ]
+
+    if retrieved_context:
+        lines += [
+            "ANSWERS TO WHAT YOU REPORTED MISSING — each block names the gap it",
+            "answers and was fetched for it. Apply the fact to the rules that gap",
+            "affected: the mapping you fell back to for want of it is the one to",
+            "correct now. Reference only — never extract a rule of the section this",
+            "text was pulled from. If a block does not actually answer the gap, say",
+            "so again in missing_context instead of forcing a mapping onto it.",
+            "",
+            retrieved_context,
+            "",
+        ]
 
     if already_validated:
         lines.append(
@@ -436,7 +458,11 @@ def extractor_node(state: RuleBankState) -> dict:
     plan_section = all_plan_sections[current_section_idx]
     section_id   = plan_section["section_id"]
 
-    if validation_errors or section_reflection:
+    # Facts fetched for the gaps this section declared on its previous attempt.
+    # Empty on the first one, so it only ever reaches a retry.
+    retrieved_context = (state.get("retrieved_context", {}) or {}).get(section_id, "")
+
+    if validation_errors or section_reflection or retrieved_context:
         # Rules the Validator already accepted for this section — the Extractor must
         # see them to honour "do not duplicate"; without them it re-extracts the
         # whole section on every retry.
@@ -445,11 +471,13 @@ def extractor_node(state: RuleBankState) -> dict:
         ).get(section_id, [])
         correction_task = _build_correction_task(
             validation_errors, section_reflection, already_validated, discarded_errors,
+            retrieved_context,
         )
         logger.info(
             f"Retry {section_iteration_count + 1} for [{section_id}] — "
             f"{len(validation_errors)} error(s), "
-            f"{sum(len(sr.get('missing_rules', [])) for sr in section_reflection)} missing rule(s)."
+            f"{sum(len(sr.get('missing_rules', [])) for sr in section_reflection)} missing rule(s)"
+            f"{', with fetched context' if retrieved_context else ''}."
         )
     else:
         correction_task = ""
@@ -569,10 +597,18 @@ def extractor_node(state: RuleBankState) -> dict:
     })
 
     raw_rules = [rule.model_dump() for rule in result.rules]
+    # Facts the section depended on and no context supplied. Reported here only;
+    # nothing acts on them yet — the Reflector is where they will be weighed and
+    # turned into a retrieval query for the next attempt.
+    missing_context = list(result.missing_context or [])
     logger.info(
         f"Extractor Node complete — {len(raw_rules)} raw rule(s) from [{section_id}] "
         f"(section attempt {section_iteration_count + 1})."
     )
+    if missing_context:
+        logger.info(
+            f"[missing-context {section_id}] {missing_context}"
+        )
 
     # Record the pre-analysis verdict for this section so the Reflector and Validator
     # can enforce it (e.g. reject schema_property from a section that is not a schema
@@ -601,4 +637,5 @@ def extractor_node(state: RuleBankState) -> dict:
         # memory (see _merge_ref_memory), so later sections can resolve them.
         "other_spec_ref_memory":   new_refs,
         "section_analysis_by_id":  verdict_update,
+        "missing_context":         missing_context,
     }

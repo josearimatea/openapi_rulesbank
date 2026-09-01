@@ -133,9 +133,27 @@ class RuleBankState(TypedDict):
     # Not yet validated — may contain errors or incomplete mappings.
     raw_rules: list[dict]
 
+    # Facts the Extractor needed to map a rule correctly and found in neither the
+    # section nor any context it was given — at most 2 per attempt, each a sentence
+    # naming the fact and how its absence changed what was emitted (e.g. a
+    # notification emitted as a path because the operation to anchor the callback
+    # on was unknown). Written by the Extractor, overwritten each attempt.
+    # Reported only for now: no node acts on it yet. It is the input for the
+    # planned step where the Reflector weighs each gap and turns it into one
+    # retrieval query, whose result feeds the section's next attempt.
+    missing_context: list[str]
+
     # -------------------------------------------------------------------------
     # REFLECTOR OUTPUT — produced by the Reflector Node
     # -------------------------------------------------------------------------
+
+    # Answers to the gaps above, keyed by section_id: the text retrieved by the
+    # queries the Reflector wrote for them (one per gap it judged answerable,
+    # each against the collection that holds the answer — this document, the
+    # 3GPP corpus, or the OpenAPI specification). Written by the Reflector, read
+    # by the section's NEXT extraction attempt. Overwritten each attempt, so a
+    # gap that was answered does not keep being re-fetched.
+    retrieved_context: dict[str, str]
 
     # Rules after Chain-of-Thought self-reflection.
     # Each entry extends raw_rules with: "confidence" (float), "reasoning" (str),

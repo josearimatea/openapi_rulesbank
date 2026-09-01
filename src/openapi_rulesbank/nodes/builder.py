@@ -16,8 +16,9 @@ HOW IT WORKS:
          up to this point.
       3. Advances current_section_idx by 1 and resets section_iteration_count to 0
          so the next section starts fresh.
-      4. Clears validation_errors and section_reflection so they don't bleed into
-         the next section's first Extractor call.
+      4. Clears validation_errors, section_reflection, and the section's declared
+         gaps with the context fetched for them, so none of it bleeds into the
+         next section's first Extractor call.
 
     First call: generates the output filename (with timestamp) and creates the file.
     Subsequent calls: reuses the same path (final_output_path already set in state)
@@ -370,6 +371,12 @@ def builder_node(state: RuleBankState) -> dict:
         "validation_errors":            [],
         "section_reflection":           [],
         "validator_section_reflection": [],
+        # Both belong to the section just finished: the gaps it declared and the
+        # text fetched for them. Cleared with the rest so the next section does
+        # not start out answering another section's questions, and so the fetched
+        # blocks do not pile up in the state across all sections.
+        "missing_context":              [],
+        "retrieved_context":            {},
     }
     if force_included:
         result["validated_rules"] = force_included
