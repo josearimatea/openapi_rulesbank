@@ -42,13 +42,17 @@ State writes:
 
 from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.llm_config import llm
-from openapi_rulesbank.config.settings import MAX_ITERATIONS
+from openapi_rulesbank.config.settings import (
+    CONTEXT_RETRIEVE_CHUNKS, MAX_CONTEXT_QUERIES, MAX_ITERATIONS,
+    MAX_SOURCES_PER_QUERY,
+)
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.prompts.reflector_prompts import (
     ReflectionResult, SectionReflection,
     reflector_prompt, reflector_section_prompt,
 )
 from openapi_rulesbank.tools.rag_tools import (
+    search_3gpp_corpus,
     search_openapi_reference,
     search_target_spec,
     umbrella_mns_for as _umbrella_mns,
@@ -72,6 +76,69 @@ def _build_rag_query(rule: dict) -> str:
         f"{mapping.get('openapi_object', '')} "
         f"{mapping.get('openapi_field', '')}"
     ).strip()
+
+
+def _retrieve_missing_context(
+    section_id: str, queries: list, state: RuleBankState
+) -> str:
+    """Search for the facts the Extractor said it was missing, one query each.
+
+    Each query names its own source, because the three collections hold different
+    things: the temporary spec collection is THIS document (a sibling clause), the
+    3GPP corpus is the other specifications, and the OpenAPI reference is the
+    OpenAPI specification itself. The spec search is scoped to the target service
+    the way the Extractor scopes its own, so a look-alike clause of another MnS
+    does not answer the gap.
+
+    Returns the retrieved blocks joined for prompt injection, each labelled with
+    the gap it answers so the next attempt can tell which fact it is reading.
+    """
+    spec_collection = state.get("spec_collection_name", "")
+    sections        = state.get("parsed_sections", [])
+    blocks = []
+
+    for q in queries[:MAX_CONTEXT_QUERIES]:
+        query = (q.query or "").strip()
+        if not query:
+            continue
+
+        # A gap usually needs both halves — the value from the specifications and
+        # its OpenAPI shape — so each query may name two collections. Deduplicated
+        # and capped, since the prompt can return more than the pair asked for.
+        wanted, seen = [], set()
+        for s in (q.sources or []):
+            s = (s or "").strip().lower()
+            if s and s not in seen:
+                seen.add(s)
+                wanted.append(s)
+
+        for source in wanted[:MAX_SOURCES_PER_QUERY]:
+            if source == "spec":
+                title = next((s["title"] for s in sections
+                              if s.get("section_id") == section_id), "")
+                mns   = _umbrella_mns(title, sections) if title else ""
+                text = search_target_spec(
+                    query, spec_collection, k=CONTEXT_RETRIEVE_CHUNKS,
+                    filters={"mns": mns} if mns else None,
+                )
+            elif source == "corpus":
+                text = search_3gpp_corpus(query, k=CONTEXT_RETRIEVE_CHUNKS)
+            elif source == "openapi":
+                text = search_openapi_reference(query, k=CONTEXT_RETRIEVE_CHUNKS)
+            else:
+                logger.warning(
+                    f"[context-query {section_id}] unknown source '{source}' — skipped."
+                )
+                continue
+
+            logger.info(
+                f"[context-query {section_id}] ({source}) '{query[:70]}' -> "
+                f"{len(text or '')} chars"
+            )
+            if text:
+                blocks.append(f"### Answering: {q.gap}\n(source: {source})\n{text}")
+
+    return "\n\n".join(blocks)
 
 
 def reflector_node(state: RuleBankState) -> dict:
@@ -239,6 +306,14 @@ def reflector_node(state: RuleBankState) -> dict:
     section_chain = reflector_section_prompt | llm.with_structured_output(SectionReflection)
 
     section_reflection: list[dict] = []
+    # Retrieved answers to this attempt's declared gaps, keyed by section_id.
+    retrieved_context: dict[str, str] = {}
+
+    # The Extractor handles one section per pass, so every rule reaching the
+    # Reflector — and every gap it declared — belongs to that same section.
+    declared_gaps_str = "\n".join(
+        f"  - {g}" for g in (state.get("missing_context", []) or [])
+    ) or "None"
 
     for section_id, current_rule_lines in sections_in_this_iteration.items():
         section = sections_index.get(section_id, {})
@@ -292,7 +367,15 @@ def reflector_node(state: RuleBankState) -> dict:
             "skip_rules":              skip_rules_str,
             "discarded_rules":         discarded_str,
             "corrections":             corrections_str,
+            "declared_gaps":           declared_gaps_str,
         })
+
+        # Run the queries the Reflector kept, one per gap it judged answerable.
+        # The retrieved text is stored per section for the next attempt to read.
+        if result.context_queries:
+            retrieved = _retrieve_missing_context(section_id, result.context_queries, state)
+            if retrieved:
+                retrieved_context[section_id] = retrieved
 
         if result.missing_rules:
             logger.debug(
@@ -309,4 +392,14 @@ def reflector_node(state: RuleBankState) -> dict:
         f"{len(section_reflection)} section(s) with missing rules identified."
     )
 
-    return {"reflected_rules": reflected_rules, "section_reflection": section_reflection}
+    if retrieved_context:
+        logger.info(
+            f"Reflector retrieved missing context for section(s): "
+            f"{sorted(retrieved_context)}"
+        )
+
+    return {
+        "reflected_rules":     reflected_rules,
+        "section_reflection":  section_reflection,
+        "retrieved_context":   retrieved_context,
+    }

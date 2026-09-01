@@ -200,12 +200,52 @@ reflector_prompt = ChatPromptTemplate.from_messages([
 # Invoked once per section after all individual rules have been reflected.
 # ---------------------------------------------------------------------------
 
+class ContextQuery(BaseModel):
+    """One retrieval query answering one gap the Extractor declared."""
+
+    gap: str = Field(
+        description="The gap this query answers, copied from the declared gaps."
+    )
+    query: str = Field(
+        description=(
+            "Search query, in the vocabulary of the source being searched — the "
+            "words the ANSWER would be written in, not the words the gap is "
+            "phrased in. Name the concrete thing sought (a clause's subject, a "
+            "type name, an OpenAPI construct); never repeat the section number "
+            "or a phrase like 'is not stated in this section'."
+        )
+    )
+    sources: list[str] = Field(
+        description=(
+            "The collections to search, one or two, from: "
+            "'spec' — another clause of THIS 3GPP document; "
+            "'corpus' — a DIFFERENT 3GPP specification; "
+            "'openapi' — the OpenAPI specification itself. "
+            "A gap usually has two halves — WHICH value this service uses, and "
+            "HOW that value is written in OpenAPI — so pair 'openapi' with "
+            "whichever of 'spec'/'corpus' holds the value. Never pair 'spec' "
+            "with 'corpus': a type is either defined in this document or "
+            "imported from another, never both. One source alone when the gap "
+            "has only one half."
+        )
+    )
+
+
 class SectionReflection(BaseModel):
     """
     Completeness assessment for a full section — produced once per section
     after all individual rules have been reflected (Fase 2).
     """
 
+    context_queries: list[ContextQuery] = Field(
+        default_factory=list,
+        description=(
+            "One query per declared gap WORTH looking up — never more than one "
+            "per gap, and fewer entries than gaps when some cannot be answered "
+            "by retrieval. Empty when none are, and always empty when no gaps "
+            "were declared."
+        ),
+    )
     missing_rules: list[str] = Field(
         default_factory=list,
         description=(
@@ -294,6 +334,97 @@ Only carry forward what is genuinely still absent.
 
 Be specific and actionable. Each missing rule must be a direct instruction
 to the Extractor describing exactly what to extract and how to map it.
+
+TURNING DECLARED GAPS INTO QUERIES (context_queries):
+
+The Extractor also reports, in missing_context, the facts it needed and could not
+find. A DECLARED GAP IS NOT A MISSING RULE, and the two have opposite remedies:
+
+  missing rule — a rule the Extractor should have emitted from what it already
+                 had. It knows the rule is owed; it simply did not produce it.
+                 Remedy: an instruction. List it in missing_rules.
+
+  declared gap — a FACT it did not have. The rule it emitted is mapped wrong
+                 BECAUSE of that, and telling it again to emit the rule changes
+                 nothing: on the next attempt it will still lack the fact and
+                 make the same mapping. Remedy: fetch the fact. Write a query.
+
+Answering a gap with a missing_rules instruction is therefore the one response
+that guarantees the next attempt is as stuck as this one. Judge every gap for a
+query of its own.
+
+A candidate rule never answers a gap. Candidates say WHICH rule belongs here; a
+gap is the fact needed to MAP it. "PUT request body supports the Resource data
+structure" is a candidate — it does not say the media type to write into
+requestBody.content, which is precisely what that gap asked for.
+
+Emit NO query for a gap only when:
+  - the fact is written down nowhere: it is a modelling choice the target YAML
+    makes, not something any specification states;
+  - the gap names a topic ("more about callbacks") rather than one fact, so no
+    query could answer it;
+  - the section content above literally states the fact already.
+Outside those three, write the query.
+
+THEN WRITE THE QUERY IN THE VOCABULARY OF THE SOURCE, not of the gap. Retrieval
+matches meaning, so a query phrased as the complaint ("the media type is not
+stated in clause 12.1.1.3.2.1.3.1") retrieves the clauses that also fail to state
+it. Write the words the ANSWER would be written in — the thing you are looking
+for, never the fact that it is absent. Name it concretely: the operation, the
+type, the field, the construct. Drop clause numbers; they only retrieve the
+clause you already have.
+
+CHOOSING sources — every gap has two halves:
+
+  WHICH value does this service use?   -> 'spec' or 'corpus'
+      Any answer that would have to name something out of THIS document — a
+      type, an operation, a path, a field, a media type it uses — can only come
+      from the specifications.
+      'spec'   when this document defines it, in a clause other than this
+               section: a sibling resource or type clause, a mapping table, a
+               message example.
+      'corpus' when this document refers to it but defines it elsewhere, by spec
+               number or by name (a type from TS 28.623, a definition in
+               TS 32.158).
+      These two are alternatives, never a pair: a type is either defined here or
+      imported, not both.
+
+  HOW is that written in OpenAPI?      -> 'openapi'
+      The shape of the construct that the value goes into. A reliable test: the
+      OpenAPI specification was written without any knowledge of 3GPP, so it can
+      only answer what would make sense for ANY API. The moment the answer you
+      want would contain a name from this document, 'openapi' is not holding it.
+
+  So pair them: 'openapi' plus whichever of 'spec'/'corpus' holds the value. Use
+  one source alone only when the gap plainly has no second half.
+
+  Gap    : "the media type for the PUT request body is not stated, so the
+            Resource request-body row could not be mapped"
+  Query  : "PUT request body Content-Type header example resource
+            representation"
+  sources: ['spec', 'openapi']
+      -> 'spec' holds the media type this service uses (its message examples
+         carry the Content-Type); 'openapi' says the value belongs under
+         requestBody.content, keyed by that media type.
+      NOT 'openapi' alone: it would answer "content is a map keyed by a media
+      type" — true, and useless for deciding WHICH one.
+
+  Gap    : "which operation's request body carries the consumer's notification
+            address — needed to anchor the callback on it"
+  Query  : "operation whose request body carries notificationRecipientAddress,
+            resource supplying the notification target"
+  sources: ['spec', 'openapi']
+      -> 'spec' names the operation; 'openapi' gives the callback's shape and
+         the runtime expression that keys it.
+
+  Gap    : "the fields of NotificationHeader are not given here"
+  Query  : "NotificationHeader type definition href notificationId eventTime
+            systemDN"
+  sources: ['corpus', 'openapi']
+      -> 'corpus' has the imported type's fields; 'openapi' how a referenced
+         schema is composed into this one.
+
+When no gaps were declared, context_queries is empty.
 """
 
 _SECTION_USER = """\
@@ -334,9 +465,20 @@ Rules already validated in previous iterations (do NOT suggest these as missing)
 Rules identified as missing in the previous iteration (check if now resolved):
 {previous_missing_rules}
 
-What is still genuinely missing from this section? (Exclude inherited fields, rules
-owned by another section, skipped rules, anything already discarded, and any target
-already being corrected.)
+Gaps the Extractor declared for this section (its missing_context — empty when it
+declared none). These are NOT missing rules: a missing rule is one it should have
+emitted from what it had, and the fix is to instruct it to emit that rule. A gap
+is a FACT it did not have, which is why the rule it did emit is mapped wrong — and
+the fix is to fetch the fact. Repeating a gap back as a missing rule instruction
+leaves the next attempt exactly as stuck as this one, because the Extractor
+already knew what it owed; what it lacked was the fact. Each of these belongs in
+context_queries, unless one of the skip conditions applies:
+{declared_gaps}
+
+Two separate answers, then. First: what is still genuinely missing from this
+section? (Exclude inherited fields, rules owned by another section, skipped rules,
+anything already discarded, and any target already being corrected.) Second: which
+of the gaps above are worth a lookup, and what query would answer each?
 """
 
 reflector_section_prompt = ChatPromptTemplate.from_messages([

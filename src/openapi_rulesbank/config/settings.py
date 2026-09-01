@@ -136,6 +136,21 @@ RULES_RETRIEVE_CHUNKS   = 5             # similar rules shown to the Validator p
 RULES_EXTRACTOR_RETRIEVE_CHUNKS = 15    # existing rules shown to the Extractor per section
 
 # Pipeline flow control
+# Missing-context retrieval — when the Extractor reports a fact it needed and
+# could not find, the Reflector turns the gap into one query and the answer is
+# handed to the section's next attempt. Two attempts can carry retrieved context
+# (attempts 2 and 3 of MAX_ITERATIONS), which is what bounds how often this runs.
+# One query per gap, and the Extractor reports at most 2 gaps, so a section adds
+# at most 2 retrievals per attempt.
+MAX_CONTEXT_QUERIES     = 2   # gap queries run per section per attempt
+# A gap usually has two halves — which value this service uses (in the spec or
+# the corpus) and how it is written in OpenAPI — so one query may search two
+# collections. Routing to a single one proved brittle: a media-type gap sent only
+# to the OpenAPI reference came back defining what a media type is, never which
+# one to use. Two is the pair; a third would only add unrelated context.
+MAX_SOURCES_PER_QUERY   = 2   # collections searched per gap query
+CONTEXT_RETRIEVE_CHUNKS = 4   # chunks returned per collection searched
+
 VALIDATION_ERROR_THRESHOLD = 0.10  # Loop back to Extractor if error rate exceeds 10%
 MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops before forcing forward
 
