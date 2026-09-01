@@ -40,6 +40,22 @@ class SectionRules(BaseModel):
             "Return an empty list if no concrete rules are found."
         )
     )
+    missing_context: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Facts you needed to map a rule correctly and could NOT find in the "
+            "section or in any context given to you — at most 2, empty when there "
+            "are none. Report a fact only when its absence changed what you "
+            "emitted: you fell back to a shape you know is not the right one, or "
+            "left a required part of openapi_object unresolved. Each entry names "
+            "the one fact and why it blocked the mapping, in a sentence — not a "
+            "rule you chose not to extract, not something already in the context, "
+            "and never a request for a whole topic. "
+            "Example: 'Which operation's request body carries the consumer's "
+            "notification address — needed to anchor the callback on it, so the "
+            "notification was emitted as a path instead.'"
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +396,25 @@ ONE RULE PER ITEM — never combine into a single rule:
   - Media types in request_body: create one request_body rule per media type.
     Wrong: one rule for "application/json and application/merge-patch+json".
     Right: two rules, one per media type.
+
+MISSING CONTEXT — report what blocked a mapping, in `missing_context`:
+
+  A section is extracted alone, so a fact it depends on may live in another
+  section that no context reached. When that happens you still emit the best rule
+  you can — but say what was missing, so the next attempt can be given it.
+
+  Report a fact ONLY when its absence changed what you emitted:
+    - you fell back to a shape you know is not the right one (e.g. you emitted a
+      path_operation for a notification whose URI is the consumer's address,
+      because you could not tell which operation to anchor the callback on); or
+    - you could not resolve a required part of openapi_object and had to leave it
+      generic.
+  Name the one fact and why it blocked you, in a sentence.
+
+  Do NOT report: a rule you decided not to extract; anything already present in
+  the section or in the context above; a whole topic ("more about callbacks");
+  or a fact you did use. At most 2 entries — the fewest that would unblock you.
+  Empty list when the section gave you everything you needed.
 
 OpenAPI reference (use ONLY to understand valid OpenAPI constructs and field names):
 {openapi_reference_overview}
