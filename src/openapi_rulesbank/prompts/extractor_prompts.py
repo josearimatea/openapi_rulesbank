@@ -195,10 +195,24 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
 1. path_operation  — one rule per HTTP method on a resource path
    rule_type      : "path_operation"
    source_name    : the IS operation name (e.g. "createMOI", "modifyMOIAttributes")
-   openapi_object : the COMPLETE path template as written in the spec, prefixed with "paths."
-                    NEVER abbreviate the path with "..." — always write the full URI template.
-                    Wrong: "paths./.../{{className}}={{id}}"
-                    Right: "paths./{{MnSVersion}}/{{className}}={{id}}"
+   openapi_object : the RESOURCE part of the path template, prefixed with "paths."
+                    A 3GPP "Resource URI" line gives the whole address — the base
+                    URL every MnS of the document shares, then the resource:
+                      {{MnSRoot}}/<ServiceName>/{{MnSVersion}}/{{URI-LDN-first-part}}/{{className}}={{id}}
+                    The leading part is the base URL: its variables are the ones
+                    the URI-variables table defines by pointing at TS 32.158
+                    (which specifies the URI structure common to every MnS), plus
+                    the service name itself. In OpenAPI that part lives under
+                    `servers`, never in a path key. Drop it and keep the resource,
+                    starting at "/":
+                      Right: "paths./{{className}}={{id}}"
+                      Wrong: "paths.{{MnSRoot}}/ProvMnS/{{MnSVersion}}/{{URI-LDN-first-part}}/{{className}}={{id}}"
+                      Wrong: "paths./{{MnSVersion}}/{{URI-LDN-first-part}}/{{className}}={{id}}"
+                      Wrong: "paths./.../{{className}}={{id}}"   (never abbreviate)
+                      Wrong: "paths.<resource>"                (never a placeholder)
+                    Write the SAME key every time for the same resource: one
+                    resource is one path, and rules spelling it differently become
+                    separate paths in the output.
    openapi_field  : exactly one HTTP method in lowercase: get | put | post | delete | patch
                     NEVER combine two methods (e.g. never "put, patch") — create two rules.
    openapi_value  : the HTTP method in uppercase: GET | PUT | POST | DELETE | PATCH
@@ -236,12 +250,26 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                       "[$ref: '#/components/schemas/A', $ref: '#/components/schemas/B']"
                     - for "items"     : the item type or "$ref: '#/components/schemas/<Name>'"
                     - for "additionalProperties": the value type or "true"/"false"
+                    A 3GPP attribute table gives the attribute's own type, not its
+                    JSON Schema type. Map it: take the type from the section, and
+                    where the section leaves the JSON form unsaid, use the form the
+                    OpenAPI reference above shows for it (a date-time string as
+                    {{"type": "string", "format": "date-time"}}, and so on). Emit
+                    the rule with that form.
 
-3. path_parameter  — one rule per path variable in a URI template
+3. path_parameter  — one rule per path variable in the RESOURCE part of the path
    rule_type      : "path_parameter"
-   source_name    : the path parameter name (e.g. "MnSVersion", "id", "className")
-   openapi_object : the COMPLETE path template, e.g. "paths./{{MnSVersion}}/{{className}}={{id}}"
-                    NEVER abbreviate with "..." — always write the full URI template.
+   source_name    : the path parameter name (e.g. "id", "className")
+                    ONLY a variable that appears in the path key you wrote for
+                    openapi_object. A "URI variables" table lists the base-URL
+                    variables too, and those yield NO rule — the table itself
+                    tells them apart: a base variable is defined by a pointer to
+                    TS 32.158, which specifies the URI structure common to every
+                    MnS, while a resource variable is described right there in
+                    terms of what it identifies.
+   openapi_object : the same path key used by that resource's path_operation
+                    rules, e.g. "paths./{{className}}={{id}}" — resource part
+                    only, never the base URL, never abbreviated with "...".
    openapi_field  : "parameters[in=path,name=<paramName>]"
    openapi_value  : the parameter schema type or reference:
                     "string" | "integer" | "boolean" | "array" |
@@ -250,8 +278,9 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
 4. query_parameter — one rule per query string parameter
    rule_type      : "query_parameter"
    source_name    : the query parameter name (e.g. "scope", "filter", "attributes")
-   openapi_object : the COMPLETE path template, e.g. "paths./{{MnSVersion}}/{{className}}={{id}}"
-                    NEVER abbreviate with "..." — always write the full URI template.
+   openapi_object : the same path key used by that resource's path_operation
+                    rules, e.g. "paths./{{className}}={{id}}" — resource part
+                    only, never the base URL, never abbreviated with "...".
    openapi_field  : "parameters[in=query,name=<paramName>]"
    openapi_value  : the parameter schema type or reference:
                     "string" | "integer" | "boolean" | "array" |
@@ -291,10 +320,15 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     "paths./{{className}}={{id}}.put.requestBody"
                     NEVER abbreviate with "..." — always write the full URI template.
    openapi_field  : "content"
-   openapi_value  : the media type as defined in the section:
-                    "application/json" | "application/merge-patch+json" |
-                    "application/yang-data+json" | etc.
-                    If multiple media types are defined, create one rule per media type.
+   openapi_value  : the media type: "application/json" |
+                    "application/merge-patch+json" | "application/yang-data+json" |
+                    etc. If several are named, create one rule per media type.
+                    Take it from the section; if the section names none, from a
+                    sibling clause or message example in the spec context; if
+                    neither carries one, from the OpenAPI reference above, which
+                    shows the media type its request-body examples use. A 3GPP
+                    clause often gives only the body's data type, so this last
+                    source is the normal one — use it and emit the rule.
 
 7. security_scheme — one rule per security or authentication requirement
    rule_type      : "security_scheme"
@@ -413,8 +447,10 @@ MISSING CONTEXT — report what blocked a mapping, in `missing_context`:
 
   Do NOT report: a rule you decided not to extract; anything already present in
   the section or in the context above; a whole topic ("more about callbacks");
-  or a fact you did use. At most 2 entries — the fewest that would unblock you.
-  Empty list when the section gave you everything you needed.
+  or a fact you did use — including a value you took from the OpenAPI reference
+  because the clause named none, which leaves the rule complete and blocks
+  nothing. At most 2 entries — the fewest that would unblock you. Empty list when
+  the section gave you everything you needed.
 
 OpenAPI reference (use ONLY to understand valid OpenAPI constructs and field names):
 {openapi_reference_overview}

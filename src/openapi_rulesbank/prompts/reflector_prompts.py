@@ -358,21 +358,51 @@ gap is the fact needed to MAP it. "PUT request body supports the Resource data
 structure" is a candidate — it does not say the media type to write into
 requestBody.content, which is precisely what that gap asked for.
 
-Emit NO query for a gap only when:
-  - the fact is written down nowhere: it is a modelling choice the target YAML
-    makes, not something any specification states;
+The Extractor's word that something is missing does not settle it. Check each gap
+against what is in front of you — the section content, the candidate rules, the
+contexts and verdict above — and decide for yourself.
+
+Emit NO query for a gap when:
+  - the value is a standard OpenAPI one, and the Extractor is expected to take it
+    from the OpenAPI reference it already has: the media type of a request body,
+    the JSON Schema form of a declared type. A 3GPP clause routinely leaves these
+    unsaid, so the Extractor may report one as a gap — it is not. Confirm the
+    clause names no value of its own, and skip: the answer is the standard value,
+    not something to retrieve;
+  - the fact is a modelling choice the target YAML makes, written down in no
+    specification;
   - the gap names a topic ("more about callbacks") rather than one fact, so no
     query could answer it;
-  - the section content above literally states the fact already.
-Outside those three, write the query.
+  - the section content above already states it.
 
-THEN WRITE THE QUERY IN THE VOCABULARY OF THE SOURCE, not of the gap. Retrieval
-matches meaning, so a query phrased as the complaint ("the media type is not
-stated in clause 12.1.1.3.2.1.3.1") retrieves the clauses that also fail to state
-it. Write the words the ANSWER would be written in — the thing you are looking
-for, never the fact that it is absent. Name it concretely: the operation, the
-type, the field, the construct. Drop clause numbers; they only retrieve the
-clause you already have.
+Write the query for what is left: a fact only this document or another 3GPP spec
+holds — which operation owns a body, which resource a URI belongs to, what a
+referenced type contains.
+
+THEN WRITE THE QUERY AS THE ANSWER WOULD READ, not as the gap reads.
+
+  Ask yourself: if a clause somewhere states this fact, what words does IT use?
+  Write those. Never describe the absence — retrieval matches meaning, so a query
+  built from the complaint ("this clause does not name the owning operation")
+  lands on the very clauses that also fail to name it.
+
+  AIM AWAY FROM THIS SECTION. The one clause guaranteed not to hold the answer is
+  the one the Extractor just read — it is where the gap came from. A query built
+  out of this section's own wording retrieves this section back, and the attempt
+  learns nothing. So drop what identifies it: its clause number, its title, the
+  phrasing of its tables. Keep only the thing being looked for, and add the words
+  that would appear AROUND the answer elsewhere — a header, an example, a
+  different table's column.
+
+  Gap  : "which operation the callback anchors on is not stated here"
+  Poor : "POST notificationTarget callback anchor owning operation"
+         -> that is this section's own subject; it comes straight back.
+  Good : "notificationRecipientAddress attribute in the subscription request body"
+         -> names the FIELD the owning operation carries, so the clause defining
+            that operation is what matches.
+
+  ONE FACT PER QUERY. Two facts in one query retrieve whatever matches the mix,
+  which is often neither. If two gaps need two facts, write two queries.
 
 CHOOSING sources — every gap has two halves:
 
@@ -400,22 +430,21 @@ CHOOSING sources — every gap has two halves:
 
   Gap    : "the media type for the PUT request body is not stated, so the
             Resource request-body row could not be mapped"
-  Query  : "PUT request body Content-Type header example resource
-            representation"
-  sources: ['spec', 'openapi']
-      -> 'spec' holds the media type this service uses (its message examples
-         carry the Content-Type); 'openapi' says the value belongs under
-         requestBody.content, keyed by that media type.
-      NOT 'openapi' alone: it would answer "content is a map keyed by a media
-      type" — true, and useless for deciding WHICH one.
+  Query  : none — skip this gap.
+      -> The clause names no media type of its own, and none is needed from the
+         specifications: this is the standard value the Extractor takes from the
+         OpenAPI reference it already has. Retrieval would return what it holds
+         already. Skip, and it fills the rule on its own.
 
   Gap    : "which operation's request body carries the consumer's notification
             address — needed to anchor the callback on it"
-  Query  : "operation whose request body carries notificationRecipientAddress,
-            resource supplying the notification target"
+  Query  : "notificationRecipientAddress attribute in the subscription request
+            body"
   sources: ['spec', 'openapi']
-      -> 'spec' names the operation; 'openapi' gives the callback's shape and
-         the runtime expression that keys it.
+      -> 'spec' names the operation, by looking for the ADDRESS FIELD rather
+         than for the notification: the clause that owns the field is the one
+         that owns the operation. 'openapi' gives the callback's shape and the
+         runtime expression that keys it.
 
   Gap    : "the fields of NotificationHeader are not given here"
   Query  : "NotificationHeader type definition href notificationId eventTime
