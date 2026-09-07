@@ -143,13 +143,15 @@ RULES_EXTRACTOR_RETRIEVE_CHUNKS = 15    # existing rules shown to the Extractor 
 # One query per gap, and the Extractor reports at most 2 gaps, so a section adds
 # at most 2 retrievals per attempt.
 MAX_CONTEXT_QUERIES     = 2   # gap queries run per section per attempt
-# A gap usually has two halves — which value this service uses (in the spec or
-# the corpus) and how it is written in OpenAPI — so one query may search two
-# collections. Routing to a single one proved brittle: a media-type gap sent only
-# to the OpenAPI reference came back defining what a media type is, never which
-# one to use. Two is the pair; a third would only add unrelated context.
-MAX_SOURCES_PER_QUERY   = 2   # collections searched per gap query
-CONTEXT_RETRIEVE_CHUNKS = 4   # chunks returned per collection searched
+# Each query searches all three collections — this document, the 3GPP corpus and
+# the OpenAPI reference — rather than one the Reflector picks. Routing proved
+# brittle in both directions: a media-type gap sent only to the OpenAPI reference
+# came back defining what a media type is and never which one to use, and a gap
+# about a field defined in another spec but USED in a clause of this one went to
+# the corpus, so the clause holding the answer was never searched. Three lookups
+# per gap cost little and remove the decision; the chunk count per collection is
+# lower to match, keeping what reaches the prompt about the same.
+CONTEXT_RETRIEVE_CHUNKS = 4   # chunks reaching the prompt per collection searched
 
 VALIDATION_ERROR_THRESHOLD = 0.10  # Loop back to Extractor if error rate exceeds 10%
 MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops before forcing forward

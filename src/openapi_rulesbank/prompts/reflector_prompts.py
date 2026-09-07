@@ -116,6 +116,14 @@ and still not belong here.
 For each rule, reason through the following questions:
   1. Is the rule explicitly stated or clearly implied by the section content?
   2. Is the openapi_mapping (object, field, value) correct and complete?
+     For each field, one question settles the value: IS IT SPECIFIED IN THE SPEC?
+     If a clause states it — a media type in a table, a path key, a named type an
+     attribute refers to — the rule must carry THAT value; another one is wrong.
+     If no clause states it, the Extractor fills it from the OpenAPI reference it
+     is given, as instructed: that value is correct, not invented, and a 3GPP
+     clause routinely specifies none of these. Never lower the score, flag or
+     discard a rule merely because the section does not spell the value out —
+     judge whether the value is RIGHT for the field.
   3. Does the OpenAPI reference context below confirm or contradict this rule?
   4. Does this rule BELONG in the final set for THIS section? It does NOT when it is
      an inherited field (present via an allOf $ref to a base type), when another
@@ -215,20 +223,11 @@ class ContextQuery(BaseModel):
             "or a phrase like 'is not stated in this section'."
         )
     )
-    sources: list[str] = Field(
-        description=(
-            "The collections to search, one or two, from: "
-            "'spec' — another clause of THIS 3GPP document; "
-            "'corpus' — a DIFFERENT 3GPP specification; "
-            "'openapi' — the OpenAPI specification itself. "
-            "A gap usually has two halves — WHICH value this service uses, and "
-            "HOW that value is written in OpenAPI — so pair 'openapi' with "
-            "whichever of 'spec'/'corpus' holds the value. Never pair 'spec' "
-            "with 'corpus': a type is either defined in this document or "
-            "imported from another, never both. One source alone when the gap "
-            "has only one half."
-        )
-    )
+    # No source field: every query runs against all three collections. Picking one
+    # was a judgement that kept going wrong — a gap about a field defined in
+    # another spec but USED in a clause of this one was routed to the corpus, and
+    # the clause that held the answer was never searched. Searching all three
+    # costs two extra lookups and removes the decision entirely.
 
 
 class SectionReflection(BaseModel):
@@ -362,18 +361,38 @@ The Extractor's word that something is missing does not settle it. Check each ga
 against what is in front of you — the section content, the candidate rules, the
 contexts and verdict above — and decide for yourself.
 
+JUDGING A DECLARED GAP — three questions, in this order. The Extractor reports
+what it could not find and what it did instead; deciding is yours, and it did not
+see the clauses you have in front of you.
+
+  1. IS THE VALUE SPECIFIED IN THE SPEC? Look — the section content, the
+     candidate rules, the contexts above. Do not take the gap's wording for it.
+       SPECIFIED here — the rule must carry THAT value. If it does not, say so in
+         missing_rules, naming the value the spec gives. No query needed: you are
+         holding the answer.
+       SPECIFIED, but in a clause you were not given — that is what a query is
+         for. Write one.
+       NOT SPECIFIED anywhere — go to question 2.
+
+  2. IS WHAT THE EXTRACTOR PUT THERE RIGHT? It filled the field with a default
+     rather than leave it empty, and that value still has to be correct: a media
+     type that is a media type, a JSON Schema form that fits the attribute, a
+     path key that is the resource. If it is wrong, correct it through
+     missing_rules, naming the right value — a query will not fix a bad choice.
+     If it is right, the gap is closed: no query, nothing missing.
+
+  3. IS THE FACT ONE NO DEFAULT CAN SUPPLY? Some gaps are not about a standard
+     value at all — which operation a callback anchors on, which resource a URI
+     belongs to, what an imported type contains. No OpenAPI default answers
+     these; only a clause does. Always write the query for these.
+
 Emit NO query for a gap when:
-  - the value is a standard OpenAPI one, and the Extractor is expected to take it
-    from the OpenAPI reference it already has: the media type of a request body,
-    the JSON Schema form of a declared type. A 3GPP clause routinely leaves these
-    unsaid, so the Extractor may report one as a gap — it is not. Confirm the
-    clause names no value of its own, and skip: the answer is the standard value,
-    not something to retrieve;
+  - question 1 or 2 already settled it — the value is in front of you, or the
+    default the Extractor used is correct;
   - the fact is a modelling choice the target YAML makes, written down in no
     specification;
   - the gap names a topic ("more about callbacks") rather than one fact, so no
-    query could answer it;
-  - the section content above already states it.
+    query could answer it.
 
 Write the query for what is left: a fact only this document or another 3GPP spec
 holds — which operation owns a body, which resource a URI belongs to, what a
@@ -394,64 +413,60 @@ THEN WRITE THE QUERY AS THE ANSWER WOULD READ, not as the gap reads.
   that would appear AROUND the answer elsewhere — a header, an example, a
   different table's column.
 
+  SEARCH FOR WHAT THE ANSWER CONTAINS, NOT FOR WHAT THE GAP IS ABOUT. The clause
+  holding the answer is usually about something else entirely — it is described
+  from its own side, not from the side that needs it. So identify the concrete
+  thing that clause would name, and search for THAT.
+
   Gap  : "which operation the callback anchors on is not stated here"
   Poor : "POST notificationTarget callback anchor owning operation"
-         -> that is this section's own subject; it comes straight back.
-  Good : "notificationRecipientAddress attribute in the subscription request body"
-         -> names the FIELD the owning operation carries, so the clause defining
-            that operation is what matches.
+         -> the destination, which is this section's own subject: it comes
+            straight back, and it is not where the answer lives anyway.
+  Good : "notificationRecipientAddress attribute in the request body"
+         -> A callback anchors on the operation whose request body CARRIES the
+            consumer's address — the origin, not the destination. That clause is
+            about creating or subscribing a resource and never mentions callbacks
+            at all; what it does contain is the address FIELD. So search for the
+            field's name, and use the name the spec gives it, which is often not
+            the name of the URI variable the notification is delivered to (the
+            reference memory above holds these — check it before naming one).
 
   ONE FACT PER QUERY. Two facts in one query retrieve whatever matches the mix,
   which is often neither. If two gaps need two facts, write two queries.
 
-CHOOSING sources — every gap has two halves:
+EVERY QUERY SEARCHES ALL THREE COLLECTIONS — you do not choose between them:
 
-  WHICH value does this service use?   -> 'spec' or 'corpus'
-      Any answer that would have to name something out of THIS document — a
-      type, an operation, a path, a field, a media type it uses — can only come
-      from the specifications.
-      'spec'   when this document defines it, in a clause other than this
-               section: a sibling resource or type clause, a mapping table, a
-               message example.
-      'corpus' when this document refers to it but defines it elsewhere, by spec
-               number or by name (a type from TS 28.623, a definition in
-               TS 32.158).
-      These two are alternatives, never a pair: a type is either defined here or
-      imported, not both.
+  spec    — the other clauses of the document being processed;
+  corpus  — the other 3GPP specifications;
+  openapi — the OpenAPI specification.
 
-  HOW is that written in OpenAPI?      -> 'openapi'
-      The shape of the construct that the value goes into. A reliable test: the
-      OpenAPI specification was written without any knowledge of 3GPP, so it can
-      only answer what would make sense for ANY API. The moment the answer you
-      want would contain a name from this document, 'openapi' is not holding it.
+  Each returns its own block, so one query brings back the value AND the shape,
+  and a wrong guess about where the answer lives cannot lose it. Write the query
+  as the answer would read, and it will find whichever collection holds it.
 
-  So pair them: 'openapi' plus whichever of 'spec'/'corpus' holds the value. Use
-  one source alone only when the gap plainly has no second half.
-
-  Gap    : "the media type for the PUT request body is not stated, so the
-            Resource request-body row could not be mapped"
-  Query  : none — skip this gap.
-      -> The clause names no media type of its own, and none is needed from the
-         specifications: this is the standard value the Extractor takes from the
-         OpenAPI reference it already has. Retrieval would return what it holds
-         already. Skip, and it fills the rule on its own.
+  Gap    : the clause states no value for a field, so the Extractor filled it
+           with the OpenAPI default and reported doing so
+  Query  : none — once the three questions have been worked.
+      -> (1) No clause you were given states a value for that field. (2) The one
+         the Extractor used is valid for it. The gap is closed: no query, nothing
+         missing. Reverse either answer and so does the outcome — a clause that
+         states a value makes it missing_rules with that value, a value that does
+         not fit the field makes it missing_rules with the right one.
 
   Gap    : "which operation's request body carries the consumer's notification
             address — needed to anchor the callback on it"
-  Query  : "notificationRecipientAddress attribute in the subscription request
-            body"
-  sources: ['spec', 'openapi']
-      -> 'spec' names the operation, by looking for the ADDRESS FIELD rather
-         than for the notification: the clause that owns the field is the one
-         that owns the operation. 'openapi' gives the callback's shape and the
-         runtime expression that keys it.
+  Query  : "notificationRecipientAddress attribute in the request body"
+      -> Names the ADDRESS FIELD rather than the notification: the clause that
+         carries the field is the one that owns the operation. The document's own
+         clauses, the spec that defines the field, and the OpenAPI callback
+         construct are all searched with it.
 
   Gap    : "the fields of NotificationHeader are not given here"
   Query  : "NotificationHeader type definition href notificationId eventTime
             systemDN"
-  sources: ['corpus', 'openapi']
-      -> 'corpus' has the imported type's fields; 'openapi' how a referenced
-         schema is composed into this one.
+      -> The type is defined in another specification, and how a referenced
+         schema composes into this one is an OpenAPI matter. One query reaches
+         both.
 
 When no gaps were declared, context_queries is empty.
 """
@@ -493,6 +508,11 @@ Rules already validated in previous iterations (do NOT suggest these as missing)
 
 Rules identified as missing in the previous iteration (check if now resolved):
 {previous_missing_rules}
+
+Names the earlier sections established, with the fields each one carries (the
+running reference memory). A query should use the name the spec gives a thing,
+and this is where those names are:
+{ref_memory}
 
 Gaps the Extractor declared for this section (its missing_context — empty when it
 declared none). These are NOT missing rules: a missing rule is one it should have

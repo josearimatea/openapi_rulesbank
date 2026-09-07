@@ -44,7 +44,6 @@ from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.llm_config import llm
 from openapi_rulesbank.config.settings import (
     CONTEXT_RETRIEVE_CHUNKS, MAX_CONTEXT_QUERIES, MAX_ITERATIONS,
-    MAX_SOURCES_PER_QUERY,
 )
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.prompts.reflector_prompts import (
@@ -61,6 +60,9 @@ from openapi_rulesbank.utils.parsers import (
     format_section_verdict, discards_for_section, format_discards,
     corrections_for_section, format_corrections,
 )
+# The Extractor builds the same view of the reference memory for its own prompts;
+# rendering it identically here keeps one format for both nodes.
+from openapi_rulesbank.nodes.extractor import _format_ref_memory
 
 logger = get_logger(__name__)
 
@@ -76,6 +78,43 @@ def _build_rag_query(rule: dict) -> str:
         f"{mapping.get('openapi_object', '')} "
         f"{mapping.get('openapi_field', '')}"
     ).strip()
+
+
+def _search_spec_excluding_own(
+    query: str, collection: str, filters: dict | None, section_title: str
+) -> str:
+    """Search the spec collection, without the section the gap came from.
+
+    That section is the one clause provably lacking the answer — the gap came out
+    of it — yet it is the nearest match to a query drawn from its own wording, so
+    it comes back first and takes the place of the clause that does hold the fact.
+    The Extractor already has it in full, so dropping it loses nothing.
+
+    Dropping alone would leave fewer chunks than asked for, so the search is
+    reissued for exactly as many as were discarded: the prompt receives
+    CONTEXT_RETRIEVE_CHUNKS either way.
+    """
+    # Chunks carry the heading they came from, and a title reads
+    # "12.1.1.3.2.1.3.1 HTTP PUT", so the clause number identifies this section's.
+    clause = (section_title or "").strip().split(" ", 1)[0]
+
+    def _keep(text: str) -> list[str]:
+        if not text:
+            return []
+        chunks = text.split("\n\n---\n\n")
+        return [c for c in chunks if not (clause and clause in c)]
+
+    kept = _keep(search_target_spec(
+        query, collection, k=CONTEXT_RETRIEVE_CHUNKS, filters=filters,
+    ))
+    missing = CONTEXT_RETRIEVE_CHUNKS - len(kept)
+    if missing > 0:
+        # Ask for the shortfall on top of the original k: the same top results
+        # come back, so the extra ones are the chunks ranked just below them.
+        kept = _keep(search_target_spec(
+            query, collection, k=CONTEXT_RETRIEVE_CHUNKS + missing, filters=filters,
+        ))
+    return "\n\n---\n\n".join(kept[:CONTEXT_RETRIEVE_CHUNKS])
 
 
 def _retrieve_missing_context(
@@ -97,40 +136,26 @@ def _retrieve_missing_context(
     sections        = state.get("parsed_sections", [])
     blocks = []
 
+    title = next((s["title"] for s in sections
+                  if s.get("section_id") == section_id), "")
+    mns   = _umbrella_mns(title, sections) if title else ""
+
     for q in queries[:MAX_CONTEXT_QUERIES]:
         query = (q.query or "").strip()
         if not query:
             continue
 
-        # A gap usually needs both halves — the value from the specifications and
-        # its OpenAPI shape — so each query may name two collections. Deduplicated
-        # and capped, since the prompt can return more than the pair asked for.
-        wanted, seen = [], set()
-        for s in (q.sources or []):
-            s = (s or "").strip().lower()
-            if s and s not in seen:
-                seen.add(s)
-                wanted.append(s)
-
-        for source in wanted[:MAX_SOURCES_PER_QUERY]:
-            if source == "spec":
-                title = next((s["title"] for s in sections
-                              if s.get("section_id") == section_id), "")
-                mns   = _umbrella_mns(title, sections) if title else ""
-                text = search_target_spec(
-                    query, spec_collection, k=CONTEXT_RETRIEVE_CHUNKS,
-                    filters={"mns": mns} if mns else None,
-                )
-            elif source == "corpus":
-                text = search_3gpp_corpus(query, k=CONTEXT_RETRIEVE_CHUNKS)
-            elif source == "openapi":
-                text = search_openapi_reference(query, k=CONTEXT_RETRIEVE_CHUNKS)
-            else:
-                logger.warning(
-                    f"[context-query {section_id}] unknown source '{source}' — skipped."
-                )
-                continue
-
+        # All three collections, every time. Choosing one was a judgement that
+        # kept going wrong — a gap about a field defined in another spec but USED
+        # in a clause of this document went to the corpus, and the clause holding
+        # the answer was never searched. Two extra lookups remove the decision.
+        for source, text in (
+            ("spec",    _search_spec_excluding_own(
+                            query, spec_collection,
+                            {"mns": mns} if mns else None, title)),
+            ("corpus",  search_3gpp_corpus(query, k=CONTEXT_RETRIEVE_CHUNKS)),
+            ("openapi", search_openapi_reference(query, k=CONTEXT_RETRIEVE_CHUNKS)),
+        ):
             logger.info(
                 f"[context-query {section_id}] ({source}) '{query[:70]}' -> "
                 f"{len(text or '')} chars"
@@ -368,6 +393,13 @@ def reflector_node(state: RuleBankState) -> dict:
             "discarded_rules":         discarded_str,
             "corrections":             corrections_str,
             "declared_gaps":           declared_gaps_str,
+            # The names earlier sections established. A query has to use the name
+            # the spec gives a thing, and a gap often refers to it by another —
+            # the URI variable a notification is delivered to, say, is not the
+            # field name the request body carries it in.
+            "ref_memory":              _format_ref_memory(
+                                           state.get("other_spec_ref_memory", {}) or {}
+                                       ),
         })
 
         # Run the queries the Reflector kept, one per gap it judged answerable.
