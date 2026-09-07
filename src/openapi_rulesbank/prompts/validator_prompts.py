@@ -220,6 +220,24 @@ both already_validated_rules and current_missing_rules, add it to new_missing_ru
 Example: this rule covers 4XX and is valid, but 5XX is absent and not listed anywhere
 → add '5XX response rule with ErrorResponse' to new_missing_rules.
 
+A VALUE THE CLAUSE DOES NOT SPELL OUT IS NOT AN INVENTION:
+
+  For every field, one question settles the value: IS IT SPECIFIED IN THE SPEC?
+  The Extractor takes it from the spec where a clause states it, and from the
+  OpenAPI reference where none does — a media type, a JSON Schema type, a path
+  key, any of them. A 3GPP clause routinely specifies none of these.
+
+  So do NOT reject a value for lacking a source in the section, and never
+  instruct the Extractor to "use the confirmed value" or to stop "asserting"
+  one: the next attempt reads the same silent clause, so it either repeats the
+  value or writes a placeholder, and the section burns its attempts and reaches
+  the Builder with nothing. Judge the value on whether it is RIGHT — a media type
+  that is a media type, a JSON Schema type that fits the attribute, a path key
+  that is the resource. Correct a wrong value by naming the right one.
+
+  Where the spec DOES specify a value and the rule used another, that is a
+  correction: name the value the spec gives.
+
 VALIDATION RULES BY RULE_TYPE:
   path_operation  : openapi_field must be a single lowercase HTTP method (get/put/post/delete/patch).
                     openapi_value must be the uppercase HTTP method (GET/PUT/POST/DELETE/PATCH).
@@ -253,7 +271,15 @@ VALIDATION RULES BY RULE_TYPE:
                     valid=True. Reject any Reflector split suggestion between codes.
   request_body    : openapi_field must be "content". openapi_value must be a media type.
   security_scheme : openapi_field must be "type". openapi_value must be a valid OAuth2/http/apiKey value.
-  callback        : openapi_object must be "paths.<path>.<method>.callbacks.<name>" —
+  callback        : source_name and <name> must be a notification name the spec
+                    writes somewhere — the section, a mapping table in the
+                    context, or the reference memory. A coined one
+                    ("notifyEvent", "notifyChange") is wrong however plausible:
+                    set valid=False, error_type='correction', and name the
+                    notification the spec gives. Where a table lists several
+                    notifications and one rule stands for all of them, that is
+                    also a correction — one callback rule per notification.
+                    openapi_object must be "paths.<path>.<method>.callbacks.<name>" —
                     openapi_field is the delivery method (normally "post"); openapi_value
                     is the runtime expression for the consumer address as the spec writes
                     it. Callback vs path_operation is decided by the DESTINATION the spec
