@@ -190,6 +190,43 @@ SCHEMA_PROPERTY IS GATED BY THE PRE-ANALYSIS — read this before the rule types
   property, never both. Emit properties only for attributes NOT in the inherited
   list. Emitting an inherited field inline duplicates the base and is wrong.
 
+WHERE EVERY FIELD'S VALUE COMES FROM — one question, asked for each field below:
+IS THE VALUE SPECIFIED IN THE SPEC?
+
+  YES — the section, or a sibling clause or message example in the spec context,
+        states it. Use THAT value. It overrides any default.
+  NO  — nothing you were given states it. Fill the field with the best value you
+        can (the one the OpenAPI reference shows for it), emit the rule, AND
+        report it in missing_context, naming the field and the value you used.
+
+  Both halves of the NO case are required. Emit the rule: silence in a clause is
+  never a reason to withhold one, to leave a field generic, or to write a
+  placeholder — a 3GPP clause says what the interface does, not how OpenAPI
+  writes it down, so this case is routine. And report it: you cannot see the
+  clauses you were not given, so the value may be stated in one of them; the
+  Reflector is what goes and checks. A field filled by default and left
+  unreported is a value nobody will ever verify.
+
+    request_body openapi_value — the media type. The clause names one (the patch
+      formats, say) -> use it. It names only the body's DATA TYPE, as most do ->
+      the media type from the reference's request-body examples, and report.
+
+    schema_property openapi_value — the JSON Schema type. The clause gives the
+      attribute's own type, so map it: a named type it defines or imports -> the
+      $ref to that schema; a plain type -> the JSON Schema form the reference
+      shows for it, e.g. a date-time string as
+      {{"type": "string", "format": "date-time"}}.
+
+    path_operation / path_parameter / query_parameter / response / request_body
+    openapi_object — the path key. The clause gives a Resource URI, which is the
+      base URL plus the resource; a path key holds the resource part alone, so
+      use that part (see rule 1 below). A URI that is a consumer-supplied runtime
+      address is not a path at all — see CALLBACK vs PATH. The anchor a callback
+      needs, "paths.<path>.<method>", is NOT a value the reference can supply:
+      only a clause of this document names the operation that owns it. If you
+      were not given that clause, this is the NO case — emit what you can and
+      report the missing anchor.
+
 RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapping accordingly:
 
 1. path_operation  — one rule per HTTP method on a resource path
@@ -250,12 +287,6 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                       "[$ref: '#/components/schemas/A', $ref: '#/components/schemas/B']"
                     - for "items"     : the item type or "$ref: '#/components/schemas/<Name>'"
                     - for "additionalProperties": the value type or "true"/"false"
-                    A 3GPP attribute table gives the attribute's own type, not its
-                    JSON Schema type. Map it: take the type from the section, and
-                    where the section leaves the JSON form unsaid, use the form the
-                    OpenAPI reference above shows for it (a date-time string as
-                    {{"type": "string", "format": "date-time"}}, and so on). Emit
-                    the rule with that form.
 
 3. path_parameter  — one rule per path variable in the RESOURCE part of the path
    rule_type      : "path_parameter"
@@ -323,12 +354,6 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
    openapi_value  : the media type: "application/json" |
                     "application/merge-patch+json" | "application/yang-data+json" |
                     etc. If several are named, create one rule per media type.
-                    Take it from the section; if the section names none, from a
-                    sibling clause or message example in the spec context; if
-                    neither carries one, from the OpenAPI reference above, which
-                    shows the media type its request-body examples use. A 3GPP
-                    clause often gives only the body's data type, so this last
-                    source is the normal one — use it and emit the rule.
 
 7. security_scheme — one rule per security or authentication requirement
    rule_type      : "security_scheme"
@@ -339,7 +364,18 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
 
 8. callback        — one rule per notification the PRODUCER sends to the consumer
    rule_type      : "callback"
-   source_name    : the notification name (e.g. "notifyMOICreation")
+   source_name    : the notification's own name, copied from wherever the spec
+                    writes it — this section, a mapping table in the spec
+                    context, or the reference memory. NEVER coin one: a name you
+                    assembled yourself ("notifyEvent", "notifyChange") is wrong
+                    even when it reads plausibly, because nothing downstream can
+                    match it to the schema the notification carries.
+                    ONE RULE PER NOTIFICATION. Where a table lists several
+                    notifications on the same resource, that is one callback rule
+                    each, under its own name — never a single rule standing for
+                    all of them.
+                    If no name is written anywhere you were given, do not invent
+                    one: report it in missing_context.
    openapi_object : the full anchor, "paths.<path>.<method>.callbacks.<notificationName>"
                     where <path>.<method> is the operation in which the consumer
                     supplies its address (see NOTIFICATIONS ARE CALLBACKS below).
@@ -431,26 +467,31 @@ ONE RULE PER ITEM — never combine into a single rule:
     Wrong: one rule for "application/json and application/merge-patch+json".
     Right: two rules, one per media type.
 
-MISSING CONTEXT — report what blocked a mapping, in `missing_context`:
+MISSING CONTEXT — report what the spec did not give you, in `missing_context`:
 
-  A section is extracted alone, so a fact it depends on may live in another
-  section that no context reached. When that happens you still emit the best rule
-  you can — but say what was missing, so the next attempt can be given it.
+  A section is extracted alone, so a fact it depends on may live in a clause no
+  context reached. Always emit the best rule you can — then report what was
+  missing. The Reflector reads these, checks whether the spec really is silent,
+  and retrieves the clause when it is not, so the next attempt maps it right.
+  Reporting is how a wrong mapping gets found: a fact you keep to yourself is one
+  nobody can check.
 
-  Report a fact ONLY when its absence changed what you emitted:
+  Report every fact the spec did not supply and you had to work around:
     - you fell back to a shape you know is not the right one (e.g. you emitted a
       path_operation for a notification whose URI is the consumer's address,
-      because you could not tell which operation to anchor the callback on); or
+      because you could not tell which operation to anchor the callback on);
     - you could not resolve a required part of openapi_object and had to leave it
-      generic.
-  Name the one fact and why it blocked you, in a sentence.
+      generic;
+    - you filled a field with a default value from the OpenAPI reference because
+      no clause you were given states it (a media type, a JSON Schema form).
+      Report it even though the rule came out complete — you cannot see the
+      clauses you were not given, and one of them may state it.
+  Name the fact and what you did about it, in a sentence.
 
-  Do NOT report: a rule you decided not to extract; anything already present in
-  the section or in the context above; a whole topic ("more about callbacks");
-  or a fact you did use — including a value you took from the OpenAPI reference
-  because the clause named none, which leaves the rule complete and blocks
-  nothing. At most 2 entries — the fewest that would unblock you. Empty list when
-  the section gave you everything you needed.
+  Do NOT report: a rule you decided not to extract; a fact the section or the
+  contexts above DO state; or a whole topic ("more about callbacks"). At most 2
+  entries — the ones that most affect the rules. Empty list only when the spec
+  gave you every value you used.
 
 OpenAPI reference (use ONLY to understand valid OpenAPI constructs and field names):
 {openapi_reference_overview}
