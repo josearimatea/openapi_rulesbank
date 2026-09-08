@@ -86,6 +86,8 @@ def _run_section(section, base, idx, carried):
     section_id = section["section_id"]
     print(f"[{section_id}] {section['title'][:58]}")
     print(f"  memory in: {sorted(state.get('other_spec_ref_memory', {})) or '(empty)'}")
+    for subj, info in (state.get("cross_ref_facts", {}) or {}).items():
+        print(f"  cross-ref: {subj}: {info.get('fact', '')[:110]}")
 
     for attempt in range(1, MAX_ITERATIONS + 1):
         ext = extractor_node(state)
@@ -93,6 +95,8 @@ def _run_section(section, base, idx, carried):
                  # the reducers merge these in the real graph
                  "other_spec_ref_memory": {**state.get("other_spec_ref_memory", {}),
                                            **ext.get("other_spec_ref_memory", {})},
+                 "cross_ref_facts": {**state.get("cross_ref_facts", {}),
+                                     **ext.get("cross_ref_facts", {})},
                  "section_analysis_by_id": {**state.get("section_analysis_by_id", {}),
                                             **ext.get("section_analysis_by_id", {})}}
 
@@ -155,6 +159,7 @@ def _run_section(section, base, idx, carried):
     # Hand back what the reducers would carry into the next section.
     return final, {
         "other_spec_ref_memory":  state.get("other_spec_ref_memory", {}),
+        "cross_ref_facts":        state.get("cross_ref_facts", {}),
         "section_analysis_by_id": state.get("section_analysis_by_id", {}),
     }
 
@@ -178,7 +183,8 @@ def main():
     base = {
         **r, "service_contract": cb["service_contract"], "spec_collection_name": spec_coll,
         "rules_collection_name": rules_coll, "extraction_plan": plan, "helper_context": "",
-        "other_spec_ref_memory": {}, "section_analysis_by_id": {},
+        "other_spec_ref_memory": {}, "cross_ref_facts": {},
+        "section_analysis_by_id": {},
         "validated_rules": [], "validated_rules_by_section": {},
     }
 
