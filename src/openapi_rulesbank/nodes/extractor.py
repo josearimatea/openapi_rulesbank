@@ -147,7 +147,10 @@ def _analyze_section(
     the section and drafts the extractor guidance (schema home or not, embedded
     base -> one allOf $ref + inherited fields).
 
-    Returns (analysis, new_refs); new_refs are memory entries {type: {spec, fields,
+    Returns (analysis, new_refs, new_cross_refs); new_cross_refs are the
+    relationships the fetched text stated, {subject: {fact, source}}, merged into
+    cross_ref_facts so a later section reads what this one learned.
+    new_refs are memory entries {type: {spec, fields,
     note}} to merge into other_spec_ref_memory. analysis is None if a call fails
     (extraction then proceeds without the extra guidance).
     """
@@ -194,16 +197,22 @@ def _analyze_section(
             e.type_name: {"spec": e.source_spec, "fields": e.fields, "note": e.note}
             for e in analysis.memory_updates if e.type_name
         }
+        new_cross_refs = {
+            c.subject: {"fact": c.fact, "source": c.source}
+            for c in (analysis.cross_refs or []) if c.subject and c.fact
+        }
+        if new_cross_refs:
+            logger.info(f"[analyzer {section_id}] cross-refs: {new_cross_refs}")
         logger.info(
             f"[analyzer {section_id}] phase2: kind={analysis.section_kind} "
             f"emits_schema={analysis.emits_schema_properties} "
             f"base_ref={analysis.base_ref!r} inherited={analysis.inherited_fields} "
             f"| memory_updates: { {t: v['fields'] for t, v in new_refs.items()} }"
         )
-        return analysis, new_refs
+        return analysis, new_refs, new_cross_refs
     except Exception as e:
         logger.warning(f"Section analyzer failed for [{section_id}] ({e}); extracting without it.")
-        return None, {}
+        return None, {}, {}
 
 
 def _scope_section(
@@ -247,6 +256,17 @@ def _scope_section(
         logger.warning(f"Section scope failed for [{section_id}] ({e}); extracting without pre-scope.")
         return ("No pre-scoped candidates available — extract every rule THIS section's "
                 "content states.", "None.")
+
+
+def _format_cross_refs(facts: dict) -> str:
+    """Render the accumulated cross-reference facts for a prompt."""
+    if not facts:
+        return "None."
+    lines = []
+    for subject, info in facts.items():
+        src = f" ({info['source']})" if info.get("source") else ""
+        lines.append(f"  - {subject}: {info.get('fact', '')}{src}")
+    return "\n".join(lines)
 
 
 def _format_analysis_guidance(analysis: SectionAnalysis | None) -> str:
@@ -548,12 +568,18 @@ def extractor_node(state: RuleBankState) -> dict:
         section_title, state["parsed_sections"], state.get("section_analysis_by_id", {}),
         exclude_id=section_id,
     )
-    analysis, new_refs = _analyze_section(
+    analysis, new_refs, new_cross_refs = _analyze_section(
         section_id, section_title, section["content"],
         state.get("other_spec_ref_memory", {}),
         sibling_summary,
     )
     section_analysis = _format_analysis_guidance(analysis)
+    # What earlier sections learned about how things relate, plus whatever this
+    # section's own triage just added. A section maps its rules from its own text;
+    # these are the facts that text depends on and does not contain.
+    cross_ref_context = _format_cross_refs({
+        **(state.get("cross_ref_facts", {}) or {}), **new_cross_refs,
+    })
 
     # Rules already validated in OTHER sections that resemble this one. Fed to the
     # scope phase (below), NOT straight to the Extractor: handing the raw list to
@@ -587,6 +613,7 @@ def extractor_node(state: RuleBankState) -> dict:
         "section_analysis":           section_analysis,
         "section_content":            section["content"],
         "openapi_reference_overview": openapi_reference_overview,
+        "cross_ref_context":          cross_ref_context,
         "stage2_context":             stage2_context,
         "stage3_context":             stage3_context,
         "candidate_rules":            candidate_rules,
@@ -636,6 +663,7 @@ def extractor_node(state: RuleBankState) -> dict:
         # Merge this section's newly declared other-spec references into the running
         # memory (see _merge_ref_memory), so later sections can resolve them.
         "other_spec_ref_memory":   new_refs,
+        "cross_ref_facts":         new_cross_refs,
         "section_analysis_by_id":  verdict_update,
         "missing_context":         missing_context,
     }

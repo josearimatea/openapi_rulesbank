@@ -524,6 +524,14 @@ anything below into a rule of this section. If a code, property, body or path
 appears below but NOT in the section content above, it is another section's rule —
 never emit it here.
 
+How things relate, from clauses other sections resolved (never a rule source; use
+it to map THIS section's rules to the right target). A section states what it
+does, not what it depends on: which operation creates the object an attribute
+belongs to, which resource hosts an endpoint. Where one of these decides a target
+your own text leaves open — the operation a callback anchors on, say — apply it
+instead of falling back to a generic shape:
+{cross_ref_context}
+
 Stage 2 context (abstract definitions of THIS service — reference for the canonical
 IS operation name only; NEVER a rule source):
 {stage2_context}

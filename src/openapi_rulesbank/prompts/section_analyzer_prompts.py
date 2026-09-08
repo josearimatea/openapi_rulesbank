@@ -158,8 +158,48 @@ class ReferenceMemoryEntry(BaseModel):
     )
 
 
+class CrossReferenceFact(BaseModel):
+    """A fact about how things relate, learned from a referenced specification."""
+
+    subject: str = Field(
+        description=(
+            "What the fact is about, named as this document names it — a type, an "
+            "attribute, a resource, a URI variable."
+        )
+    )
+    fact: str = Field(
+        description=(
+            "The relationship, in one sentence, as the retrieved text states it — "
+            "not an inference from it. One of: who creates or carries the subject; "
+            "which object or schema it belongs to; what larger thing it is part "
+            "of; what it requires or implies. Prefer the ORIGIN over the "
+            "destination: 'carried by the X object, which a consumer creates on "
+            "the producer' is actionable, while 'notifications are sent to this "
+            "address' is not."
+        )
+    )
+    source: str = Field(
+        default="",
+        description="Where it was stated, e.g. 'TS 28.622 clause 4.3.22'."
+    )
+
+
 class SectionAnalysis(BaseModel):
     """Phase 2 output: memory updates + guidance for the Extractor."""
+
+    cross_refs: list[CrossReferenceFact] = Field(
+        default_factory=list,
+        description=(
+            "Facts the retrieved definitions state about HOW THINGS RELATE, which "
+            "the fields of a schema cannot hold: which operation creates the object "
+            "that carries an attribute, which resource hosts an endpoint, which "
+            "clause owns a type. At most 2, and only what ANOTHER section would "
+            "need in order to map a rule correctly — a fact used only here belongs "
+            "in the guidance instead. Empty when the retrieved text adds no such "
+            "fact. These accumulate across sections, so a clause that explains a "
+            "relationship informs the later clause that has to express it."
+        )
+    )
 
     memory_updates: list[ReferenceMemoryEntry] = Field(
         default_factory=list,
@@ -237,7 +277,7 @@ _STEP2_SYSTEM = """\
 You are an expert in 3GPP specifications and OpenAPI. You finish triaging ONE
 section before another agent extracts rules from it. You are given the section,
 the running reference memory, Phase 1's explanation of the section's external
-references, and the fetched definitions of those references (RAG). Two jobs:
+references, and the fetched definitions of those references (RAG). Three jobs:
 
 A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    record what it is: its name, its source spec, its OWN property names, and a
@@ -249,7 +289,41 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    — any imported type from any spec (imports and allOf composition are pervasive
    in these specs). Return empty when the section references no external types.
 
-B. GUIDE THE EXTRACTOR:
+B. KEEP WHAT THE FETCHED TEXT SAYS ABOUT HOW THINGS RELATE (cross_refs). Job A
+   records a type's SHAPE — its name, spec and members. A referenced clause often
+   states something else entirely, which no list of fields can hold, and which
+   decides how a LATER section maps its rules. This triage is the only place
+   those sentences are ever read, so what you do not record here is lost.
+
+   Read the fetched text for these, and record the ones it states. Each is worth
+   recording because of what a later section does with it:
+
+     WHO CREATES OR CARRIES IT — "a consumer creates an X instance", "X is sent in
+       the request body of Y". A later section mapping a callback needs the
+       operation to anchor it on; mapping a $ref needs the operation that owns the
+       body. Record the ORIGIN — which operation or object carries the thing — not
+       only where the value ends up: "notifications are sent to this address" says
+       nothing about which operation received it.
+
+     WHERE IT BELONGS — "X is an attribute of the Y object", "X is name-contained
+       by Z". Tells a later section which schema owns a property, and which
+       clause is that schema's home.
+
+     WHAT IT IS PART OF — "X is one of the URI components defined by the common
+       URI structure", "X is a patch format for this method". Tells a later
+       section that a value belongs to the base URL rather than the path, or which
+       media types an operation accepts.
+
+     WHAT IT REQUIRES OR IMPLIES — "to receive notifications a consumer must first
+       subscribe", "this is returned only when the resource was created". Tells a
+       later section that a rule it is about to emit depends on an operation
+       elsewhere.
+
+   Write what the text states, not an inference from it, and name the subject as
+   THIS document names it. Prefer the sentence a later section could act on. At
+   most 2 per section; empty when the fetched text adds no such fact.
+
+C. GUIDE THE EXTRACTOR:
    1. CLASSIFY the section by its content: type_definition, enumeration, mapping,
       resource, or other. emits_schema_properties is True ONLY for
       type_definition/enumeration. Keep `guidance` CONSISTENT with this flag —

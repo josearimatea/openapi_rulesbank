@@ -201,6 +201,16 @@ class RuleBankState(TypedDict):
     # its own text. Accumulates across sections; never reset.
     other_spec_ref_memory: Annotated[dict, _merge_ref_memory]
 
+    # Facts a referenced specification states about HOW THINGS RELATE, kept by the
+    # Extractor's pre-analyzer alongside the type memory above: which operation
+    # creates the object that carries an attribute, which resource hosts an
+    # endpoint. A type's fields cannot hold these, and the clause that explains
+    # the relationship is rarely the clause that has to express it — the URI
+    # clause learns that a consumer creates a subscription, the method clause is
+    # where that decides an anchor. Keyed by subject, merged across sections with
+    # the same reducer, and read by every later section.
+    cross_ref_facts: Annotated[dict, _merge_ref_memory]
+
     # The Extractor pre-analyzer's verdict for each section it processed, kept so
     # the Reflector and Validator can enforce it instead of re-judging the raw text
     # (a mapping table looks like a schema). Keyed by section_id:
