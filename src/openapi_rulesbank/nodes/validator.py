@@ -173,6 +173,7 @@ def _run_section_init(
     previous_missing: list[str],
     chain_init,
     section_verdict: str = "",
+    helper_context: str = "",
 ) -> list[str]:
     """
     Filters previous_missing_rules against current coverage.
@@ -186,6 +187,7 @@ def _run_section_init(
         return []
 
     result: SectionAnalysisResult = chain_init.invoke({
+        "helper_context":        helper_context or "None provided.",
         "section_id":            section_id,
         "current_rules":         _format_rules_compact(current_rules),
         "already_validated_rules": _format_rules_compact(already_validated),
@@ -210,6 +212,7 @@ def _validate_semantically(
     section_verdict: str = "",
     sibling_rules: str = "",
     declared_gaps: str = "",
+    helper_context: str = "",
 ) -> tuple[dict | None, dict | None, list[str]]:
     """
     Semantic verdict for one rule.
@@ -253,6 +256,7 @@ def _validate_semantically(
         "sibling_rules":           sibling_rules or "None — only this rule in this section.",
         "section_content":         section_content,
         "declared_gaps":           declared_gaps or "None declared.",
+        "helper_context":          helper_context or "None provided.",
     })
 
     new_missing = verdict.new_missing_rules or []
@@ -289,6 +293,7 @@ def _run_reflector_review(
     chain_review,
     section_verdict: str = "",
     corrections: str = "",
+    helper_context: str = "",
 ) -> list[str]:
     """
     Incorporates the Reflector's section analysis into the final missing_rules.
@@ -312,6 +317,7 @@ def _run_reflector_review(
         "reflector_missing_rules":        reflector_missing_str,
         "section_verdict":                section_verdict or "No pre-analysis verdict for this section.",
         "corrections":                    corrections or "None",
+        "helper_context":                 helper_context or "None provided.",
     })
     return result.missing_rules or []
 
@@ -336,6 +342,10 @@ def validator_node(state: RuleBankState) -> dict:
     # schema_property from a section that is not a schema home) instead of
     # re-judging the raw table. Only the current section's entry goes into a prompt.
     analysis_by_id               = state.get("section_analysis_by_id", {}) or {}
+    # Auxiliary documents and the user's own instructions for this run: they
+    # outrank the modelling conventions, so a rule following one of those is only
+    # wrong where this says otherwise.
+    helper_context_str           = state.get("helper_context", "") or "None provided."
     # Facts the Extractor declared it lacked while producing this iteration's
     # rules. A rule built on one of these is not to be passed: it was emitted
     # without the fact that decides it, and the answer is already being fetched
@@ -501,6 +511,7 @@ def validator_node(state: RuleBankState) -> dict:
                 previous_missing=  previous_missing,
                 chain_init=        chain_init,
                 section_verdict=   section_verdict,
+                helper_context=    helper_context_str,
             )
         logger.debug(
             f"  Stage 1: {len(current_missing)} missing rule(s) carried forward "
@@ -550,6 +561,7 @@ def validator_node(state: RuleBankState) -> dict:
                 section_verdict=                section_verdict,
                 sibling_rules=                  sibling_rules_str,
                 declared_gaps=                  declared_gaps_str,
+                helper_context=                 helper_context_str,
             )
 
             # Accumulate new missing rules (deduplicated)
@@ -603,6 +615,7 @@ def validator_node(state: RuleBankState) -> dict:
                 chain_review=                 chain_review,
                 section_verdict=              section_verdict,
                 corrections=                  corrections_str,
+                helper_context=               helper_context_str,
             )
             logger.debug(
                 f"  Stage 3: final missing_rules = {len(final_missing)} rule(s)."

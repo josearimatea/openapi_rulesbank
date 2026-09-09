@@ -177,6 +177,10 @@ def reflector_node(state: RuleBankState) -> dict:
     logger.info("Reflector Node started.")
 
     raw_rules = state.get("raw_rules", []) or []
+    # Auxiliary documents and whatever the user passed for this run. It outranks
+    # the modelling conventions the Extractor follows, so both phases need it to
+    # judge a rule the same way the Extractor built it.
+    helper_context = state.get("helper_context", "") or "None provided."
 
     if not raw_rules:
         logger.warning("Reflector received no raw_rules — returning empty reflected_rules.")
@@ -265,6 +269,9 @@ def reflector_node(state: RuleBankState) -> dict:
             "sibling_rules":  _siblings_str(rule),
             "section_verdict": format_section_verdict(analysis_by_id.get(section_id)),
             "section_content": section_content,
+            # What the user supplied for this run. It outranks the modelling
+            # conventions, so the judgement has to see it.
+            "helper_context":  helper_context,
         })
 
         # Merge reflection fields into the rule dict → ReflectedRule
@@ -383,6 +390,7 @@ def reflector_node(state: RuleBankState) -> dict:
         result: SectionReflection = section_chain.invoke({
             "section_id":            section_id,
             "section_content":       section_content,
+            "helper_context":        helper_context,
             "current_rules":         "\n".join(current_rule_lines),
             "already_validated_rules": already_validated_str,
             "previous_missing_rules":  previous_missing_str,

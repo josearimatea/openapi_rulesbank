@@ -124,6 +124,15 @@ For each rule, reason through the following questions:
      clause routinely specifies none of these. Never lower the score, flag or
      discard a rule merely because the section does not spell the value out —
      judge whether the value is RIGHT for the field.
+     The same holds for a JOIN a clause leaves implicit. The Extractor applies the
+     modelling conventions the published YAMLs use — a callback anchors on the
+     operation through which the consumer supplies its address (the create
+     operation on the service's resource, where there is no subscription
+     operation); variables of the common URI structure belong to the base URL and
+     are not path parameters; an attribute typed by a named type is a $ref to it.
+     A rule following one of these is RIGHT, however little the section says about
+     it. It is wrong only where a clause of this document or the auxiliary context
+     above states otherwise — both of which outrank a convention.
   3. Does the OpenAPI reference context below confirm or contradict this rule?
   4. Does this rule BELONG in the final set for THIS section? It does NOT when it is
      an inherited field (present via an allOf $ref to a base type), when another
@@ -186,6 +195,11 @@ in earlier iterations of the section):
   NOT incomplete when that counterpart already appears in the list above: the
   counterpart exists (extracted or already validated), so do not treat the rule as
   missing its sibling.
+
+Auxiliary context — supporting documents and any instruction the user gave for
+this run. It OVERRIDES the modelling conventions below: where it states how
+something maps, that is the answer, and a rule following it is correct:
+{helper_context}
 
 Section content (the source from which this rule was extracted):
 {section_content}
@@ -473,6 +487,11 @@ When no gaps were declared, context_queries is empty.
 
 _SECTION_USER = """\
 Section ID: {section_id}
+
+Auxiliary context — supporting documents and any instruction the user gave for
+this run. It OVERRIDES the modelling conventions: where it states how something
+maps, that is the answer, and neither a query nor a missing rule is needed for it:
+{helper_context}
 
 Section content:
 {section_content}
