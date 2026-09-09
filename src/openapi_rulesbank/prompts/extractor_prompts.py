@@ -195,13 +195,32 @@ IS THE VALUE SPECIFIED IN THE SPEC?
 
   YES — the section, or a sibling clause or message example in the spec context,
         states it. Use THAT value. It overrides any default.
-  NO  — nothing you were given states it. Fill the field with the best value you
-        can (the one the OpenAPI reference shows for it), emit the rule, AND
-        report it in missing_context, naming the field and the value you used.
+  NO  — what kind of value is it?
+        An OPENAPI DETAIL — a media type, a JSON Schema form, anything the OpenAPI
+          reference above shows a value for. Fill it from the reference, emit the
+          rule, AND report it in missing_context, naming the field and the value.
+        AN IDENTIFIER OF THIS SERVICE — a path key, an operation name, a schema
+          name, a field name. Take it from a source, in this order:
+            1. this section, or a clause of this document in the context above —
+               a section stating "Resource URI: {{X}}" has declared its path key,
+               and that is the value, not a gap;
+            2. the auxiliary context / the user's instructions for this run;
+            3. the OpenAPI reference, where it shows a standard value for that
+               field.
+          Never suppose one and never invent one. Forbidden above all is carrying
+          one over from where it does not apply: another Management Service in
+          this document, a service you have seen before, or a name you coined
+          because it reads plausibly. A path such as "/notificationSink" or
+          "/eventListener" written into a service whose clauses never mention it
+          is that failure — the rule looks complete and points at a resource that
+          does not exist here. Nor is a non-identifier a safer answer: an empty
+          path key, or the notification's own name used as one, is not.
+          When none of the three sources gives it, emit what the section does
+          support and report the missing identifier in missing_context.
 
-  Both halves of the NO case are required. Emit the rule: silence in a clause is
-  never a reason to withhold one, to leave a field generic, or to write a
-  placeholder — a 3GPP clause says what the interface does, not how OpenAPI
+  Both halves of the OPENAPI DETAIL case are required. Emit the rule: silence in a
+  clause is never a reason to withhold one, to leave a field generic, or to write
+  a placeholder — a 3GPP clause says what the interface does, not how OpenAPI
   writes it down, so this case is routine. And report it: you cannot see the
   clauses you were not given, so the value may be stated in one of them; the
   Reflector is what goes and checks. A field filled by default and left
@@ -222,10 +241,38 @@ IS THE VALUE SPECIFIED IN THE SPEC?
       base URL plus the resource; a path key holds the resource part alone, so
       use that part (see rule 1 below). A URI that is a consumer-supplied runtime
       address is not a path at all — see CALLBACK vs PATH. The anchor a callback
-      needs, "paths.<path>.<method>", is NOT a value the reference can supply:
-      only a clause of this document names the operation that owns it. If you
-      were not given that clause, this is the NO case — emit what you can and
-      report the missing anchor.
+      needs, "paths.<path>.<method>", is not a value the OpenAPI reference can
+      supply: it is settled by a clause of this document, or failing that by the
+      callback-anchor convention below.
+
+MODELLING CONVENTIONS — APPLY THESE. They settle the joins a 3GPP clause leaves
+implicit, and they are how the published YAMLs express them. Where one applies,
+use it and emit the rule: do not report the join as missing, do not leave a
+placeholder, do not fall back to a shape you know is wrong.
+
+  - CALLBACK ANCHOR. A callback anchors on the operation through which the
+    consumer supplies its address — "paths.<path>.<method>.callbacks.<name>",
+    where <path> and <method> are that operation's. If the service has a
+    subscription operation, that is it; otherwise it is the operation that
+    CREATES the resource carrying the address field.
+    READ BOTH PARTS OFF THE SPEC, never off habit. <path> is that resource's own
+    path key. <method> is the HTTP method THIS document maps its create operation
+    to — its operation-mapping table says which, and it is not always the one a
+    REST API would use by default. Emit the method the table gives.
+    A notification delivered to a consumer address is NEVER a path of this
+    service.
+  - BASE-URL VARIABLES. URI variables the spec defines by pointing at the common
+    URI structure belong to the base URL: keep them out of the path key and emit
+    no path_parameter for them.
+  - REQUEST BODY MEDIA TYPE. A clause naming only a data type is carried in the
+    media type the OpenAPI reference uses for request bodies.
+  - NAMED TYPES. An attribute whose type is a named type defined elsewhere is a
+    $ref to that schema — never an enum or an inline object repeated here.
+
+  PRECEDENCE, highest first: what a clause of this document states; the auxiliary
+  context or the user's instructions; these conventions. A convention is the
+  answer only where the two above are silent, and it is overridden the moment
+  either speaks.
 
 RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapping accordingly:
 
@@ -412,11 +459,34 @@ CALLBACK vs PATH — DECIDE BY WHO OWNS THE URI:
   express what the producer sends there as a `callback`, and emit no
   `path_operation` for them.
 
-  Anchor the callback on the operation where the consumer supplies that address —
-  the subscription operation when the service has one, otherwise the operation
-  whose request body carries the address field. Read the anchor operation, the
-  address field name and the delivery method from THIS spec's text; never assume
-  the values seen in other specifications.
+  ANCHOR IT ON THE OPERATION WHERE THE CONSUMER SUPPLIES THAT ADDRESS. The
+  section describing the delivery almost never names that operation — it is
+  elsewhere, and often in another specification. Work down these, in order, and
+  stop at the first that applies:
+
+    1. This spec names a subscription operation (a "subscriptions" resource, a
+       subscribe operation) -> anchor on it.
+    2. A clause you were given states which operation's REQUEST BODY carries the
+       address field -> anchor on that operation.
+    3. The relationship facts above say the address belongs to an object the
+       consumer CREATES on the producer -> creating an object is this service's
+       own create operation on the resource that holds it: anchor on that
+       operation of that resource. (A generic provisioning service creates any
+       object through its single resource, so that resource's create method is
+       the anchor.)
+    4. None of the above -> emit what you can and report the missing anchor in
+       missing_context. Do NOT write a placeholder such as
+       "paths.<subscription-path>" or "paths.<owning-path>": an unresolved anchor
+       is worse than a reported gap.
+
+  Read the anchor operation, the address field name and the delivery method from
+  THIS spec's text; never assume the values seen in other specifications.
+
+  The relationship block above IS this spec's text — a clause's own words, carried
+  here because the clause that states them is not the clause that needs them. So
+  read it: it is where steps 2 and 3 find their answer, and the section that
+  describes a delivery almost never names the operation itself. Use what it
+  states; assume nothing it does not.
 
   The callback's payload and responses are separate rules whose openapi_object
   continues the same anchor, so the structure matches the target YAML:
@@ -424,6 +494,13 @@ CALLBACK vs PATH — DECIDE BY WHO OWNS THE URI:
                    field "content", value the media type
     response     : object "paths.<path>.<method>.callbacks.<name>.<cbMethod>.responses",
                    field the status code, value the schema $ref or description
+
+  A clause whose tables give the notification's request data structures and
+  response codes owns those two rule types, whichever shape the destination
+  turned out to be. Decided a callback, it writes them under the anchor above and
+  emits no path_operation — that is the only rule the callback decision removes,
+  and the clause is never left with nothing. Decided a path_operation, it writes
+  them under that path as usual.
 
 REFERENCES — structure every schema reference so the YAML builder needs no parsing:
 
@@ -524,12 +601,24 @@ anything below into a rule of this section. If a code, property, body or path
 appears below but NOT in the section content above, it is another section's rule —
 never emit it here.
 
-How things relate, from clauses other sections resolved (never a rule source; use
-it to map THIS section's rules to the right target). A section states what it
-does, not what it depends on: which operation creates the object an attribute
-belongs to, which resource hosts an endpoint. Where one of these decides a target
-your own text leaves open — the operation a callback anchors on, say — apply it
-instead of falling back to a generic shape:
+How things relate, from clauses other sections resolved. NEVER a rule source —
+you emit only what THIS section states. Use these to fill a target your own text
+leaves open, which is what they were kept for. Each kind decides something
+different:
+
+  who creates or carries a thing -> the operation to anchor a callback on, or the
+    operation that owns a request body. "A consumer creates an X instance" means
+    the create operation on the resource holding X is that operation.
+  where a thing belongs -> the schema a property goes under, or the section that
+    owns a type you should reference rather than redefine.
+  what a thing is part of -> whether a URI variable belongs to the base URL (so
+    it is neither in the path key nor a path_parameter) or to the resource, and
+    which media types an operation accepts.
+  what a thing requires -> that a rule here depends on an operation defined
+    elsewhere; reference it, do not restate it.
+
+Apply the fact rather than falling back to a generic shape or a placeholder. If
+one contradicts this section's own text, the section wins:
 {cross_ref_context}
 
 Stage 2 context (abstract definitions of THIS service — reference for the canonical
@@ -559,7 +648,10 @@ these specific rules; they belong elsewhere):
   code, you MUST still emit that response (e.g. 204, 4XX, 5XX are separate — one
   being skipped does not skip the others).
 
-Auxiliary context from supporting 3GPP documents (if relevant):
+Auxiliary context — supporting 3GPP documents and any instructions the user
+supplied for this run. Anything here about how to map something OVERRIDES the
+modelling conventions above: it is the decision for this service, and the
+conventions are only the default where it is silent. Empty when none was given:
 {helper_context}
 
 {correction_task}
