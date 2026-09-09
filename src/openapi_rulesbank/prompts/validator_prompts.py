@@ -106,8 +106,14 @@ Rules already validated in previous iterations:
 Rules identified as missing in the previous iteration:
 {previous_missing_rules}
 
+Auxiliary context — supporting documents and any instruction the user gave for
+this run. A join it settles is not a missing rule:
+{helper_context}
+
 Which of the previous missing rules are still genuinely absent? (Drop inherited
-fields and rules owned by another section.)
+fields, rules owned by another section, and anything the auxiliary context or a
+modelling convention already settles — a callback anchored by convention on the
+service's create operation is resolved, not absent.)
 """
 
 validator_section_init_prompt = ChatPromptTemplate.from_messages([
@@ -219,6 +225,39 @@ Additionally: if assessing this rule reveals a sibling rule that is absent from
 both already_validated_rules and current_missing_rules, add it to new_missing_rules.
 Example: this rule covers 4XX and is valid, but 5XX is absent and not listed anywhere
 → add '5XX response rule with ErrorResponse' to new_missing_rules.
+
+A JOIN THE CLAUSE LEAVES IMPLICIT IS SETTLED BY CONVENTION, NOT BY THE SECTION:
+
+  The Extractor is given the modelling conventions the published YAMLs follow,
+  for the connections a 3GPP clause never states: a callback anchors on the
+  operation through which the consumer supplies its address (the create operation
+  on the service's resource, where there is no subscription operation); variables
+  of the common URI structure belong to the base URL and are not path parameters;
+  a clause naming only a data type carries it in the reference's request-body
+  media type; an attribute typed by a named type is a $ref to it.
+
+  A rule following one of these is CORRECT, even though the section does not say
+  so — do not reject it for lacking support in the text, and do not instruct the
+  Extractor to report the join as missing. Reject it only when a clause, the
+  auxiliary context or the user's instructions state something different, and
+  then name what they state.
+
+AN IDENTIFIER IS TAKEN FROM A SOURCE, NEVER SUPPOSED:
+
+  A path key, an operation name, a schema name and a field name come from one of
+  these, in this order:
+    1. the section content, or a clause of this document in the context;
+    2. the auxiliary context / the user's instructions for this run;
+    3. the OpenAPI reference, when it shows a standard value for that field.
+
+  A rule whose identifier comes from any of the three is correct. Reject one that
+  comes from none: a path belonging to a DIFFERENT Management Service
+  ("/notificationSink" or "/eventListener" in a service whose clauses never
+  mention them), or a name coined because it reads plausibly. Neither supposing
+  nor inventing is allowed — set valid=False, error_type='correction', and name
+  what the section does support instead. Such a rule reads as complete and points
+  at something that does not exist in this YAML, which is why it survives every
+  other check.
 
 A VALUE THE CLAUSE DOES NOT SPELL OUT IS NOT AN INVENTION:
 
@@ -382,6 +421,12 @@ restates one of them — see DUPLICATES ACROSS SECTIONS):
 Missing rules identified so far for this section (do NOT repeat these):
 {current_missing_rules}
 
+Auxiliary context — supporting documents and any instruction the user gave for
+this run. It OVERRIDES the modelling conventions: where it states how something
+maps, a rule following IT is correct and one following the convention is the
+correction:
+{helper_context}
+
 Facts the Extractor said it lacked when it produced this section, and that are
 being fetched for the next attempt (empty when it declared none):
 {declared_gaps}
@@ -492,6 +537,11 @@ Reflector's section analysis — rules it identified as missing:
 Rules being CORRECTED this iteration (they exist, only need a fix — their targets
 are NOT missing, exclude them from the final list):
 {corrections}
+
+Auxiliary context — supporting documents and any instruction the user gave for
+this run. A join it settles, like one a modelling convention settles, is resolved
+and NOT a missing rule:
+{helper_context}
 
 Produce the final missing_rules list for this section.
 """
