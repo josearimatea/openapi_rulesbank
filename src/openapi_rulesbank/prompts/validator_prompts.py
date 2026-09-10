@@ -106,6 +106,12 @@ Rules already validated in previous iterations:
 Rules identified as missing in the previous iteration:
 {previous_missing_rules}
 
+Scope contract — which Management Service these rules are being built for. A rule
+for another service, or for a capability marked "(not in this YAML)", was never
+this section's to produce: drop it from the missing list rather than carrying it
+forward:
+{contract_summary}
+
 Auxiliary context — supporting documents and any instruction the user gave for
 this run. A join it settles is not a missing rule:
 {helper_context}
@@ -421,6 +427,12 @@ restates one of them — see DUPLICATES ACROSS SECTIONS):
 Missing rules identified so far for this section (do NOT repeat these):
 {current_missing_rules}
 
+Scope contract — which Management Service these rules are being built for, and
+what belongs to it. This is what settles whether an identifier is the service's
+own: a rule naming another service's resource, or a capability marked "(not in
+this YAML)", is a correction however well-formed it looks:
+{contract_summary}
+
 Auxiliary context — supporting documents and any instruction the user gave for
 this run. It OVERRIDES the modelling conventions: where it states how something
 maps, a rule following IT is correct and one following the convention is the
@@ -537,6 +549,11 @@ Reflector's section analysis — rules it identified as missing:
 Rules being CORRECTED this iteration (they exist, only need a fix — their targets
 are NOT missing, exclude them from the final list):
 {corrections}
+
+Scope contract — which Management Service these rules are being built for. Keep
+nothing in the final missing list that falls outside it: another service's rule,
+or one for a capability marked "(not in this YAML)", is not missing here:
+{contract_summary}
 
 Auxiliary context — supporting documents and any instruction the user gave for
 this run. A join it settles, like one a modelling convention settles, is resolved

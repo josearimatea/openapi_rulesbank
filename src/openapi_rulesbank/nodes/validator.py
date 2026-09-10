@@ -50,6 +50,7 @@ from openapi_rulesbank.prompts.validator_prompts import (
     SectionAnalysisResult, ValidationVerdict, ReflectorReviewResult,
     validator_section_init_prompt, validator_prompt, validator_reflector_review_prompt,
 )
+from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.schemas.rules import ValidatedRule, ValidationError
 from openapi_rulesbank.tools.rag_tools import index_validated_rule, search_similar_rules
 from openapi_rulesbank.utils.diagnostic import _diagnostic
@@ -174,6 +175,7 @@ def _run_section_init(
     chain_init,
     section_verdict: str = "",
     helper_context: str = "",
+    contract_summary: str = "",
 ) -> list[str]:
     """
     Filters previous_missing_rules against current coverage.
@@ -188,6 +190,7 @@ def _run_section_init(
 
     result: SectionAnalysisResult = chain_init.invoke({
         "helper_context":        helper_context or "None provided.",
+        "contract_summary":      contract_summary or "No service contract available.",
         "section_id":            section_id,
         "current_rules":         _format_rules_compact(current_rules),
         "already_validated_rules": _format_rules_compact(already_validated),
@@ -213,6 +216,7 @@ def _validate_semantically(
     sibling_rules: str = "",
     declared_gaps: str = "",
     helper_context: str = "",
+    contract_summary: str = "",
 ) -> tuple[dict | None, dict | None, list[str]]:
     """
     Semantic verdict for one rule.
@@ -257,6 +261,7 @@ def _validate_semantically(
         "section_content":         section_content,
         "declared_gaps":           declared_gaps or "None declared.",
         "helper_context":          helper_context or "None provided.",
+        "contract_summary":        contract_summary or "No service contract available.",
     })
 
     new_missing = verdict.new_missing_rules or []
@@ -294,6 +299,7 @@ def _run_reflector_review(
     section_verdict: str = "",
     corrections: str = "",
     helper_context: str = "",
+    contract_summary: str = "",
 ) -> list[str]:
     """
     Incorporates the Reflector's section analysis into the final missing_rules.
@@ -318,6 +324,7 @@ def _run_reflector_review(
         "section_verdict":                section_verdict or "No pre-analysis verdict for this section.",
         "corrections":                    corrections or "None",
         "helper_context":                 helper_context or "None provided.",
+        "contract_summary":               contract_summary or "No service contract available.",
     })
     return result.missing_rules or []
 
@@ -346,6 +353,12 @@ def validator_node(state: RuleBankState) -> dict:
     # outrank the modelling conventions, so a rule following one of those is only
     # wrong where this says otherwise.
     helper_context_str           = state.get("helper_context", "") or "None provided."
+    # Which service the rules are for. It is what settles whether an identifier
+    # in a rule is this service's own or recalled from another.
+    contract_summary_str         = (
+        format_contract_summary(state.get("service_contract", {}))
+        or "No service contract available."
+    )
     # Facts the Extractor declared it lacked while producing this iteration's
     # rules. A rule built on one of these is not to be passed: it was emitted
     # without the fact that decides it, and the answer is already being fetched
@@ -512,6 +525,7 @@ def validator_node(state: RuleBankState) -> dict:
                 chain_init=        chain_init,
                 section_verdict=   section_verdict,
                 helper_context=    helper_context_str,
+                contract_summary=  contract_summary_str,
             )
         logger.debug(
             f"  Stage 1: {len(current_missing)} missing rule(s) carried forward "
@@ -562,6 +576,7 @@ def validator_node(state: RuleBankState) -> dict:
                 sibling_rules=                  sibling_rules_str,
                 declared_gaps=                  declared_gaps_str,
                 helper_context=                 helper_context_str,
+                contract_summary=               contract_summary_str,
             )
 
             # Accumulate new missing rules (deduplicated)
@@ -616,6 +631,7 @@ def validator_node(state: RuleBankState) -> dict:
                 section_verdict=              section_verdict,
                 corrections=                  corrections_str,
                 helper_context=               helper_context_str,
+                contract_summary=            contract_summary_str,
             )
             logger.debug(
                 f"  Stage 3: final missing_rules = {len(final_missing)} rule(s)."

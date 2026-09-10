@@ -56,6 +56,7 @@ from openapi_rulesbank.tools.rag_tools import (
     search_target_spec,
     umbrella_mns_for as _umbrella_mns,
 )
+from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.utils.parsers import (
     format_section_verdict, discards_for_section, format_discards,
     corrections_for_section, format_corrections,
@@ -181,6 +182,12 @@ def reflector_node(state: RuleBankState) -> dict:
     # the modelling conventions the Extractor follows, so both phases need it to
     # judge a rule the same way the Extractor built it.
     helper_context = state.get("helper_context", "") or "None provided."
+    # Which service the rules are for. Without it a judgement cannot tell an
+    # identifier of this service from one recalled from another.
+    contract_summary = (
+        format_contract_summary(state.get("service_contract", {}))
+        or "No service contract available."
+    )
 
     if not raw_rules:
         logger.warning("Reflector received no raw_rules — returning empty reflected_rules.")
@@ -272,6 +279,7 @@ def reflector_node(state: RuleBankState) -> dict:
             # What the user supplied for this run. It outranks the modelling
             # conventions, so the judgement has to see it.
             "helper_context":  helper_context,
+            "contract_summary": contract_summary,
         })
 
         # Merge reflection fields into the rule dict → ReflectedRule
@@ -391,6 +399,7 @@ def reflector_node(state: RuleBankState) -> dict:
             "section_id":            section_id,
             "section_content":       section_content,
             "helper_context":        helper_context,
+            "contract_summary":      contract_summary,
             "current_rules":         "\n".join(current_rule_lines),
             "already_validated_rules": already_validated_str,
             "previous_missing_rules":  previous_missing_str,

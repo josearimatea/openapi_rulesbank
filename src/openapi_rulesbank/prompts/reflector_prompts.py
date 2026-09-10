@@ -196,6 +196,12 @@ in earlier iterations of the section):
   counterpart exists (extracted or already validated), so do not treat the rule as
   missing its sibling.
 
+Scope contract — which Management Service these rules are being built for, and
+what belongs to it. A rule whose target is another service's resource does not
+belong in the final set however well it is written, and neither does one for a
+capability marked "(not in this YAML)":
+{contract_summary}
+
 Auxiliary context — supporting documents and any instruction the user gave for
 this run. It OVERRIDES the modelling conventions below: where it states how
 something maps, that is the answer, and a rule following it is correct:
@@ -487,6 +493,12 @@ When no gaps were declared, context_queries is empty.
 
 _SECTION_USER = """\
 Section ID: {section_id}
+
+Scope contract — which Management Service these rules are being built for, and
+what belongs to it. Nothing outside it is missing from this section: a rule for
+another service's resource, or for a capability marked "(not in this YAML)", is
+not a gap to report:
+{contract_summary}
 
 Auxiliary context — supporting documents and any instruction the user gave for
 this run. It OVERRIDES the modelling conventions: where it states how something
