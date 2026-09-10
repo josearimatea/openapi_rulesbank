@@ -45,12 +45,16 @@ from openapi_rulesbank.tools.rag_tools import (
 # this loop made the Validator reject far too much (a section fell from 6 rules
 # to 0), and a section with no gap at all is where that shows up.
 SECTIONS = [
+    # The create operation comes first, as it does in the document. Its clause is
+    # what the callbacks anchor on, and the triage only knows a sibling once that
+    # sibling has been analysed — leaving it out is why earlier runs had nothing
+    # to resolve the anchor from.
+    "12.1.1.3.2.1.3.1",   # HTTP PUT — the operation the callbacks anchor on
     "12.1.1.3.2.4.2",     # URI — where notificationRecipientAddress enters the memory
     "12.1.1.3.2.4.3.1",   # POST on {notificationTarget} — the callback case
-    # Kept out while the callback case is being isolated — put them back to check
-    # the Validator is not over-rejecting (an earlier run took a section from 6
-    # rules to 0, and a section with no gap at all is where that shows):
-    # "12.1.1.3.2.1.3.1",   # HTTP PUT — the operation the callbacks anchor on
+    # Put these back to check the Validator is not over-rejecting (an earlier run
+    # took a section from 6 rules to 0, and a section with no gap at all is where
+    # that shows):
     # "12.1.1.4.1a.4",      # Type MoiChange — self-contained
     # "12.1.1.4.4.4",       # Enumeration SourceIndicator — self-contained
 ]
