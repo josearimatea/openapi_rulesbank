@@ -250,17 +250,12 @@ implicit, and they are how the published YAMLs express them. Where one applies,
 use it and emit the rule: do not report the join as missing, do not leave a
 placeholder, do not fall back to a shape you know is wrong.
 
-  - CALLBACK ANCHOR. A callback anchors on the operation through which the
-    consumer supplies its address — "paths.<path>.<method>.callbacks.<name>",
-    where <path> and <method> are that operation's. If the service has a
-    subscription operation, that is it; otherwise it is the operation that
-    CREATES the resource carrying the address field.
-    READ BOTH PARTS OFF THE SPEC, never off habit. <path> is that resource's own
-    path key. <method> is the HTTP method THIS document maps its create operation
-    to — its operation-mapping table says which, and it is not always the one a
-    REST API would use by default. Emit the method the table gives.
-    A notification delivered to a consumer address is NEVER a path of this
-    service.
+  - CALLBACK ANCHOR. You do not work this out. The pre-analysis sees the sibling
+    clauses that you cannot, and where this section's notification goes to a
+    consumer-supplied address it hands you the anchor already resolved, under
+    "CALLBACK ANCHOR" in the section analysis. Use that string verbatim. When it
+    says the anchor is unresolved, report it — never invent one. A notification
+    delivered to a consumer address is NEVER a path of this service.
   - BASE-URL VARIABLES. URI variables the spec defines by pointing at the common
     URI structure belong to the base URL: keep them out of the path key and emit
     no path_parameter for them.
@@ -495,13 +490,6 @@ CALLBACK vs PATH — DECIDE BY WHO OWNS THE URI:
     response     : object "paths.<path>.<method>.callbacks.<name>.<cbMethod>.responses",
                    field the status code, value the schema $ref or description
 
-  A clause whose tables give the notification's request data structures and
-  response codes owns those two rule types, whichever shape the destination
-  turned out to be. Decided a callback, it writes them under the anchor above and
-  emits no path_operation — that is the only rule the callback decision removes,
-  and the clause is never left with nothing. Decided a path_operation, it writes
-  them under that path as usual.
-
 REFERENCES — structure every schema reference so the YAML builder needs no parsing:
 
   Whenever a rule's openapi_value is, or contains, a reference to another schema
@@ -585,7 +573,10 @@ Extraction focus (defined by the Planner):
 
 Pre-analysis of this section (a focused triage done BEFORE this extraction —
 follow it: it already resolved this section's kind, whether it is a schema home,
-and any imported base type / inherited fields):
+any imported base type / inherited fields, and — when the section's notification
+goes to a consumer-supplied address — the CALLBACK ANCHOR its callback rules
+hang off. These are decisions, not suggestions: apply them as written. Where it
+gives an anchor, use that exact string and resolve none of your own):
 {section_analysis}
 
 >>>>> BEGIN SECTION CONTENT — THE ONLY TEXT YOU MAY EXTRACT RULES FROM <<<<<
