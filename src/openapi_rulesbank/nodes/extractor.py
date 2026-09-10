@@ -130,6 +130,7 @@ def _analyze_section(
     section_content: str,
     ref_memory: dict,
     sibling_summary: str = "",
+    helper_context: str = "",
 ) -> tuple[SectionAnalysis | None, dict]:
     """Triage a section before extraction: build reference memory + extractor guidance.
 
@@ -191,6 +192,9 @@ def _analyze_section(
             "phase1_explanation": imports.explanation or "None.",
             "rag_results":        rag_results,
             "sibling_summary":    sibling_summary or "No sibling sections summarized yet.",
+            # First step of the callback-anchor cascade: a decision stated here
+            # outranks the document, the convention and the OpenAPI reference.
+            "helper_context":     helper_context or "None provided.",
         })
 
         new_refs = {
@@ -203,6 +207,12 @@ def _analyze_section(
         }
         if new_cross_refs:
             logger.info(f"[analyzer {section_id}] cross-refs: {new_cross_refs}")
+        # Which step of the cascade answered, so the decision is visible in a run.
+        if analysis.callback_anchor or analysis.callback_anchor_source:
+            logger.info(
+                f"[analyzer {section_id}] callback anchor: "
+                f"{analysis.callback_anchor!r} (from {analysis.callback_anchor_source})"
+            )
         logger.info(
             f"[analyzer {section_id}] phase2: kind={analysis.section_kind} "
             f"emits_schema={analysis.emits_schema_properties} "
@@ -301,6 +311,28 @@ def _format_analysis_guidance(analysis: SectionAnalysis | None) -> str:
             "rule (no properties.<name>, no allOf, no enum, no required). Emit only "
             "its HTTP-level rules (path_operation, callback, request_body, response). "
             "Any attributes it lists are defined in their own 'Type <Name>' section."
+        )
+
+    # The anchor was decided in the triage, which sees the sibling clauses this
+    # section cannot. Hand it over resolved: the Extractor writes callbacks under
+    # it and does not work one out for itself.
+    if analysis.callback_anchor:
+        lines.append(
+            f"CALLBACK ANCHOR (decided in pre-analysis, source: "
+            f"{analysis.callback_anchor_source}): this section's notification is "
+            f"delivered to a consumer-supplied address, so it is a callback. Use "
+            f"\"{analysis.callback_anchor}\" as the anchor — emit the callback rule "
+            f"as \"{analysis.callback_anchor}.callbacks.<notificationName>\", and "
+            f"its request_body and response rules under that same anchor. Do NOT "
+            f"emit a path_operation for the delivery address, and do NOT resolve "
+            f"an anchor of your own."
+        )
+    elif analysis.callback_anchor_source == "unresolved":
+        lines.append(
+            "CALLBACK ANCHOR: this section's notification is delivered to a "
+            "consumer-supplied address, but the pre-analysis could not resolve the "
+            "operation to anchor it on. Emit what the section does support and "
+            "report the missing anchor in missing_context — never a placeholder."
         )
     return "\n".join(lines)
 
@@ -572,6 +604,7 @@ def extractor_node(state: RuleBankState) -> dict:
         section_id, section_title, section["content"],
         state.get("other_spec_ref_memory", {}),
         sibling_summary,
+        helper_context,
     )
     section_analysis = _format_analysis_guidance(analysis)
     # What earlier sections learned about how things relate, plus whatever this

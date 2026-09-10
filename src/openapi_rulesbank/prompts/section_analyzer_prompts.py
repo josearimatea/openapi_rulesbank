@@ -187,6 +187,30 @@ class CrossReferenceFact(BaseModel):
 class SectionAnalysis(BaseModel):
     """Phase 2 output: memory updates + guidance for the Extractor."""
 
+    callback_anchor: str = Field(
+        default="",
+        description=(
+            "The anchor this section's callback rules hang off, decided HERE and "
+            "used verbatim by the Extractor: exactly \"paths.<path>.<method>\", "
+            "the path key and lowercase HTTP method of the operation through which "
+            "the consumer supplies its notification address — e.g. "
+            "\"paths./{resource}={id}.put\". No placeholder, no <angle brackets>, "
+            "no trailing '.callbacks'. "
+            "Empty when this section describes no notification delivered to a "
+            "consumer-supplied address, or when the cascade below reaches its last "
+            "step without an answer."
+        )
+    )
+    callback_anchor_source: str = Field(
+        default="",
+        description=(
+            "Which step of the cascade produced callback_anchor, so the decision "
+            "is auditable: 'auxiliary' | 'spec' | 'openapi' | 'convention' | "
+            "'unresolved'. Empty when callback_anchor is empty because the section "
+            "has no such notification."
+        )
+    )
+
     cross_refs: list[CrossReferenceFact] = Field(
         default_factory=list,
         description=(
@@ -323,7 +347,38 @@ B. KEEP WHAT THE FETCHED TEXT SAYS ABOUT HOW THINGS RELATE (cross_refs). Job A
    THIS document names it. Prefer the sentence a later section could act on. At
    most 2 per section; empty when the fetched text adds no such fact.
 
-C. GUIDE THE EXTRACTOR:
+C. DECIDE THE CALLBACK ANCHOR (callback_anchor, callback_anchor_source).
+
+   FIRST, does this section describe a notification delivered to an address the
+   CONSUMER supplies — a runtime address the spec names as the consumer's, rather
+   than a fixed resource of this service? If not, leave both fields empty and skip
+   to D. If yes, the notification is a callback, and its rules hang off the
+   operation through which the consumer supplied that address. Work the cascade
+   below IN ORDER and STOP at the first step that answers. Do not weigh the steps
+   against each other: an earlier step always wins.
+
+     1. AUXILIARY CONTEXT / USER INSTRUCTIONS. Do they state the anchor, or the
+        operation to anchor on, for this service? Use it.        -> 'auxiliary'
+     2. THIS DOCUMENT. Do the section, the sibling sections or the retrieved
+        definitions name the operation whose request carries the address field —
+        a subscription operation, or the operation that creates the resource
+        holding it? Use that operation's path key and the HTTP method this
+        document maps it to.                                          -> 'spec'
+     3. OUR CONVENTION. Anchor on the operation that CREATES the resource
+        carrying the address field, at that resource's path key. This is the
+        rule we adopt for these specifications, so it settles the case before
+        any generic OpenAPI default does.                        -> 'convention'
+     4. OPENAPI REFERENCE. Only if the convention does not apply to this section
+        at all: use the anchor the reference shows for this construct.
+                                                                    -> 'openapi'
+     5. Nothing above answers -> leave callback_anchor empty and set
+        callback_anchor_source to 'unresolved'.
+
+   Emit the anchor as a literal "paths.<path>.<method>": the path key exactly as
+   the resource's own clause writes it, the method in lowercase. Never a
+   placeholder, never a guess dressed as one — step 5 exists for that.
+
+D. GUIDE THE EXTRACTOR:
    1. CLASSIFY the section by its content: type_definition, enumeration, mapping,
       resource, or other. emits_schema_properties is True ONLY for
       type_definition/enumeration. Keep `guidance` CONSISTENT with this flag —
@@ -370,6 +425,12 @@ definitions — never invent a field or a base type not evidenced in them.
 _STEP2_USER = """\
 Section ID   : {section_id}
 Section Title: {section_title}
+
+Auxiliary context — supporting documents and any instruction the user gave for
+this run. It is the FIRST step of the callback-anchor cascade and outranks every
+other source: where it states how something maps for this service, that is the
+decision:
+{helper_context}
 
 Section content:
 {section_content}
