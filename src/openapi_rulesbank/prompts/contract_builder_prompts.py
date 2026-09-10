@@ -47,7 +47,14 @@ class SectionLocator(BaseModel):
         default_factory=list,
         description=(
             "Section IDs that describe what the service supports — "
-            "operations, notifications, states, subscriptions, or any other capability type."
+            "operations, notifications, states, subscriptions, or any other "
+            "capability type. Include BOTH kinds of clause: the abstract ones "
+            "that declare and describe each capability, and the mapping clauses "
+            "of the target solution set, whose tables list which of them it binds "
+            "to a protocol ('Mapping of operations', 'Mapping of notifications', "
+            "or a table pairing a capability with an HTTP method and a URI). The "
+            "second kind is what settles whether a capability reaches the target "
+            "YAML, so leaving it out makes that undecidable."
         )
     )
     concepts_section_ids: list[str] = Field(
@@ -196,7 +203,24 @@ For capabilities:
     Use "state" only if the spec genuinely offers a state as a service feature —
     never for a before/after or trigger condition of another capability.
   - If the spec does not label the type explicitly, infer from context.
-  - Do not include capabilities the text attributes to a different service.
+  - A WRONG ENTRY COSTS MORE THAN A MISSING ONE. Everything downstream reads this
+    list as things that ARE the service's, so one that is not sends every later
+    step after something the target YAML does not contain. Leave out whatever you
+    are unsure of, and set capabilities_complete to False — which is the normal
+    answer — so the list is read as what you identified, not as all there is.
+  - Do not include a capability the text attributes to a different service.
+  - STAGE 3 HAS THE FINAL WORD ON WHAT THE YAML CONTAINS. The abstract stage 2
+    clauses declare what the service offers, and that is where the descriptions
+    come from. Whether a given capability reaches the target YAML is decided
+    elsewhere: by the stage 3 mapping tables, which say which operations and
+    notifications this solution set binds to a protocol. A service commonly
+    declares more in stage 2 than one solution set maps.
+    So for each capability, check the stage 3 mapping tables and set
+    bound_in_stage3 accordingly — True when they map it, False when they do not.
+    Keep the unmapped one in the list with False rather than dropping it: its
+    description is still true of the service, and the flag is what tells a reader
+    that the YAML does not contain it. Set True when no stage 3 table was
+    available to check against.
 
 For key_concepts: unique domain terms/data structures central to THIS service.
 For inclusion_keywords: unique terms that are specific to THIS service.

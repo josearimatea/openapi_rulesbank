@@ -48,6 +48,19 @@ class Capability(BaseModel):
     description: str = Field(
         description="One sentence describing this capability, taken from the spec text."
     )
+    bound_in_stage3: bool = Field(
+        default=True,
+        description=(
+            "Whether the stage 3 solution set this contract is for actually maps "
+            "this capability to a protocol — its mapping tables are the authority. "
+            "A capability the abstract stage 2 declares but stage 3 does not map "
+            "belongs to the service and NOT to the target YAML, so it is kept here "
+            "with False rather than dropped: the description is still true, and "
+            "every node reading the contract needs to know the difference between "
+            "'this service has it' and 'this YAML contains it'. True when the "
+            "stage 3 tables map it, or when you could not check."
+        )
+    )
 
 
 class ServiceContract(BaseModel):
@@ -72,7 +85,22 @@ class ServiceContract(BaseModel):
     )
     capabilities: list[Capability] = Field(
         default_factory=list,
-        description="All capabilities declared by the service in the spec."
+        description=(
+            "The capabilities you identified for this service in the sections you "
+            "were given — not necessarily every one the service has. A capability "
+            "you are unsure belongs here is left out: the list is read as a list of "
+            "things that ARE this service's, so a wrong entry misleads every node "
+            "downstream, while a missing one only leaves them with less."
+        )
+    )
+    capabilities_complete: bool = Field(
+        default=False,
+        description=(
+            "True only when the sections you were given plainly enumerate the "
+            "service's capabilities and you listed all of them. False when they "
+            "may hold more than you could identify — which is the usual case, and "
+            "tells the reader to treat the list as partial rather than closed."
+        )
     )
     key_concepts: list[str] = Field(
         default_factory=list,
@@ -127,12 +155,20 @@ def format_contract_summary(service_contract: dict) -> str:
     if not service_contract:
         return ""
 
-    cap_names = [c.get("name", "") for c in service_contract.get("capabilities", [])]
+    # A capability stage 3 does not bind belongs to the service but not to this
+    # YAML, so it is marked rather than listed as if it were extractable.
+    cap_names = [
+        c.get("name", "") + ("" if c.get("bound_in_stage3", True) else " (not in this YAML)")
+        for c in service_contract.get("capabilities", [])
+    ]
     summary = (
         "SERVICE CONTRACT\n"
         f"Service: {service_contract.get('service_name', '')}\n"
         f"Purpose: {service_contract.get('purpose', '')}\n"
-        f"Capabilities: {', '.join(cap_names)}\n"
+        # Say whether the list is closed. A reader that takes a partial list for a
+        # complete one treats an absence as evidence the service lacks something.
+        f"Capabilities ({'complete' if service_contract.get('capabilities_complete') else 'identified so far — there may be more'}): "
+        f"{', '.join(cap_names)}\n"
         f"Key concepts: {', '.join(service_contract.get('key_concepts', []))}\n"
         f"Inclusion keywords: {', '.join(service_contract.get('inclusion_keywords', []))}\n"
         f"Exclusion keywords: {', '.join(service_contract.get('exclusion_keywords', []))}\n"
