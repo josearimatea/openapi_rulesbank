@@ -114,6 +114,12 @@ list.
 """
 
 _STEP1_USER = """\
+Scope contract — which Management Service these rules are being built for, and
+what belongs to it (a capability marked "(not in this YAML)" is the service's but
+not this YAML's). A type this section references for another service's sake is
+not one to look up here:
+{contract_summary}
+
 Reference memory so far (types seen in earlier sections, 'type -> source spec'):
 {ref_memory}
 
@@ -423,6 +429,14 @@ definitions — never invent a field or a base type not evidenced in them.
 """
 
 _STEP2_USER = """\
+Scope contract — which Management Service these rules are being built for, and
+what belongs to it: its capabilities (a "(not in this YAML)" one is the service's
+but not this YAML's), the terms that signal its content, and the other services
+to keep out. Every decision below is about THIS service — above all the callback
+anchor, whose path must be a resource of this service and not one you recall from
+another:
+{contract_summary}
+
 Section ID   : {section_id}
 Section Title: {section_title}
 
@@ -551,6 +565,12 @@ Never invent a candidate the text does not support; never skip a whole section.
 """
 
 _STEP3_USER = """\
+Scope contract — which Management Service these rules are being built for, and
+what belongs to it. A candidate has to be this service's: one whose target names
+another service's resource, or a capability marked "(not in this YAML)", does not
+belong in the list however clearly the text states it:
+{contract_summary}
+
 Section ID   : {section_id}
 Section Title: {section_title}
 

@@ -131,6 +131,7 @@ def _analyze_section(
     ref_memory: dict,
     sibling_summary: str = "",
     helper_context: str = "",
+    contract_summary: str = "",
 ) -> tuple[SectionAnalysis | None, dict]:
     """Triage a section before extraction: build reference memory + extractor guidance.
 
@@ -164,6 +165,7 @@ def _analyze_section(
         # Phase 1 — find references to other specs and how to look each one up.
         p1_chain = section_import_ref_prompt | llm.with_structured_output(SectionImports)
         imports: SectionImports = p1_chain.invoke({
+            "contract_summary": contract_summary,
             "ref_memory":      _format_ref_memory(ref_memory),
             "section_title":   section_title,
             "section_content": section_content,
@@ -185,6 +187,7 @@ def _analyze_section(
         # Phase 2 — write the memory updates and the extractor guidance.
         p2_chain = section_analyzer_prompt | llm.with_structured_output(SectionAnalysis)
         analysis: SectionAnalysis = p2_chain.invoke({
+            "contract_summary": contract_summary,
             "section_id":         section_id,
             "section_title":      section_title,
             "section_content":    section_content,
@@ -232,6 +235,7 @@ def _scope_section(
     section_verdict: str,
     existing_rules: str,
     sibling_summary: str,
+    contract_summary: str = "",
 ) -> tuple[str, str]:
     """Phase 3 — the section's candidate rules (from its text) and the skip list.
 
@@ -246,6 +250,7 @@ def _scope_section(
     try:
         chain = section_scope_prompt | llm.with_structured_output(SectionScope)
         scope: SectionScope = chain.invoke({
+            "contract_summary": contract_summary,
             "section_id":      section_id,
             "section_title":   section_title,
             "section_content": section_content,
@@ -605,6 +610,7 @@ def extractor_node(state: RuleBankState) -> dict:
         state.get("other_spec_ref_memory", {}),
         sibling_summary,
         helper_context,
+        contract_summary,
     )
     section_analysis = _format_analysis_guidance(analysis)
     # What earlier sections learned about how things relate, plus whatever this
@@ -632,6 +638,7 @@ def extractor_node(state: RuleBankState) -> dict:
     candidate_rules, skip_rules = _scope_section(
         section_id, section_title, section["content"],
         section_analysis, existing_rules, sibling_summary,
+        contract_summary,
     )
 
     logger.debug(
