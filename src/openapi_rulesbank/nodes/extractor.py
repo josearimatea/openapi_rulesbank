@@ -105,6 +105,12 @@ def _build_sibling_summary(
     already decided for it (from section_analysis_by_id), or "not yet analyzed" for
     ones not processed yet. Titles only — no content — so the Phase 2 prompt can see
     the neighbourhood's shape without ballooning. Empty when there are no siblings.
+
+    A sibling that maps an operation also carries which one, and to what path and
+    method. The kind alone says a clause is a 'resource'; it does not say that the
+    clause is where createMOI is mapped to put on /{className}={id} — and that is
+    exactly what a later section needs when it has to name an operation defined
+    somewhere it cannot read.
     """
     def prefix(title: str) -> str:
         head = title.strip().split(" ", 1)[0]
@@ -119,8 +125,13 @@ def _build_sibling_summary(
             continue
         if prefix(s["title"]) != my_prefix:
             continue
-        kind = analysis_by_id.get(s["section_id"], {}).get("section_kind", "not yet analyzed")
-        lines.append(f"  [{s['section_id']}] {s['title'][:60]} — {kind}")
+        verdict = analysis_by_id.get(s["section_id"], {})
+        kind = verdict.get("section_kind", "not yet analyzed")
+        op, path, method = (verdict.get("maps_operation", ""),
+                            verdict.get("maps_path", ""),
+                            verdict.get("maps_method", ""))
+        maps = f" — maps {op}: {method} {path}" if op and path and method else ""
+        lines.append(f"  [{s['section_id']}] {s['title'][:60]} — {kind}{maps}")
     return "\n".join(lines)
 
 
@@ -688,6 +699,13 @@ def extractor_node(state: RuleBankState) -> dict:
             "emits_schema_properties": analysis.emits_schema_properties,
             "base_ref":                analysis.base_ref,
             "inherited_fields":        analysis.inherited_fields,
+            # Which operation this clause maps, and where. A later section that
+            # has to refer to an operation — a callback naming the one it anchors
+            # on — reads it off the sibling summary instead of re-deriving it from
+            # a clause it was never given.
+            "maps_operation":          analysis.maps_operation,
+            "maps_path":               analysis.maps_path,
+            "maps_method":             analysis.maps_method,
             # Phase-3 positive scope for this section, so the Reflector's
             # completeness check measures "missing" against what the section is
             # actually supposed to emit — not the raw attribute table.

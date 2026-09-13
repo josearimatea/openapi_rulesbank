@@ -270,6 +270,34 @@ class SectionAnalysis(BaseModel):
             "Direction'). Empty otherwise."
         )
     )
+    maps_operation: str = Field(
+        default="",
+        description=(
+            "For a section that maps ONE operation to HTTP — a resource's method "
+            "clause, or an operation-mapping clause — the IS operation name it "
+            "maps, e.g. 'createMOI'. Empty for any other kind of section, and "
+            "empty when the section covers several operations rather than "
+            "defining one. Recorded so a LATER section can find the operation it "
+            "needs to refer to without re-reading this clause."
+        )
+    )
+    maps_path: str = Field(
+        default="",
+        description=(
+            "The path key that operation is on, as a path key — the resource part "
+            "only, e.g. '/{className}={id}'. Empty when maps_operation is empty."
+        )
+    )
+    maps_method: str = Field(
+        default="",
+        description=(
+            "The HTTP method THIS document maps that operation to, lowercase: "
+            "get | put | post | delete | patch. Take it from what the clause "
+            "states, never from what the operation's name suggests — a create "
+            "operation is not always mapped to post. Empty when maps_operation "
+            "is empty."
+        )
+    )
     base_ref: str = Field(
         default="",
         description=(
@@ -365,11 +393,14 @@ C. DECIDE THE CALLBACK ANCHOR (callback_anchor, callback_anchor_source).
 
      1. AUXILIARY CONTEXT / USER INSTRUCTIONS. Do they state the anchor, or the
         operation to anchor on, for this service? Use it.        -> 'auxiliary'
-     2. THIS DOCUMENT. Do the section, the sibling sections or the retrieved
-        definitions name the operation whose request carries the address field —
-        a subscription operation, or the operation that creates the resource
-        holding it? Use that operation's path key and the HTTP method this
-        document maps it to.                                          -> 'spec'
+     2. THIS DOCUMENT. Which operation's request carries the address field — a
+        subscription operation, or the operation that creates the resource
+        holding it? The sibling list is where to look: an entry reading
+        "maps <operation>: <method> <path>" has already been resolved by the
+        triage of that clause, so take its <path> and <method> as they stand and
+        answer "paths.<path>.<method>". Do not re-derive them from the clause's
+        title, and do not substitute the method an operation of that name would
+        usually get.                                                  -> 'spec'
      3. OUR CONVENTION. Anchor on the operation that CREATES the resource
         carrying the address field, at that resource's path key. This is the
         rule we adopt for these specifications, so it settles the case before
@@ -385,6 +416,15 @@ C. DECIDE THE CALLBACK ANCHOR (callback_anchor, callback_anchor_source).
    placeholder, never a guess dressed as one — step 5 exists for that.
 
 D. GUIDE THE EXTRACTOR:
+   0. RECORD WHAT THIS SECTION MAPS. When it maps ONE operation to HTTP — a
+      resource's method clause, an operation-mapping clause — fill maps_operation
+      with the IS operation name, maps_path with the path key it is on, and
+      maps_method with the method THIS document gives it, read off the clause
+      rather than assumed from the operation's name. Leave all three empty for
+      any other section, and when the section covers several operations at once.
+      This is for the sections that come after: one of them will have to name an
+      operation defined here, and this is how it learns of it without reading
+      this clause.
    1. CLASSIFY the section by its content: type_definition, enumeration, mapping,
       resource, or other. emits_schema_properties is True ONLY for
       type_definition/enumeration. Keep `guidance` CONSISTENT with this flag —
