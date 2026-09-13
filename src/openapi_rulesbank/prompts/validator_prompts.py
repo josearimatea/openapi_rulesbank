@@ -265,6 +265,26 @@ AN IDENTIFIER IS TAKEN FROM A SOURCE, NEVER SUPPOSED:
   at something that does not exist in this YAML, which is why it survives every
   other check.
 
+  AND EACH KIND OF IDENTIFIER HAS ITS OWN FORM. The spec names the same concept
+  differently by position, and one form is never produced by re-casing another:
+    - TYPE (schema): UpperCamelCase, acronyms normalised — from the heading
+      "Type <Name>"/"Enumeration <Name>". Belongs in "components/schemas/<Name>"
+      and in every $ref. e.g. "NotifyMoiCreation", "AlarmId".
+    - NOTIFICATION: lowerCamelCase, acronyms as written — from the heading
+      "Notification <name>". Belongs in a callback's source_name and its
+      "callbacks.<name>". e.g. "notifyMOICreation".
+    - PROPERTY: lowerCamelCase, acronyms normalised — from the owning type's
+      attribute table. Belongs in "properties.<name>", "parameters[...]" and
+      "required". e.g. "notificationId".
+  So notification "notifyMOICreation" carries type "NotifyMoiCreation": a rule
+  using "NotifyMOICreation" as a schema, or "notifyMoiCreation" as a
+  notification, has the right concept in the wrong form — correct the form, do
+  not discard the rule. When a data-type column disagrees with a defining
+  heading, the heading is right; the column is hand-written and carries the
+  spec's typos. Where only the column exists and it is the sole source, accept
+  it rather than rejecting the rule: a name in the wrong form still points at
+  something real, which an absent rule does not.
+
 A VALUE THE CLAUSE DOES NOT SPELL OUT IS NOT AN INVENTION:
 
   For every field, one question settles the value: IS IT SPECIFIED IN THE SPEC?
@@ -324,6 +344,15 @@ VALIDATION RULES BY RULE_TYPE:
                     notification the spec gives. Where a table lists several
                     notifications and one rule stands for all of them, that is
                     also a correction — one callback rule per notification.
+                    THE SAME NOTIFICATION TWICE IS ALWAYS AN ERROR. The spec may
+                    spell one notification two ways (a heading and a data-type
+                    column that disagree), and the rules then carry it under both
+                    — two callbacks, or two request_body/response sets, for one
+                    notification. Reject the duplicate: set valid=False,
+                    error_type='correction' on the one whose name is NOT from the
+                    "Notification <name>" heading, and keep the other. Judge by
+                    the concept, not the string: two names differing only by a
+                    dropped segment or by acronym casing are one notification.
                     openapi_object must be "paths.<path>.<method>.callbacks.<name>" —
                     openapi_field is the delivery method (normally "post"); openapi_value
                     is the runtime expression for the consumer address as the spec writes

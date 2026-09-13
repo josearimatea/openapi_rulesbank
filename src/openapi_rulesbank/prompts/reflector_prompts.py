@@ -92,6 +92,13 @@ class ReflectionResult(BaseModel):
             "  - the rule is OWNED BY ANOTHER SECTION (this section only references a "
             "    type/operation whose real definition lives elsewhere);\n"
             "  - the rule DUPLICATES one already validated in another section;\n"
+            "  - the rule is the SAME CONCEPT as another rule of THIS section "
+            "    under a different spelling — the spec may name one notification "
+            "    or type two ways (a heading and a data-type column that "
+            "    disagree by a dropped segment or by acronym casing), and both "
+            "    spellings got emitted. They are ONE rule: suggest discarding "
+            "    the one whose name does NOT come from the defining heading, and "
+            "    keep the other. Compare concepts, not strings;\n"
             "  - the rule describes the ABSENCE of a construct (e.g. 'no query "
             "    parameters'), or otherwise cannot be mapped to OpenAPI.\n"
             "Use the pre-analysis verdict (inherited fields, schema-home flag) as "
@@ -133,6 +140,26 @@ For each rule, reason through the following questions:
      A rule following one of these is RIGHT, however little the section says about
      it. It is wrong only where a clause of this document or the auxiliary context
      above states otherwise — both of which outrank a convention.
+     NAMES HAVE THREE FORMS, ONE PER POSITION, and the spec uses all three for the
+     same concept. Judge an identifier against the form its position requires:
+       - TYPE (a schema): UpperCamelCase, acronyms normalised to an initial
+         capital — from a heading "Type <Name>"/"Enumeration <Name>". Belongs in
+         "components/schemas/<Name>" and in every $ref. e.g. "NotifyMoiCreation".
+       - NOTIFICATION: lowerCamelCase, acronyms kept as written — from a heading
+         "Notification <name>". Belongs in a callback's source_name and its
+         "callbacks.<name>". e.g. "notifyMOICreation".
+       - PROPERTY (a field): lowerCamelCase, acronyms normalised — from the owning
+         type's attribute table. Belongs in "properties.<name>",
+         "parameters[...]" and "required". e.g. "notificationId".
+     One form is NEVER produced by re-casing another: notification
+     "notifyMOICreation" carries type "NotifyMoiCreation"; "NotifyMOICreation" as
+     a schema is the right concept in the wrong form. Where a data-type column
+     disagrees with a defining heading, the heading is right — those columns are
+     hand-written and carry the spec's typos, and the same spec may spell one
+     concept three ways.
+     A wrong FORM is not a wrong rule: lower the score somewhat and flag it, so
+     the Validator fixes the string — do NOT discard it, because the rule points
+     at something real and an absent rule does not.
   3. Does the OpenAPI reference context below confirm or contradict this rule?
   4. Does this rule BELONG in the final set for THIS section? It does NOT when it is
      an inherited field (present via an allOf $ref to a base type), when another
@@ -542,7 +569,10 @@ Rules identified as missing in the previous iteration (check if now resolved):
 
 Names the earlier sections established, with the fields each one carries (the
 running reference memory). A query should use the name the spec gives a thing,
-and this is where those names are:
+and this is where those names are. Search with the form that matches what you are
+after — the type's UpperCamelCase name finds the clause defining the type, the
+notification's lowerCamelCase name finds the clause defining the notification, and
+a spelling taken from a data-type column may match nothing at all:
 {ref_memory}
 
 Gaps the Extractor declared for this section (its missing_context — empty when it

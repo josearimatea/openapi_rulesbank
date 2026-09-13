@@ -127,11 +127,35 @@ context". Neither is a rule source; use them to get THIS section's rules right:
     is always wrong — the path is "/notificationSink". (And when the URI is the
     consumer's address, it is a callback, not a path — see below.)
 
-  - SCHEMA NAME AND CASING — a data type has ONE canonical name: the one in the
-    heading "<clause> Type <Name>" / "Enumeration <Name>", found in this section or
-    in the sibling stage 3 context. Always use that exact spelling and casing
-    (e.g. "NotifyThresholdCrossing", never "notifyThresholdCrossing"). Do not coin
-    a schema name from a notification or property mentioned in prose.
+  - NAMES: THREE KINDS, THREE PLACES, NEVER CONVERTED INTO EACH OTHER.
+    The spec writes the same concept differently depending on what it is naming.
+    Each kind is COPIED from the place listed below — never produced by re-casing
+    another kind, and never taken from a data-type column:
+
+      TYPE (a schema) — UpperCamelCase, acronyms normalised to an initial capital.
+        From the heading "<clause> Type <Name>" / "Enumeration <Name>".
+        Use in: openapi_object "components/schemas/<Name>", and in every $ref.
+        e.g. "NotifyMoiCreation", "AlarmId", "PerfMetricDirection".
+
+      NOTIFICATION — lowerCamelCase, acronyms kept as the spec capitalises them.
+        From the heading "<clause> Notification <name>".
+        Use in: a callback's source_name and its "callbacks.<name>" segment.
+        e.g. "notifyMOICreation", "notifyNewAlarm".
+
+      PROPERTY (a field) — lowerCamelCase, acronyms normalised.
+        From the attribute/parameter table of the type that owns it.
+        Use in: openapi_field "properties.<name>", "parameters[...name=<name>]",
+        and the entries of "required".
+        e.g. "notificationId", "alarmId", "objectInstance".
+
+    The notification and the type it carries are DIFFERENT NAMES for different
+    things, and differ by more than the first letter: notification
+    "notifyMOICreation" carries type "NotifyMoiCreation" — "NotifyMOICreation"
+    (re-cased notification) and "notifyMoiCreation" (re-cased type) are both
+    wrong. Likewise property "notificationId" ↔ type "NotificationId".
+    Where a data-type column disagrees with a defining heading, the HEADING wins:
+    columns are hand-written prose and are where the spec's typos live.
+    Do not coin a schema name from a notification or property mentioned in prose.
 
   - WHO OWNS A SCHEMA — schema_property rules come ONLY from a section that
     DEFINES a data type, never from one that MAPS parameters. Tell them apart by
@@ -412,10 +436,20 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     assembled yourself ("notifyEvent", "notifyChange") is wrong
                     even when it reads plausibly, because nothing downstream can
                     match it to the schema the notification carries.
+                    Use the NOTIFICATION name here (see "NAMES: THREE KINDS"
+                    above): lowerCamelCase from the heading "<clause> Notification
+                    <name>", acronyms as written. NOT the type it carries — that
+                    UpperCamelCase name belongs in the request_body's $ref.
                     ONE RULE PER NOTIFICATION. Where a table lists several
                     notifications on the same resource, that is one callback rule
                     each, under its own name — never a single rule standing for
                     all of them.
+                    And the same notification EXACTLY ONCE. A data-type column may
+                    spell it a third way, disagreeing with both headings (a
+                    dropped segment, different casing); it is still that one
+                    notification. Emitting it twice, once per spelling, is always
+                    wrong: take the "Notification <name>" heading, emit one rule,
+                    and report the disagreement in missing_context.
                     If no name is written anywhere you were given, do not invent
                     one: report it in missing_context.
    openapi_object : the full anchor, "paths.<path>.<method>.callbacks.<notificationName>"
