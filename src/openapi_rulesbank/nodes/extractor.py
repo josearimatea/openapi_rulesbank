@@ -96,15 +96,22 @@ def _build_sibling_summary(
     parsed_sections: list[dict],
     analysis_by_id: dict,
     exclude_id: str,
-    levels: int = 4,
+    levels: int = 3,
 ) -> str:
     """A light summary of the sibling sections in the same service block.
 
-    Siblings share the section's clause prefix at `levels` (e.g. "12.3.1.2" groups
-    the performance-threshold service's clauses). Each line is id + title + the kind
-    already decided for it (from section_analysis_by_id), or "not yet analyzed" for
-    ones not processed yet. Titles only — no content — so the Phase 2 prompt can see
-    the neighbourhood's shape without ballooning. Empty when there are no siblings.
+    Siblings share the section's clause prefix at `levels` (e.g. "12.1.1" groups a
+    solution set's clauses). Each line is id + title + the kind already decided for
+    it (from section_analysis_by_id), or "not yet analyzed" for ones not processed
+    yet. Titles only — no content — so the Phase 2 prompt can see the
+    neighbourhood's shape without ballooning. Empty when there are no siblings.
+
+    The grouping is the whole solution set, not the sub-block a clause sits in:
+    an operation is mapped in one sub-block (".1.x") and the resource it acts on
+    is defined in another (".3.x"), so a narrower prefix puts a clause and the
+    operation it needs in different groups. That is 59 title-only lines here
+    against 19, for ~3.8k characters — cheap beside the retrieved spec chunks the
+    same prompt already carries.
 
     A sibling that maps an operation also carries which one, and to what path and
     method. The kind alone says a clause is a 'resource'; it does not say that the
@@ -231,6 +238,11 @@ def _analyze_section(
             f"[analyzer {section_id}] phase2: kind={analysis.section_kind} "
             f"emits_schema={analysis.emits_schema_properties} "
             f"base_ref={analysis.base_ref!r} inherited={analysis.inherited_fields} "
+            # What this clause maps, which is what a later section reads off the
+            # sibling list. Logged because an empty one is invisible otherwise:
+            # the later section simply has nothing to anchor on and no trace says why.
+            f"maps={analysis.maps_operation!r}:{analysis.maps_method!r} "
+            f"{analysis.maps_path!r} "
             f"| memory_updates: { {t: v['fields'] for t, v in new_refs.items()} }"
         )
         return analysis, new_refs, new_cross_refs

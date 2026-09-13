@@ -285,7 +285,11 @@ class SectionAnalysis(BaseModel):
         default="",
         description=(
             "The path key that operation is on, as a path key — the resource part "
-            "only, e.g. '/{className}={id}'. Empty when maps_operation is empty."
+            "only, e.g. '/{className}={id}'. A clause title may abbreviate the "
+            "base URL with a leading '...' (as in 'Resource \".../{className}={id}\"'); "
+            "that prefix is the elided base URL, not part of the path key, so drop "
+            "it and start the value at '/'. Never abbreviated with '...'. "
+            "Empty when maps_operation is empty."
         )
     )
     maps_method: str = Field(
@@ -335,7 +339,8 @@ _STEP2_SYSTEM = """\
 You are an expert in 3GPP specifications and OpenAPI. You finish triaging ONE
 section before another agent extracts rules from it. You are given the section,
 the running reference memory, Phase 1's explanation of the section's external
-references, and the fetched definitions of those references (RAG). Three jobs:
+references, and the fetched definitions of those references (RAG). Four jobs, all
+of them required — a field you leave empty is one the next section cannot read:
 
 A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    record what it is: its name, its source spec, its OWN property names, and a
@@ -393,27 +398,41 @@ C. DECIDE THE CALLBACK ANCHOR (callback_anchor, callback_anchor_source).
 
      1. AUXILIARY CONTEXT / USER INSTRUCTIONS. Do they state the anchor, or the
         operation to anchor on, for this service? Use it.        -> 'auxiliary'
-     2. THIS DOCUMENT. Which operation's request carries the address field — a
-        subscription operation, or the operation that creates the resource
-        holding it? The sibling list is where to look: an entry reading
-        "maps <operation>: <method> <path>" has already been resolved by the
-        triage of that clause, so take its <path> and <method> as they stand and
-        answer "paths.<path>.<method>". Do not re-derive them from the clause's
-        title, and do not substitute the method an operation of that name would
-        usually get.                                                  -> 'spec'
-     3. OUR CONVENTION. Anchor on the operation that CREATES the resource
-        carrying the address field, at that resource's path key. This is the
-        rule we adopt for these specifications, so it settles the case before
-        any generic OpenAPI default does.                        -> 'convention'
+     2. THIS DOCUMENT, STATED OUTRIGHT. Does a clause NAME the operation that
+        carries the address field — this section's own text, a relationship fact,
+        or a sibling entry naming the address field itself? Only when it is
+        stated; do not work it out by joining facts. Then read that operation off
+        the sibling list: an entry reading "maps <operation>: <method> <path>"
+        has already been resolved by the triage of that clause, so take its
+        <path> and <method> as they stand and answer "paths.<path>.<method>".
+        Do not re-derive them from the clause's title, and do not substitute the
+        method an operation of that name would usually get.           -> 'spec'
+     3. OUR CONVENTION. Nothing states it outright, so apply the rule we adopt
+        for these specifications: the consumer supplies its address on an object
+        it CREATES on the producer, and such objects are created by this
+        service's generic create operation. Scan the sibling list for the entry
+        whose <operation> creates a managed object instance, and answer
+        "paths.<path>.<method>" from that entry's recorded <path> and <method>.
+        Apply this WITHOUT establishing that the create operation's request body
+        carries the address field, and WITHOUT a clause joining the subscription
+        object to that operation. Supplying the join the clauses leave implicit
+        is exactly what this convention is for, so its absence is not a reason to
+        fall through to step 5 — this is a modelling decision we have made, not
+        an assumption you are making. 'convention' records that the answer is
+        ours rather than the document's.                         -> 'convention'
      4. OPENAPI REFERENCE. Only if the convention does not apply to this section
         at all: use the anchor the reference shows for this construct.
                                                                     -> 'openapi'
      5. Nothing above answers -> leave callback_anchor empty and set
         callback_anchor_source to 'unresolved'.
 
-   Emit the anchor as a literal "paths.<path>.<method>": the path key exactly as
-   the resource's own clause writes it, the method in lowercase. Never a
-   placeholder, never a guess dressed as one — step 5 exists for that.
+   Emit the anchor as a literal "paths.<path>.<method>": the path key as the YAML
+   would key it and the method in lowercase. A clause title may abbreviate the
+   base URL with a leading "..." — that prefix is the elided base URL, not part of
+   the path key, so the anchor starts at '/'. Never a placeholder, and never an
+   invented path or method — step 5 exists for that. An anchor reached by step 3
+   is not an invention: the convention is a decision already made, and applying it
+   is following an instruction, not supposing a fact.
 
 D. GUIDE THE EXTRACTOR:
    0. RECORD WHAT THIS SECTION MAPS. When it maps ONE operation to HTTP — a
