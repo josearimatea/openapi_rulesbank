@@ -45,11 +45,15 @@ from openapi_rulesbank.tools.rag_tools import (
 # this loop made the Validator reject far too much (a section fell from 6 rules
 # to 0), and a section with no gap at all is where that shows up.
 SECTIONS = [
-    # The create operation comes first, as it does in the document. Its clause is
-    # what the callbacks anchor on, and the triage only knows a sibling once that
-    # sibling has been analysed — leaving it out is why earlier runs had nothing
-    # to resolve the anchor from.
-    "12.1.1.3.2.1.3.1",   # HTTP PUT — the operation the callbacks anchor on
+    # Document order, and every clause the anchor actually depends on. The method
+    # clause (HTTP PUT) never names an operation — it opens with "This method
+    # shall support..." and its tables carry parameters and response codes. What
+    # ties createMOI to that method is the operation-mapping clause, whose title
+    # names the operation and whose tables say HTTP PUT. Run without it, the
+    # triage has nothing to record and the anchor cannot be resolved from the
+    # spec — which is what earlier runs were measuring.
+    "12.1.1.1.2",         # Operation createMOI — names the operation and its method
+    "12.1.1.3.2.1.3.1",   # HTTP PUT — the resource clause it is mapped onto
     "12.1.1.3.2.4.2",     # URI — where notificationRecipientAddress enters the memory
     "12.1.1.3.2.4.3.1",   # POST on {notificationTarget} — the callback case
     # Put these back to check the Validator is not over-rejecting (an earlier run
