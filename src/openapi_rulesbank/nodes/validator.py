@@ -54,7 +54,9 @@ from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.schemas.rules import ValidatedRule, ValidationError
 from openapi_rulesbank.tools.rag_tools import index_validated_rule, search_similar_rules
 from openapi_rulesbank.utils.diagnostic import _diagnostic
-from openapi_rulesbank.utils.parsers import format_section_verdict, format_corrections
+from openapi_rulesbank.utils.parsers import (
+    format_section_verdict, format_corrections, build_sibling_summary,
+)
 from openapi_rulesbank.utils.rules_check import check_mapping_for_type
 
 logger = get_logger(__name__)
@@ -214,6 +216,7 @@ def _validate_semantically(
     similar_rules_other_sections: str = "",
     section_verdict: str = "",
     sibling_rules: str = "",
+    sibling_summary: str = "",
     declared_gaps: str = "",
     helper_context: str = "",
     contract_summary: str = "",
@@ -258,6 +261,7 @@ def _validate_semantically(
         "current_missing_rules":   _format_missing_rules(current_missing_rules),
         "section_verdict":         section_verdict or "No pre-analysis verdict for this section.",
         "sibling_rules":           sibling_rules or "None — only this rule in this section.",
+        "sibling_summary":         sibling_summary or "No sibling clauses.",
         "section_content":         section_content,
         "declared_gaps":           declared_gaps or "None declared.",
         "helper_context":          helper_context or "None provided.",
@@ -574,6 +578,15 @@ def validator_node(state: RuleBankState) -> dict:
                 similar_rules_other_sections=   similar_other_sections,
                 section_verdict=                section_verdict,
                 sibling_rules=                  sibling_rules_str,
+                # The sibling CLAUSES by title — where a canonical name is written
+                # in full, and where an operation defined elsewhere is recorded.
+                # Without it the verdict can only check a name's shape.
+                sibling_summary=                build_sibling_summary(
+                    sections_index.get(section_id, {}).get("title", ""),
+                    state.get("parsed_sections", []) or [],
+                    analysis_by_id,
+                    exclude_id=section_id,
+                ),
                 declared_gaps=                  declared_gaps_str,
                 helper_context=                 helper_context_str,
                 contract_summary=               contract_summary_str,

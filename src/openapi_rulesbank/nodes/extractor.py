@@ -60,6 +60,10 @@ from openapi_rulesbank.prompts.section_analyzer_prompts import (
     section_scope_prompt,
 )
 from openapi_rulesbank.schemas.contract import format_contract_summary
+# The sibling summary is shared: the triage resolves an anchor from it, and the
+# Reflector and Validator need the same clause titles to check a name against its
+# defining heading rather than against its shape.
+from openapi_rulesbank.utils.parsers import build_sibling_summary
 from openapi_rulesbank.tools.rag_tools import (
     search_openapi_reference,
     search_target_spec,
@@ -88,57 +92,6 @@ def _format_ref_memory(ref_memory: dict) -> str:
         fields = info.get("fields", [])
         f = f" fields={fields}" if fields else ""
         lines.append(f"{t} -> {spec}{f}")
-    return "\n".join(lines)
-
-
-def _build_sibling_summary(
-    section_title: str,
-    parsed_sections: list[dict],
-    analysis_by_id: dict,
-    exclude_id: str,
-    levels: int = 3,
-) -> str:
-    """A light summary of the sibling sections in the same service block.
-
-    Siblings share the section's clause prefix at `levels` (e.g. "12.1.1" groups a
-    solution set's clauses). Each line is id + title + the kind already decided for
-    it (from section_analysis_by_id), or "not yet analyzed" for ones not processed
-    yet. Titles only — no content — so the Phase 2 prompt can see the
-    neighbourhood's shape without ballooning. Empty when there are no siblings.
-
-    The grouping is the whole solution set, not the sub-block a clause sits in:
-    an operation is mapped in one sub-block (".1.x") and the resource it acts on
-    is defined in another (".3.x"), so a narrower prefix puts a clause and the
-    operation it needs in different groups. That is 59 title-only lines here
-    against 19, for ~3.8k characters — cheap beside the retrieved spec chunks the
-    same prompt already carries.
-
-    A sibling that maps an operation also carries which one, and to what path and
-    method. The kind alone says a clause is a 'resource'; it does not say that the
-    clause is where createMOI is mapped to put on /{className}={id} — and that is
-    exactly what a later section needs when it has to name an operation defined
-    somewhere it cannot read.
-    """
-    def prefix(title: str) -> str:
-        head = title.strip().split(" ", 1)[0]
-        return ".".join(head.split(".")[:levels])
-
-    my_prefix = prefix(section_title)
-    if not my_prefix:
-        return ""
-    lines = []
-    for s in parsed_sections:
-        if s["section_id"] == exclude_id:
-            continue
-        if prefix(s["title"]) != my_prefix:
-            continue
-        verdict = analysis_by_id.get(s["section_id"], {})
-        kind = verdict.get("section_kind", "not yet analyzed")
-        op, path, method = (verdict.get("maps_operation", ""),
-                            verdict.get("maps_path", ""),
-                            verdict.get("maps_method", ""))
-        maps = f" — maps {op}: {method} {path}" if op and path and method else ""
-        lines.append(f"  [{s['section_id']}] {s['title'][:60]} — {kind}{maps}")
     return "\n".join(lines)
 
 
@@ -412,16 +365,35 @@ def _build_correction_task(
         "FROM SCRATCH' below. Do NOT re-extract the section from the beginning.",
         "You may produce more or fewer rules than before — quality over quantity.",
         "",
+        "WHERE AN INSTRUCTION NAMES A VALUE, WRITE THAT VALUE. An instruction that",
+        "states it (\"Set openapi_value to application/merge-patch+json\", \"Fix",
+        "openapi_field from 200 to 201\") is the DECISION for that field: copy it",
+        "literally. It outranks the modelling conventions and the OpenAPI reference,",
+        "which are the default for a field nobody has decided — this one has now",
+        "been decided. Re-deriving the field from the convention instead reproduces",
+        "the exact value that was just rejected, and the section spends its",
+        "remaining attempts re-emitting it.",
+        "Where an instruction names NO value — it asks you to apply a fact, resolve",
+        "a gap or consult a source — there is nothing new to write: keep the rule as",
+        "it stands and report in missing_context that the correction named no value.",
+        "",
     ]
 
     if retrieved_context:
         lines += [
             "ANSWERS TO WHAT YOU REPORTED MISSING — each block names the gap it",
-            "answers and was fetched for it. Apply the fact to the rules that gap",
-            "affected: the mapping you fell back to for want of it is the one to",
-            "correct now. Reference only — never extract a rule of the section this",
-            "text was pulled from. If a block does not actually answer the gap, say",
-            "so again in missing_context instead of forcing a mapping onto it.",
+            "answers and was fetched for it. Read the block for a CONCRETE VALUE:",
+            "the media type, the status code, the path key, the operation name it",
+            "supplies. Where it gives one, write that value into the rule whose",
+            "mapping you had fallen back to for want of it. Where a block states no",
+            "value — it discusses the subject without settling the field — the rule",
+            "you already emitted stands: do not reword it to look answered, and say",
+            "again in missing_context that the fact is still missing. A value you",
+            "took from a convention because the clause is silent is NOT wrong and is",
+            "not what these blocks are here to overturn; only a block naming a",
+            "different concrete value changes it.",
+            "Reference only — never extract a rule of the section this text was",
+            "pulled from.",
             "",
             retrieved_context,
             "",
@@ -624,7 +596,7 @@ def extractor_node(state: RuleBankState) -> dict:
     # title + the kind of those already classified), so it can judge this section
     # relative to its neighbours (e.g. a Type section owns a schema a Mapping
     # section only references) without their content bloating the prompt.
-    sibling_summary = _build_sibling_summary(
+    sibling_summary = build_sibling_summary(
         section_title, state["parsed_sections"], state.get("section_analysis_by_id", {}),
         exclude_id=section_id,
     )
@@ -718,6 +690,14 @@ def extractor_node(state: RuleBankState) -> dict:
             "maps_operation":          analysis.maps_operation,
             "maps_path":               analysis.maps_path,
             "maps_method":             analysis.maps_method,
+            # The anchor this section's callbacks hang off, as the cascade
+            # resolved it. The Reflector and the Validator judge those callback
+            # rules later, and without this they see only the section's own text —
+            # which names the delivery method (POST) and never the owning
+            # operation. That is how a correct "…put.callbacks.X" gets "corrected"
+            # to ".post": not a wrong judgement, a missing premise.
+            "callback_anchor":         analysis.callback_anchor,
+            "callback_anchor_source":  analysis.callback_anchor_source,
             # Phase-3 positive scope for this section, so the Reflector's
             # completeness check measures "missing" against what the section is
             # actually supposed to emit — not the raw attribute table.

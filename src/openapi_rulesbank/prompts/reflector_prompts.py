@@ -160,6 +160,15 @@ For each rule, reason through the following questions:
      A wrong FORM is not a wrong rule: lower the score somewhat and flag it, so
      the Validator fixes the string — do NOT discard it, because the rule points
      at something real and an absent rule does not.
+     WHENEVER YOU JUDGE A VALUE WRONG, NAME THE RIGHT ONE in your reasoning, as a
+     literal: "openapi_value should be application/merge-patch+json", "the status
+     code is 201, not 200". The Validator reads this reasoning and is required to
+     put a concrete value in its correction; when you name it, that value is what
+     reaches the Extractor. Saying only that a field is wrong, or that a fact must
+     be applied, leaves the Validator with nothing to command and the Extractor
+     re-emits exactly what it had. If the right value is not knowable from what
+     you were given, say that explicitly instead of gesturing at a source to
+     consult.
   3. Does the OpenAPI reference context below confirm or contradict this rule?
   4. Does this rule BELONG in the final set for THIS section? It does NOT when it is
      an inherited field (present via an allOf $ref to a base type), when another
@@ -216,6 +225,17 @@ Pre-analysis verdict for THIS section (decided before extraction):
 Other rules of THIS section (extracted in this batch, plus ones already validated
 in earlier iterations of the section):
 {sibling_rules}
+
+The sibling CLAUSES of this service block, by title. This is where a canonical
+name is written in full: a clause "<number> Notification <name>" gives the
+notification's name, and "<number> Type <Name>" gives the type's. The section this
+rule came from may spell the same thing differently in a data-type column — those
+columns are hand-written and carry the spec's typos. So check a name against the
+heading here, not merely against the shape it has: a name can be perfectly
+lowerCamelCase and still not be the notification's name. When a rule's name
+matches no heading and a heading names the same thing differently, say so in your
+reasoning and give the heading's spelling as the value to use:
+{sibling_summary}
   Use this only as context to judge the rule above as part of the whole — do NOT
   re-assess the siblings. In particular, a rule that has a natural counterpart
   (e.g. a 4XX response whose sibling is 5XX, or a PUT whose sibling is PATCH) is

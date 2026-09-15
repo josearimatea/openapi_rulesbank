@@ -59,7 +59,7 @@ from openapi_rulesbank.tools.rag_tools import (
 from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.utils.parsers import (
     format_section_verdict, discards_for_section, format_discards,
-    corrections_for_section, format_corrections,
+    corrections_for_section, format_corrections, build_sibling_summary,
 )
 # The Extractor builds the same view of the reference memory for its own prompts;
 # rendering it identically here keeps one format for both nodes.
@@ -274,6 +274,16 @@ def reflector_node(state: RuleBankState) -> dict:
             "openapi_field":  mapping.get("openapi_field", ""),
             "openapi_value":  mapping.get("openapi_value", ""),
             "sibling_rules":  _siblings_str(rule),
+            # The sibling CLAUSES, by title — distinct from sibling_rules above,
+            # which are this section's other rules. A canonical name is written in
+            # full only in a clause heading, so without this the judgement can
+            # check a name's shape but not whether it is the right name.
+            "sibling_summary": build_sibling_summary(
+                rule.get("section_title", ""),
+                state.get("parsed_sections", []) or [],
+                analysis_by_id,
+                exclude_id=section_id,
+            ) or "No sibling clauses.",
             "section_verdict": format_section_verdict(analysis_by_id.get(section_id)),
             "section_content": section_content,
             # What the user supplied for this run. It outranks the modelling

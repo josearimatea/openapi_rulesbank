@@ -65,6 +65,91 @@ def format_section_verdict(verdict: dict | None) -> str:
     if verdict.get("base_ref"):
         lines.append(f"embedded base: {verdict['base_ref']}")
         lines.append(f"inherited fields (not own): {verdict.get('inherited_fields', [])}")
+
+    # What this clause maps, and where its callbacks hang. Both were DECIDED in
+    # the pre-analysis, from the sibling clauses this section cannot see: the
+    # section's own text names the delivery method and never the owning
+    # operation. A judge given only the section content therefore reads a correct
+    # anchor as wrong and "corrects" it to the method the text does mention.
+    op, path, method = (verdict.get("maps_operation", ""),
+                        verdict.get("maps_path", ""),
+                        verdict.get("maps_method", ""))
+    if op and path and method:
+        lines.append(f"this clause maps: {op} -> {method} {path}")
+    if verdict.get("callback_anchor"):
+        lines.append(
+            f"callback anchor (decided in pre-analysis, source: "
+            f"{verdict.get('callback_anchor_source', '?')}): "
+            f"{verdict['callback_anchor']}"
+        )
+        lines.append(
+            "  Callback rules of this section MUST hang off that anchor: "
+            "\"<anchor>.callbacks.<notificationName>\". It was resolved from "
+            "clauses this section does not contain, so do NOT re-derive it from "
+            "this section's text and do NOT rewrite its method to the one the "
+            "section mentions — the section describes how the notification is "
+            "DELIVERED (POST), while the anchor is the operation through which "
+            "the consumer SUPPLIED its address."
+        )
+    elif verdict.get("callback_anchor_source") == "unresolved":
+        lines.append(
+            "callback anchor: UNRESOLVED — the pre-analysis could not determine "
+            "it. A callback rule here has no verified anchor; treat a missing one "
+            "as a reported gap, not as a rule to invent an anchor for."
+        )
+    return "\n".join(lines)
+
+
+def build_sibling_summary(
+    section_title: str,
+    parsed_sections: list[dict],
+    analysis_by_id: dict,
+    exclude_id: str,
+    levels: int = 3,
+) -> str:
+    """A light summary of the sibling clauses in the same service block.
+
+    Siblings share the section's clause prefix at `levels` (e.g. "12.1.1" groups a
+    solution set's clauses). Each line is id + title + the kind already decided for
+    it (from section_analysis_by_id), plus which operation it maps when it maps
+    one. Titles only — no content — so a prompt can see the neighbourhood's shape
+    without ballooning. Empty when there are no siblings.
+
+    The grouping is the whole solution set, not the sub-block a clause sits in:
+    an operation is mapped in one sub-block (".1.x") and the resource it acts on
+    is defined in another (".3.x"), so a narrower prefix puts a clause and the
+    operation it needs in different groups. That is 59 title-only lines here
+    against 19, for ~3.8k characters — cheap beside the retrieved spec chunks the
+    same prompt already carries.
+
+    Shared by the Extractor (whose triage resolves an anchor from it), the
+    Reflector and the Validator. The titles are the ONLY place a canonical name
+    appears in full — "12.1.1.2.4 Notification notifyMOIAttributeValueChanges" —
+    while a section's own data-type table may spell the same notification
+    differently. A judge without this list can check that a name has the right
+    SHAPE but not that it is the right NAME, and will accept whatever spelling the
+    section's table happens to carry.
+    """
+    def prefix(title: str) -> str:
+        head = title.strip().split(" ", 1)[0]
+        return ".".join(head.split(".")[:levels])
+
+    my_prefix = prefix(section_title)
+    if not my_prefix:
+        return ""
+    lines = []
+    for s in parsed_sections:
+        if s["section_id"] == exclude_id:
+            continue
+        if prefix(s["title"]) != my_prefix:
+            continue
+        verdict = analysis_by_id.get(s["section_id"], {})
+        kind = verdict.get("section_kind", "not yet analyzed")
+        op, path, method = (verdict.get("maps_operation", ""),
+                            verdict.get("maps_path", ""),
+                            verdict.get("maps_method", ""))
+        maps = f" — maps {op}: {method} {path}" if op and path and method else ""
+        lines.append(f"  [{s['section_id']}] {s['title'][:60]} — {kind}{maps}")
     return "\n".join(lines)
 
 
