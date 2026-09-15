@@ -165,9 +165,22 @@ class ValidationVerdict(BaseModel):
         description=(
             "When valid=False: direct command to the Extractor for this rule. "
             "Empty when valid=True. "
+            "A 'correction' MUST NAME THE VALUE TO WRITE, not the work to do. "
+            "State the field and the literal value that belongs in it — the "
+            "Extractor applies what you name and cannot look anything up. An "
+            "instruction that says to 'apply the fact', 'resolve the gap', "
+            "'use the convention' or 'consult the reference' names no value: the "
+            "Extractor re-reads the same silent clause, re-emits the same value, "
+            "and the section burns every attempt on a rule you never told it how "
+            "to change. If you cannot name the value, the rule is not correctable "
+            "— leave it valid=True and record what is missing in new_missing_rules "
+            "instead. Where the Reflector's reasoning already names the right "
+            "value, take it from there. "
             "For 'split': list all replacement rules the Extractor must produce. "
             "Examples:\n"
             "  correction: 'Fix openapi_field to parameters[in=query,name=scope]'\n"
+            "  correction: 'Set openapi_value to application/merge-patch+json'\n"
+            "  NOT a correction: 'Apply the declared media-type gap' (no value)\n"
             "  split: 'Replace with: (1) response openapi_field=4XX "
             "openapi_value=$ref:#/components/schemas/ErrorResponse; "
             "(2) response openapi_field=5XX same value'\n"
@@ -265,7 +278,16 @@ AN IDENTIFIER IS TAKEN FROM A SOURCE, NEVER SUPPOSED:
   at something that does not exist in this YAML, which is why it survives every
   other check.
 
-  AND EACH KIND OF IDENTIFIER HAS ITS OWN FORM. The spec names the same concept
+  AND A NAME IS CHECKED AGAINST ITS DEFINING HEADING, NOT AGAINST ITS FORM.
+  The sibling clause list above holds those headings — "<clause> Notification
+  <name>", "<clause> Type <Name>". Look the name up there first: a rule's name is
+  right when it matches the heading naming the same thing, and wrong when it does
+  not, however well-formed it reads. A data-type column can write a notification
+  in flawless lowerCamelCase and still drop a segment the heading carries, and
+  those columns are where the spec's typos live. The forms below tell you WHICH
+  heading to look in; they never make a name correct on their own.
+
+  EACH KIND OF IDENTIFIER ALSO HAS ITS OWN FORM. The spec names the same concept
   differently by position, and one form is never produced by re-casing another:
     - TYPE (schema): UpperCamelCase, acronyms normalised — from the heading
       "Type <Name>"/"Enumeration <Name>". Belongs in "components/schemas/<Name>"
@@ -370,22 +392,40 @@ VALIDATION RULES BY RULE_TYPE:
                     received on a fixed path this service hosts, the path_operation is
                     VALID — do not convert it to a callback.
 
-RULES BUILT ON A DECLARED GAP — do not pass them:
-  declared_gaps lists facts the Extractor says it needed for THIS section and did
-  not have. It emitted its rules anyway, so a rule a gap describes is not a rule
-  that happens to be right — it is one produced without the fact that decides it,
-  and the gap usually says so ("emitted as a path because it could not tell which
-  operation to anchor the callback on", "no media type, so the content could not
-  be mapped"). Those rules look well-formed, which is exactly why they slip
-  through: the section's own text supports them, and only the missing fact does
-  not.
+RULES BUILT ON A DECLARED GAP — read what the gap actually says:
 
-  So for each gap, find the rules it affected and set valid=False,
-  error_type='correction', with an instruction naming the fact to apply — the
-  answer is being retrieved and the next attempt will have it. A rule the gap did
-  NOT touch is unaffected: judge it normally. When the gap describes something
-  the Extractor could not emit at all (a rule absent, not wrong), that belongs in
-  new_missing_rules instead, not as a correction to an unrelated rule.
+  declared_gaps lists facts the Extractor says it needed for THIS section and did
+  not have. It emitted its rules anyway. Two very different things are reported
+  here, and ONE QUESTION separates them:
+
+    DID THE GAP LEAVE THE MAPPING UNDETERMINED, OR DOES IT MERELY RECORD THAT A
+    DEFAULT WAS APPLIED?
+
+  (a) UNDETERMINED — nothing supplied the value, so whatever the rule carries is
+      a guess: "could not tell which operation to anchor the callback on, emitted
+      as a path", "no notification name anywhere, so the callback could not be
+      named". The rule looks well-formed and points at something that does not
+      exist. Set valid=False, error_type='correction', and NAME THE VALUE that
+      belongs there. If you cannot name it, do not issue an empty correction —
+      leave the rule valid=True and put what is missing in new_missing_rules.
+
+  (b) DEFAULT APPLIED — the clause is silent and the Extractor filled the field
+      from the OpenAPI reference or a modelling convention, exactly as instructed,
+      and reported it because reporting is required: "the clause names only the
+      data type, so application/json was used per the request-body convention".
+      THIS RULE IS CORRECT. The two blocks above say so — a value the clause does
+      not spell out is not an invention, and a join left implicit is settled by
+      convention. The gap is an audit note, not a defect. Set valid=True. Do NOT
+      instruct the Extractor to "apply the fact", "resolve the gap" or "use the
+      reference": the convention is where the value already came from, so the next
+      attempt re-reads the same silent clause, re-emits the same value, and the
+      section burns every attempt without a single thing changing.
+
+  Judge by what the gap says the Extractor lacked, not by the fact that a gap
+  exists: a section that declared one gap does not thereby have bad rules, and the
+  gap touches only the rules whose value it left undetermined. A rule no gap
+  touched is judged normally. When a gap describes a rule the Extractor could not
+  emit at all — absent, not wrong — that belongs in new_missing_rules.
 
 ALREADY-VALIDATED RULES:
   If the rule under review duplicates one already validated, set valid=False,
@@ -474,6 +514,19 @@ being fetched for the next attempt (empty when it declared none):
 
 Pre-analysis verdict for this section (decided before extraction):
 {section_verdict}
+
+The sibling CLAUSES of this service block, by title. A canonical name is written
+in full only here: "<number> Notification <name>" gives a notification's name,
+"<number> Type <Name>" a type's. The section under review may spell the same thing
+differently in a data-type column — those columns are hand-written and are where
+the spec's typos live. Judge a name against these headings, not against its shape
+alone: a name can have the right form and still be the wrong name. When a rule's
+name matches no heading while a heading names the same thing, that is a
+correction, and the value to name is the heading's spelling. These titles are also
+where an operation defined in another clause is recorded ("maps <op>: <method>
+<path>"), so a rule pointing at such an operation can be checked without reading
+that clause:
+{sibling_summary}
   Enforce it — a rule that violates it is a discard (valid=False,
   error_type='discard'):
   - a schema_property in a section that is NOT a schema home → the attribute is

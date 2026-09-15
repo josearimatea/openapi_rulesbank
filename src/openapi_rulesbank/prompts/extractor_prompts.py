@@ -128,6 +128,15 @@ context". Neither is a rule source; use them to get THIS section's rules right:
     consumer's address, it is a callback, not a path — see below.)
 
   - NAMES: THREE KINDS, THREE PLACES, NEVER CONVERTED INTO EACH OTHER.
+    A NAME IS TAKEN FROM ITS DEFINING HEADING. The heading is the source — the
+    sibling clause list in the stage 3 context shows those headings even when the
+    defining clause is not this section. Find the heading that names the thing and
+    copy its spelling. The three forms below tell you WHICH heading to look in;
+    they are a check on what you copied, never a way to produce a name. A spelling
+    can have the right form and still be the wrong name: a data-type column may
+    write a notification in flawless lowerCamelCase and still drop a segment the
+    heading carries. If a candidate matches no heading, do not use it however
+    well-formed it looks — report it in missing_context instead.
     The spec writes the same concept differently depending on what it is naming.
     Each kind is COPIED from the place listed below — never produced by re-casing
     another kind, and never taken from a data-type column:
