@@ -84,6 +84,18 @@ class RulesBankMetadata(BaseModel):
     model:            str = Field(description="LLM model identifier used for extraction.")
     total_rules:      int = Field(description="Number of validated rules in this file.")
 
+    # --- What the run spent (accumulated over every LLM call of the process) ---
+    usage: dict = Field(
+        default_factory=dict,
+        description=(
+            "Tokens and money this run spent, summed across every LLM call: "
+            "llm_calls, prompt_tokens, completion_tokens, total_tokens, "
+            "reasoning_tokens, cached_prompt_tokens and cost_usd. cost_usd is 0.0 "
+            "when the provider does not report a price (OpenAI direct does not; "
+            "OpenRouter does), while the token counts stay accurate either way."
+        ),
+    )
+
     # --- Section accounting (integers for easy verification) ---
     sections_total:            int = Field(description="Total sections split from the document before any filtering.")
     sections_for_planner:      int = Field(description="Sections that passed reader filters and were sent to the Planner.")

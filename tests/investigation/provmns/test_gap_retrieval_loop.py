@@ -27,6 +27,7 @@ whether it answers the gap.
     uv run python tests/investigation/provmns/test_gap_retrieval_loop.py
 """
 
+from openapi_rulesbank.config.llm_config import usage_tracker
 from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE
 from openapi_rulesbank.config.settings import MAX_ITERATIONS, TARGET_YAML
 from openapi_rulesbank.graph.conditions import should_retry_section_or_build
@@ -254,6 +255,17 @@ def main():
     print("Judge by the retrieved blocks: a query that answers its gap is the "
           "whole point, and a plausible-looking block that does not is the "
           "failure mode to watch for.")
+
+    # What the probe spent. The Builder is deliberately not part of this test, so
+    # nothing writes metadata.usage to a file here — without this line the tally
+    # lives only in the process and dies with it.
+    u = usage_tracker.as_dict()
+    print()
+    print(f"USAGE — {u['llm_calls']} LLM call(s), {u['total_tokens']} tokens "
+          f"({u['prompt_tokens']} prompt + {u['completion_tokens']} completion; "
+          f"{u['reasoning_tokens']} reasoning, {u['cached_prompt_tokens']} cached)")
+    print(f"        cost: US$ {u['cost_usd']:.6f}"
+          f"{'  (provider reports no price)' if not u['cost_usd'] else ''}")
 
     drop_target_spec_collection(spec_coll)
     if rules_coll:

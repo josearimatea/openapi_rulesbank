@@ -61,6 +61,7 @@ from collections import Counter
 from datetime import datetime
 
 from openapi_rulesbank.config import get_logger
+from openapi_rulesbank.config.llm_config import usage_tracker
 from openapi_rulesbank.config.paths import final_rules_dir_for, rules_dir_for
 from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE, MODEL, MAX_ITERATIONS
 from openapi_rulesbank.graph.state import RuleBankState
@@ -274,6 +275,10 @@ def builder_node(state: RuleBankState) -> dict:
             generated_at=              now.isoformat(),
             model=                     MODEL,
             total_rules=               len(rule_outputs),
+            # Tokens and money spent so far. The Builder runs once per section and
+            # rewrites the whole file, so the figure in the finished file is the
+            # run's total rather than the last section's.
+            usage=                     usage_tracker.as_dict(),
             sections_total=            sections_total,
             sections_for_planner=      sections_for_planner,
             sections_planned=          len(plan_sections),
