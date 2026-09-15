@@ -90,8 +90,13 @@ def _format_ref_memory(ref_memory: dict) -> str:
     for t, info in ref_memory.items():
         spec = info.get("spec", "")
         fields = info.get("fields", [])
+        # The YAML filename a retrieval revealed. It is what an external $ref needs
+        # before the '#', and the spec number alone does not supply it — so say
+        # plainly when it is not known, rather than leaving the reader to guess.
+        file = info.get("file", "")
+        where = f"{spec} [{file}]" if file else f"{spec} [YAML filename unknown]"
         f = f" fields={fields}" if fields else ""
-        lines.append(f"{t} -> {spec}{f}")
+        lines.append(f"{t} -> {where}{f}")
     return "\n".join(lines)
 
 
@@ -172,7 +177,8 @@ def _analyze_section(
         })
 
         new_refs = {
-            e.type_name: {"spec": e.source_spec, "fields": e.fields, "note": e.note}
+            e.type_name: {"spec": e.source_spec, "file": e.source_file,
+                          "fields": e.fields, "note": e.note}
             for e in analysis.memory_updates if e.type_name
         }
         new_cross_refs = {
@@ -649,6 +655,14 @@ def extractor_node(state: RuleBankState) -> dict:
         "section_content":            section["content"],
         "openapi_reference_overview": openapi_reference_overview,
         "cross_ref_context":          cross_ref_context,
+        # Which spec each imported type comes from, and the YAML filename a
+        # retrieval revealed for it. The rule that writes an external $ref needs
+        # that filename, and until now only base_ref carried it — so a type used
+        # outside an allOf fell back to an internal reference. This section's own
+        # findings are merged in, so a type first seen here is usable here.
+        "ref_memory":                 _format_ref_memory({
+            **(state.get("other_spec_ref_memory", {}) or {}), **new_refs,
+        }),
         "stage2_context":             stage2_context,
         "stage3_context":             stage3_context,
         "candidate_rules":            candidate_rules,

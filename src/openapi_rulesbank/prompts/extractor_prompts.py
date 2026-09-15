@@ -682,6 +682,13 @@ these specific rules; they belong elsewhere):
   code, you MUST still emit that response (e.g. 204, 4XX, 5XX are separate — one
   being skipped does not skip the others).
 
+Imported types seen so far, as "<Type> -> <spec> [<YAML filename>]". THIS LIST IS
+EXHAUSTIVE: a type on it is imported and its $ref carries that filename before the
+'#'; a type NOT on it is local, takes a plain "$ref: '#/components/schemas/<Type>'"
+with `file` empty, and needs no filename — that is complete, never a gap. Report a
+missing filename ONLY for a listed type shown as "[YAML filename unknown]":
+{ref_memory}
+
 Auxiliary context — supporting 3GPP documents and any instructions the user
 supplied for this run. Anything here about how to map something OVERRIDES the
 modelling conventions above: it is the decision for this service, and the

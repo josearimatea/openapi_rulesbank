@@ -147,6 +147,20 @@ class ReferenceMemoryEntry(BaseModel):
 
     type_name: str = Field(description="The referenced type's name.")
     source_spec: str = Field(default="", description="The spec it is defined in.")
+    source_file: str = Field(
+        default="",
+        description=(
+            "The YAML filename that spec publishes this type in, e.g. "
+            "'TS28623_ComDefs.yaml'. Take it from the RETRIEVED TEXT: the fetched "
+            "chunks often carry a reference another spec wrote in full "
+            "(\"$ref: 'TS28623_ComDefs.yaml#/components/schemas/NotificationHeader'\"), "
+            "and the filename is the part before the '#'. Copy it exactly. "
+            "Leave EMPTY when no retrieved text shows a filename — never derive one "
+            "from the spec number and never guess. An empty value makes the "
+            "Extractor report the gap; a wrong one points the YAML at a document "
+            "that does not exist."
+        )
+    )
     fields: list[str] = Field(
         default_factory=list,
         description=(
@@ -343,8 +357,14 @@ references, and the fetched definitions of those references (RAG). Four jobs, al
 of them required — a field you leave empty is one the next section cannot read:
 
 A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
-   record what it is: its name, its source spec, its OWN property names, and a
-   short note. Read the property names out of the fetched definition — they are the
+   record what it is: its name, its source spec, THE YAML FILENAME THAT SPEC
+   PUBLISHES IT IN, its OWN property names, and a short note.
+   The filename is what an external $ref needs before the '#', and the spec number
+   alone never supplies it. Look for it in the fetched text: those chunks routinely
+   carry a reference another spec wrote out in full, and the filename is the part
+   preceding the '#'. Record it whenever the text shows one; leave it empty when no
+   text does, and never derive it from the spec number.
+   Read the property names out of the fetched definition — they are the
    members the type declares, NOT the schema keywords that structure them (allOf,
    type, properties, required, items, $ref are structure, never property names).
    The fetched text may be split across several chunks and interleaved with other
