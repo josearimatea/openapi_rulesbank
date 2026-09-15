@@ -44,15 +44,20 @@ OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "")
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "openapi-rulesbank")
 
 # LLM Settings
-# The same model is named differently by each provider: OpenRouter needs the
-# vendor prefix ("openai/gpt-5.6-luna"), OpenAI takes the bare name
-# ("gpt-5.6-luna"). Switching RULESBANK_PROVIDER therefore has to switch the
-# model name too, and doing that by hand is easy to forget — a provider=openai
-# run with the prefixed name fails at the first call with model_not_found.
-# So the default follows the selected provider, exactly as the API key does.
-# RULESBANK_MODEL still overrides it when a run needs a different model.
+# Each provider names its model differently — OpenRouter needs the vendor prefix,
+# OpenAI takes the bare name — and switching RULESBANK_PROVIDER by hand without
+# switching the model fails at the first call with model_not_found. So the default
+# follows the selected provider, exactly as the API key does.
+# RULESBANK_MODEL still overrides the default when a run needs another model.
+# Measured 15/set/2026 on the phase 2 anchor prompt, same prompt and schema: the
+# model name makes no difference here, and neither does the provider. What decides
+# is whether reasoning is switched OFF (see REASONING_EFFORT below): with
+# reasoning disabled both "openai/gpt-5.6-luna" and "-pro" answered wrongly every
+# time; with it left alone both answered correctly every time, as does OpenAI
+# direct — where "none" happens to omit the parameter rather than disable it.
 DEFAULT_MODEL_BY_PROVIDER = {
     "openrouter": "openai/gpt-5.6-luna",
+    # "openrouter": "openai/gpt-5.6-luna-pro",
     "openai":     "gpt-5.6-luna",
 }
 MODEL = (
