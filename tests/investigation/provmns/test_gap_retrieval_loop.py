@@ -92,6 +92,9 @@ def _run_section(section, base, idx, carried):
              "retrieved_context": {}}
 
     section_id = section["section_id"]
+    # Values the Validator rejected, keyed by what they map, so the next attempt
+    # can be checked for having actually changed them.
+    prev_values: dict = {}
     print(f"[{section_id}] {section['title'][:58]}")
     print(f"  memory in: {sorted(state.get('other_spec_ref_memory', {})) or '(empty)'}")
     for subj, info in (state.get("cross_ref_facts", {}) or {}).items():
@@ -114,11 +117,35 @@ def _run_section(section, base, idx, carried):
               f"{len(gaps)} gap(s) declared")
         for line in _fmt_rules(rules):
             print(f"      · {line}")
+        # Did the correction change anything? A rule re-emitted with the value that
+        # was just rejected is the loop spinning: the instruction told the Extractor
+        # to do something it had no way to do differently.
+        for r in rules:
+            key = (r.get("rule_type"), r.get("openapi_mapping", {}).get("openapi_field"))
+            if key in prev_values:
+                now = str(r.get("openapi_mapping", {}).get("openapi_value", ""))
+                mark = "UNCHANGED — correction had no effect" if now == prev_values[key] \
+                       else f"changed: {prev_values[key][:40]!r} -> {now[:40]!r}"
+                print(f"      ~ {str(key[0]):14} {str(key[1])[:12]:12} {mark}")
         for g in gaps:
             print(f"      - GAP: {g}")
 
         rfl = reflector_node(state)
         state = {**state, **rfl}
+
+        # What the Reflector actually said, per rule. The score alone cannot tell a
+        # verdict that FOLLOWS the analysis from one that OVERRIDES it: the
+        # reasoning is the text the Validator is handed, and it is where the
+        # Reflector either names the right value or merely gestures at a source.
+        for r in rfl.get("reflected_rules", []) or []:
+            m = r.get("openapi_mapping", {})
+            print(f"      R {str(r.get('rule_type','')):14} "
+                  f"{str(m.get('openapi_field',''))[:12]:12} "
+                  f"score={r.get('reflector_score', 0):.2f} "
+                  f"flag={str(r.get('reflection_flagged'))[:5]:5} "
+                  f"disc={str(r.get('discard_suggestion'))[:5]}")
+            print(f"        reason: {' '.join(str(r.get('reflection_reasoning','')).split())[:400]}")
+
         retrieved = (rfl.get("retrieved_context", {}) or {}).get(section_id, "")
         if retrieved:
             # The block headers carry the gap each answer belongs to; the body is
@@ -146,9 +173,32 @@ def _run_section(section, base, idx, carried):
         validated   = val.get("validated_rules", []) or []
         print(f"      validator: {len(validated)} passed, {len(corrections)} correction(s)")
         for e in corrections:
-            m = (e.get("rule") or {}).get("openapi_mapping", {})
-            print(f"        ! {str((e.get('rule') or {}).get('rule_type','')):16} "
-                  f"{str(m.get('openapi_field',''))[:14]} -> {str(e.get('instruction',''))[:88]}")
+            rule = e.get("rule") or {}
+            m = rule.get("openapi_mapping", {})
+            instr = str(e.get("instruction", ""))
+            # A correction is only actionable if it NAMES the value to write. One
+            # that says to apply a fact, resolve a gap or consult a source leaves
+            # the Extractor with nothing new: it re-reads the same silent clause
+            # and re-emits the same value, burning the attempt. Flagging it here
+            # turns that failure mode from something to notice by eye into
+            # something the run reports.
+            vague = [w for w in ("apply the", "resolve the", "use the convention",
+                                 "consult", "authoritative", "reference/convention",
+                                 "revalidate", "re-evaluate", "regenerate", "rebuild")
+                     if w in instr.lower()]
+            names_value = any(k in instr.lower() for k in
+                              ("set ", "to '", 'to "', "from ", " to application/",
+                               " to 2", " to 4", " to 5", "openapi_value="))
+            verdict = ("NAMES A VALUE" if names_value
+                       else f"NAMES NO VALUE ({', '.join(vague)})" if vague
+                       else "unclear")
+            print(f"        ! {str(rule.get('rule_type','')):16} "
+                  f"{str(m.get('openapi_field',''))[:14]} [{verdict}]")
+            print(f"            was: {str(m.get('openapi_value',''))[:90]}")
+            print(f"            fix: {instr}")
+            # Remember the value, so the next attempt can be compared against it.
+            prev_values[(rule.get("rule_type"), m.get("openapi_field"))] = \
+                str(m.get("openapi_value", ""))
 
         decision = should_retry_section_or_build(state)
         print(f"      -> {decision}")

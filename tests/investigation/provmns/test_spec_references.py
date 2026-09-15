@@ -26,7 +26,8 @@ WHICH OPERATION CREATES A THING may have nowhere to go.
 from openapi_rulesbank.config.llm_config import llm
 from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE
 from openapi_rulesbank.config.settings import IMPORTED_TYPE_RETRIEVE_CHUNKS
-from openapi_rulesbank.nodes.extractor import _build_sibling_summary, _format_ref_memory
+from openapi_rulesbank.nodes.extractor import _format_ref_memory
+from openapi_rulesbank.utils.parsers import build_sibling_summary
 from openapi_rulesbank.nodes.reader import reader_node
 from openapi_rulesbank.prompts.section_analyzer_prompts import (
     SectionAnalysis, SectionImports,
@@ -102,7 +103,7 @@ def main():
             "ref_memory":         _format_ref_memory(ref_memory),
             "phase1_explanation": imports.explanation or "None.",
             "rag_results":        "\n\n".join(rag_blocks) or "No definitions retrieved.",
-            "sibling_summary":    _build_sibling_summary(
+            "sibling_summary":    build_sibling_summary(
                                       s["title"], secs, analysis_by_id, exclude_id=sid
                                   ) or "No sibling sections summarized yet.",
         })
