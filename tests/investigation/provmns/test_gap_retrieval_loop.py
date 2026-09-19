@@ -27,10 +27,14 @@ whether it answers the gap.
     uv run python tests/investigation/provmns/test_gap_retrieval_loop.py
 """
 
+import os
+from datetime import datetime
+
 from openapi_rulesbank.config.llm_config import usage_tracker
-from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE
+from openapi_rulesbank.config.paths import TSPEC_DATA_TEST_FILE, rules_dir_for
 from openapi_rulesbank.config.settings import MAX_ITERATIONS, TARGET_YAML
 from openapi_rulesbank.graph.conditions import should_retry_section_or_build
+from openapi_rulesbank.nodes.builder import builder_node
 from openapi_rulesbank.nodes.reader import reader_node
 from openapi_rulesbank.nodes.contract_builder import contract_builder_node
 from openapi_rulesbank.nodes.extractor import extractor_node
@@ -75,6 +79,24 @@ def _fmt_rules(rules):
         m = x.get("openapi_mapping", {})
         yield (f"{x.get('rule_type',''):16} {str(x.get('source_name',''))[:24]:24} "
                f"{str(m.get('openapi_object',''))[:52]} {str(m.get('openapi_field',''))[:14]}")
+
+
+def _write_bank(state, out_path):
+    """Write this probe's rules to a rules bank file, via the real Builder.
+
+    The probe deliberately skips the Builder in its loop — it advances the section
+    index and clears state, which this test drives itself. But without it nothing
+    is ever written, and then the only way to judge a rule's $ref is by grepping
+    the log, where a reference also appears in retrieval queries and reasoning
+    traces. Counting those is counting noise: it was how "31 external refs" got
+    reported for a run whose rules carried none of them in that field.
+
+    So the Builder is called once, at the end, with final_output_path already set
+    to a test-marked name — the Builder only invents a name when that key is
+    empty, so passing one keeps this file distinguishable from a real partial run.
+    """
+    builder_node({**state, "final_output_path": out_path})
+    return out_path
 
 
 def _run_section(section, base, idx, carried):
@@ -248,8 +270,32 @@ def main():
     }
 
     carried: dict = {}
+    all_rules: list = []
     for idx, s in enumerate(chosen):
-        _, carried = _run_section(s, base, idx, carried)
+        # _run_section accumulates across ATTEMPTS but not across SECTIONS: it
+        # seeds the state from `base`, whose "validated_rules" is [], and `carried`
+        # forwards only the reference memories. So each call returns that section's
+        # rules alone, and the run's set is the sum — assigning here would keep the
+        # last section's and silently drop every earlier one.
+        rules, carried = _run_section(s, base, idx, carried)
+        all_rules += rules
+
+    # Name it as a probe result: same folder as a partial run, but unmistakable.
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = rules_dir_for(TARGET_YAML)
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(
+        out_dir, f"rules_bank_28532-i00_TEST-gap-loop_{stamp}.json"
+    )
+    _write_bank({**base, **carried,
+                 # Without it the file records source_document: "unknown".
+                 "main_doc_path": TSPEC_DATA_TEST_FILE,
+                 "validated_rules": all_rules,
+                 "current_section_idx": len(chosen) - 1,
+                 "section_iteration_count": 0,
+                 "validation_errors": []},
+                out_path)
+    print(f"\nRules bank written to: {out_path}")
 
     print("=" * 74)
     print("Judge by the retrieved blocks: a query that answers its gap is the "
