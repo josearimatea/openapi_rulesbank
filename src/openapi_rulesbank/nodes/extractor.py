@@ -69,6 +69,11 @@ from openapi_rulesbank.tools.rag_tools import (
     search_target_spec,
     search_rules_by_text,
     search_imported_type_ref,
+    # A context reference names no type, so the type-shaped query that
+    # search_imported_type_ref builds ("<name> type: object properties required")
+    # does not fit it: what it points at is a procedure or a design rule, not a
+    # schema block. It goes to the corpus with the clause's own words instead.
+    search_3gpp_corpus,
     umbrella_mns_for as _umbrella_mns,
 )
 
@@ -146,18 +151,36 @@ def _analyze_section(
             "section_title":   section_title,
             "section_content": section_content,
         })
+        # Both lists are logged: the split between them is what has to be verified,
+        # and a type wrongly recorded as imported is invisible when only the type
+        # list is printed.
         logger.info(
             f"[analyzer {section_id}] phase1 refs: "
-            f"{[(r.type_name, r.source_spec) for r in imports.references]}"
+            f"{[(r.type_name, r.source_spec) for r in imports.references]} "
+            f"| context: {[(c.source_spec, c.subject[:40]) for c in imports.context_references]}"
         )
 
-        # Run the RAG for each reference the section makes (a reference triggers a
-        # lookup of what that type/spec is), collecting the fetched definitions.
+        # Run the RAG for every reference the section makes. Both kinds are looked
+        # up; they differ in what the result means downstream.
         rag_blocks = []
+        # Imported types: fetch the type's own definition block.
         for ref in imports.references:
             fetched = search_imported_type_ref(ref.type_name, ref.key_terms)
             if fetched:
-                rag_blocks.append(f"### {ref.type_name} (from {ref.source_spec}):\n{fetched}")
+                rag_blocks.append(
+                    f"### TYPE {ref.type_name} (defined in {ref.source_spec}):\n{fetched}"
+                )
+        # Context references: a spec the clause points at for procedure or design
+        # rules. Worth fetching — that text often settles how a rule must be
+        # written — but it defines no type, so its block is labelled so phase 2
+        # does not turn it into a type-memory entry.
+        for cref in imports.context_references:
+            fetched = search_3gpp_corpus(f"{cref.subject} {cref.source_spec}")
+            if fetched:
+                rag_blocks.append(
+                    f"### CONTEXT from {cref.source_spec} — {cref.subject} "
+                    f"(no type defined here):\n{fetched}"
+                )
         rag_results = "\n\n".join(rag_blocks) or "No definitions retrieved."
 
         # Phase 2 — write the memory updates and the extractor guidance.

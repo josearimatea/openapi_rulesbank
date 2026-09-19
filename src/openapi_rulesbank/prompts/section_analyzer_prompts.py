@@ -44,7 +44,12 @@ class SpecReference(BaseModel):
         description="The referenced type's name, e.g. 'NotificationHeader'."
     )
     source_spec: str = Field(
-        description="The spec it comes from, as written here, e.g. 'TS 28.623'."
+        description=(
+            "The spec that DEFINES this type, as written here, e.g. 'TS 11.111'. "
+            "Take it from the row or sentence that names the type and the spec "
+            "together. A spec number appearing elsewhere in the section is not the "
+            "origin of this type — that one belongs in context_references."
+        )
     )
     key_terms: str = Field(
         default="",
@@ -59,17 +64,51 @@ class SpecReference(BaseModel):
     )
 
 
+class ContextReference(BaseModel):
+    """A spec this section points at for guidance, without importing a type from it.
+
+    Distinct from SpecReference on purpose. "Further details on creating a resource
+    with HTTP PUT are provided in TS 32.158" is worth fetching — that spec settles
+    which status code a creation returns — but it defines no type here, and
+    recording it as the origin of a type that happens to sit nearby invents a fact
+    the document never stated.
+    """
+
+    source_spec: str = Field(
+        description="The spec the section points at, as written here, e.g. 'TS 32.158'."
+    )
+    subject: str = Field(
+        description=(
+            "What the section says is found there, in its own words — e.g. "
+            "'details on creating a resource with HTTP PUT', 'the design rules for "
+            "RESTful solution sets'. This is the retrieval query's subject."
+        )
+    )
+    why: str = Field(
+        default="",
+        description="One short line on what this section needs from that spec."
+    )
+
+
 class SectionImports(BaseModel):
     """Phase 1 output: the other-spec references this section carries."""
 
     references: list[SpecReference] = Field(
         default_factory=list,
         description=(
-            "Every reference this section makes to a type defined in ANOTHER spec. "
-            "Sources: a 'Data types imported' table (Reference column names an "
-            "external spec), or a data-type column citing a type the reference "
-            "memory already attributes to another spec. One entry per referenced "
-            "type. Empty when the section references no external types."
+            "Every reference this section makes to a type DEFINED in another spec — "
+            "the text linking the two, in one row or one sentence. One entry per "
+            "referenced type. Empty when the section imports no type."
+        )
+    )
+    context_references: list[ContextReference] = Field(
+        default_factory=list,
+        description=(
+            "Every OTHER spec this section points at: for procedure, design rules, "
+            "or further detail, without importing a type from it. These are fetched "
+            "too — the answer often settles how a rule must be written — but they "
+            "never become type origins. Empty when the section points at no such "
+            "spec."
         )
     )
     explanation: str = Field(
@@ -108,9 +147,36 @@ spec each comes from. If this section uses a type the memory attributes to anoth
 spec — even if this section does not restate the import — include it as a
 reference so it gets looked up and understood in this section's context.
 
+PUT EACH REFERENCE IN ONE OF TWO LISTS. Both are looked up; they differ in what
+they mean.
+
+  `references` — a type IMPORTED from another spec. Use it ONLY when one row or
+  one sentence names the type and the spec together:
+      "<TypeName>   TS 11.111"                        -> import
+      "the <TypeName> type defined in TS 11.111"      -> import
+
+  `context_references` — a spec the section points at for anything else:
+  procedure, design rules, further detail. It names no type:
+      "Further details on <procedure> are provided in TS 22.222, clause 5.1"
+      "The rules for <X> are defined in TS 22.222"
+
+DO NOT PAIR A TYPE WITH A SPEC THE TEXT DID NOT PAIR. If a clause lists
+"<TypeName>" in a table and a later sentence says "further details are provided
+in TS 22.222", TS 22.222 is NOT the origin of <TypeName>. Put TS 22.222 in
+`context_references` and leave <TypeName> out of `references`.
+
+UNSURE WHICH LIST? USE `context_references`. The lookup still happens, and no
+false origin enters the type memory.
+
+Document layouts differ: some declare imports in a table, some in prose, some not
+at all. Look for the link between type and spec, not for a table.
+
+A TYPE DEFINED IN THIS DOCUMENT IS LOCAL. If any clause here defines it — a
+"Type <Name>" or "Enumeration <Name>" heading — put it in NEITHER list, no matter
+how many spec numbers appear near it.
+
 Judge from the section text plus the memory. Do not invent a type or a spec that
-appears in neither. If the section references no external types, return an empty
-list.
+appears in neither. Return empty lists when the section references nothing.
 """
 
 _STEP1_USER = """\
@@ -359,6 +425,11 @@ of them required — a field you leave empty is one the next section cannot read
 A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    record what it is: its name, its source spec, THE YAML FILENAME THAT SPEC
    PUBLISHES IT IN, its OWN property names, and a short note.
+   ONLY blocks headed "### TYPE <name>" produce an entry. A block headed
+   "### CONTEXT from <spec>" is a procedure or design rule the clause points at:
+   read it for the guidance in job D, but never turn it into a memory entry — it
+   defines no type, and recording one from it puts a false origin in the memory
+   that every later section then trusts.
    The filename is what an external $ref needs before the '#', and the spec number
    alone never supplies it. Look for it in the fetched text: those chunks routinely
    carry a reference another spec wrote out in full, and the filename is the part
