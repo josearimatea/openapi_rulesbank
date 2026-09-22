@@ -199,11 +199,25 @@ def _analyze_section(
             "helper_context":     helper_context or "None provided.",
         })
 
-        new_refs = {
-            e.type_name: {"spec": e.source_spec, "file": e.source_file,
-                          "fields": e.fields, "note": e.note}
-            for e in analysis.memory_updates if e.type_name
-        }
+        # A later section that reports a type it merely USES knows its spec from
+        # the memory but may retrieve nothing carrying the filename — and writing
+        # the entry wholesale would then erase a filename an earlier section had
+        # already established. Keep whichever side actually has each field: a
+        # known filename is a fact, and a section that did not find one has not
+        # refuted it. (Measured: DateTime gained its filename in the clause that
+        # declares the imports and reached the end of the run without it.)
+        prev = ref_memory or {}
+        new_refs = {}
+        for e in analysis.memory_updates:
+            if not e.type_name:
+                continue
+            was = prev.get(e.type_name, {}) or {}
+            new_refs[e.type_name] = {
+                "spec":   e.source_spec or was.get("spec", ""),
+                "file":   e.source_file or was.get("file", ""),
+                "fields": e.fields      or was.get("fields", []),
+                "note":   e.note        or was.get("note", ""),
+            }
         new_cross_refs = {
             c.subject: {"fact": c.fact, "source": c.source}
             for c in (analysis.cross_refs or []) if c.subject and c.fact
