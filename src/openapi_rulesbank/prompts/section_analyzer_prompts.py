@@ -150,30 +150,61 @@ reference so it gets looked up and understood in this section's context.
 PUT EACH REFERENCE IN ONE OF TWO LISTS. Both are looked up; they differ in what
 they mean.
 
-  `references` — a type IMPORTED from another spec. Use it ONLY when one row or
-  one sentence names the type and the spec together:
-      "<TypeName>   TS 11.111"                        -> import
-      "the <TypeName> type defined in TS 11.111"      -> import
+FOR EACH TYPE THIS SECTION USES, RUN THESE THREE CHECKS IN ORDER AND STOP AT THE
+FIRST THAT ANSWERS:
 
-  `context_references` — a spec the section points at for anything else:
-  procedure, design rules, further detail. It names no type:
-      "Further details on <procedure> are provided in TS 22.222, clause 5.1"
-      "The rules for <X> are defined in TS 22.222"
+  LOOK IN BOTH PLACES: THE TABLES AND THE PROSE. A section states where its
+  types come from in either — a table with a "Reference" column, a sentence, or
+  both. Read whichever this section has.
+
+  CHECK 1 — IS IT LOCAL? Does the reference for it point at a CLAUSE OF THIS
+  DOCUMENT (a clause number like 11.111.2.3, or a heading here that defines it:
+  "Type <Name>", "Enumeration <Name>")?
+      in a table:  "<TypeName>   11.111.2.3   <description>"     -> LOCAL
+      in prose  :  "<TypeName> is defined in clause 11.111.2.3"  -> LOCAL
+  If yes: LOCAL. Put it in NEITHER list and move on, however many spec numbers
+  appear nearby.
+
+  CHECK 2 — IS IT IMPORTED? Does the reference for it point at ANOTHER
+  SPECIFICATION?
+      in a table:  "<TypeName>   TS 11.111   <description>"      -> import
+      in prose  :  "the <TypeName> type defined in TS 11.111"    -> import
+  If yes: `references`, with that spec.
+
+  THE DECISION IS WHERE THE REFERENCE POINTS — into this document, or out of it.
+  Nothing else. A document may list its local and its imported types in two
+  separate tables, in one table, or only in prose; the pointer decides either way.
+
+  CHECK 3 — DOES THE REFERENCE MEMORY ALREADY ATTRIBUTE IT TO ANOTHER SPEC? The
+  memory above was written from a clause that DID pair them — typically the
+  clause that declares the imported types, which most documents place after the
+  clauses that use them. A section consuming such a type rarely restates the
+  spec, and the import does not stop being one for that reason.
+  If yes: `references`, with the spec the memory gives.
+
+  None of the three: the type is not an import. Leave it out of `references`.
+
+WHY CHECK 3 EXISTS: without it, every clause that merely USES an imported type
+reports nothing, no lookup runs for that type, and the retrieval that carries its
+YAML filename never happens. The origin is still never invented — check 3 reads
+an origin some earlier clause declared in text.
+
+`context_references` — a spec the section points at for anything else:
+procedure, design rules, further detail. It names no type:
+    "Further details on <procedure> are provided in TS 22.222, clause 5.1"
+    "The rules for <X> are defined in TS 22.222"
 
 DO NOT PAIR A TYPE WITH A SPEC THE TEXT DID NOT PAIR. If a clause lists
 "<TypeName>" in a table and a later sentence says "further details are provided
 in TS 22.222", TS 22.222 is NOT the origin of <TypeName>. Put TS 22.222 in
-`context_references` and leave <TypeName> out of `references`.
+`context_references` and leave <TypeName> out of `references`. Note this is
+exactly what the three checks already decide: TS 22.222 answers none of them.
 
-UNSURE WHICH LIST? USE `context_references`. The lookup still happens, and no
-false origin enters the type memory.
+UNSURE ABOUT A SPEC THE SECTION POINTS AT? USE `context_references`. The lookup
+still happens, and no false origin enters the type memory.
 
 Document layouts differ: some declare imports in a table, some in prose, some not
 at all. Look for the link between type and spec, not for a table.
-
-A TYPE DEFINED IN THIS DOCUMENT IS LOCAL. If any clause here defines it — a
-"Type <Name>" or "Enumeration <Name>" heading — put it in NEITHER list, no matter
-how many spec numbers appear near it.
 
 Judge from the section text plus the memory. Do not invent a type or a spec that
 appears in neither. Return empty lists when the section references nothing.
@@ -425,16 +456,29 @@ of them required — a field you leave empty is one the next section cannot read
 A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    record what it is: its name, its source spec, THE YAML FILENAME THAT SPEC
    PUBLISHES IT IN, its OWN property names, and a short note.
-   ONLY blocks headed "### TYPE <name>" produce an entry. A block headed
-   "### CONTEXT from <spec>" is a procedure or design rule the clause points at:
-   read it for the guidance in job D, but never turn it into a memory entry — it
-   defines no type, and recording one from it puts a false origin in the memory
-   that every later section then trusts.
-   The filename is what an external $ref needs before the '#', and the spec number
-   alone never supplies it. Look for it in the fetched text: those chunks routinely
-   carry a reference another spec wrote out in full, and the filename is the part
-   preceding the '#'. Record it whenever the text shows one; leave it empty when no
-   text does, and never derive it from the spec number.
+   THE SPEC AND THE FILENAME ARE TWO SEPARATE QUESTIONS WITH TWO SEPARATE
+   SOURCES. Answer them one at a time, in this order:
+
+   Q1 — WHICH SPEC DEFINES IT? Answer ONLY from: a row or sentence of THIS
+   SECTION naming the type and the spec together, or the reference memory above.
+   THE FETCHED TEXT NEVER ANSWERS Q1 — a spec number sitting near a type in
+   retrieved text does not make it that type's origin, and recording one that way
+   puts a false origin in the memory every later section then trusts.
+   No answer to Q1: the type is not an import. Write no entry for it, and do not
+   go on to Q2.
+
+   Q2 — WHICH YAML FILE PUBLISHES IT? Ask this ONLY for a type that answered Q1.
+   One specification publishes several files, so its number never yields the
+   filename. Record a filename ONLY where some text you were given writes it out
+   in full, as
+       <filename>.yaml#/components/schemas/<TypeName>
+   with <TypeName> being EXACTLY this type — that is a transcription. Otherwise
+   leave it empty: never derive it from the spec number and never guess.
+
+   AN EMPTY FILENAME DOES NOT MAKE THE TYPE LOCAL. Q1 already settled that it
+   comes from another specification; Q2 only fills in where. Leaving Q2 empty
+   keeps the type external with its origin unresolved, which the extractor
+   reports as a gap — it never turns it into a type defined in this document.
    Read the property names out of the fetched definition — they are the
    members the type declares, NOT the schema keywords that structure them (allOf,
    type, properties, required, items, $ref are structure, never property names).

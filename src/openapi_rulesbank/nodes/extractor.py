@@ -95,11 +95,15 @@ def _format_ref_memory(ref_memory: dict) -> str:
     for t, info in ref_memory.items():
         spec = info.get("spec", "")
         fields = info.get("fields", [])
-        # The YAML filename a retrieval revealed. It is what an external $ref needs
-        # before the '#', and the spec number alone does not supply it — so say
-        # plainly when it is not known, rather than leaving the reader to guess.
+        # The YAML filename a retrieval revealed. The spec number alone does not
+        # supply it — one specification publishes several files. But the clause
+        # that named the spec already settled that the type is EXTERNAL, and that
+        # has to survive a missing filename: the internal form is what a LOCAL
+        # type takes, so falling back to it discards the fact the document stated
+        # and emits a rule asserting the opposite.
         file = info.get("file", "")
-        where = f"{spec} [{file}]" if file else f"{spec} [YAML filename unknown]"
+        where = (f"{spec} [{file}]" if file
+                 else f"{spec} [EXTERNAL — filename not known yet]")
         f = f" fields={fields}" if fields else ""
         lines.append(f"{t} -> {where}{f}")
     return "\n".join(lines)

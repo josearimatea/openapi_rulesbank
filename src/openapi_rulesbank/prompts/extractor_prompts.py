@@ -683,10 +683,24 @@ these specific rules; they belong elsewhere):
   being skipped does not skip the others).
 
 Imported types seen so far, as "<Type> -> <spec> [<YAML filename>]". THIS LIST IS
-EXHAUSTIVE: a type on it is imported and its $ref carries that filename before the
-'#'; a type NOT on it is local, takes a plain "$ref: '#/components/schemas/<Type>'"
-with `file` empty, and needs no filename — that is complete, never a gap. Report a
-missing filename ONLY for a listed type shown as "[YAML filename unknown]":
+EXHAUSTIVE, and it decides the FORM of the $ref in three cases — read which one
+each type is in:
+
+  1. ON the list WITH a filename -> EXTERNAL, filename before the '#':
+     "$ref: '<filename>.yaml#/components/schemas/<Type>'". Complete, no gap.
+
+  2. NOT on the list -> LOCAL, this document defines it:
+     "$ref: '#/components/schemas/<Type>'", `file` empty. Complete, never a gap.
+
+  3. ON the list marked "[EXTERNAL — filename not known yet]" -> STILL EXTERNAL.
+     A clause of this document states this type comes from another specification,
+     so it is NOT local and case 2 does NOT apply to it. Keep `file` set to the
+     spec the list names, write the $ref as the external one you can state, and
+     REPORT THE MISSING FILENAME as missing_context for this section.
+     NEVER write case 2's plain "#/components/schemas/<Type>" for a type on this
+     list: that is the form of a type defined HERE, and using it contradicts what
+     the document said. A missing filename is an incomplete external reference,
+     never a local one.
 {ref_memory}
 
 Auxiliary context — supporting 3GPP documents and any instructions the user
