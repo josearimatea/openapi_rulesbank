@@ -84,7 +84,10 @@ For each rule in previous_missing_rules:
     this section's allOf base (already provided by the base $ref — NOT missing), or
     a rule the verdict shows belongs to ANOTHER section. Keeping such a rule only
     makes the Extractor re-emit what the per-rule check then discards.
-  - If still genuinely absent (and not inherited / not owned elsewhere): keep it.
+  - ALSO remove it when the verdict lists it as a DEFERRED external $ref: the rule
+    was withheld on purpose because the type's external filename is unknown in this
+    section, and the section that declares the type emits it. It is not missing here.
+  - If still genuinely absent (not inherited / not owned elsewhere / not deferred): keep it.
 
 Do NOT add new rules at this stage. Only filter what was previously identified.
 Do NOT list rules about the absence of a construct (e.g. 'no query parameters').
@@ -595,6 +598,10 @@ For each entry in reflector_missing_rules AND current_missing_rules:
     rule the verdict shows belongs to ANOTHER section. This overrides the "do not
     remove" caution below — an inherited or foreign rule must never survive as
     missing, or the Extractor loops re-emitting what gets discarded.
+  - If the verdict lists it as a DEFERRED external $ref → exclude: the rule was
+    withheld on purpose because its external filename is unknown in this section, and
+    the section that declares the type emits it. It must never survive as missing —
+    also overrides the "do not remove" caution.
   - If its target is already being CORRECTED this iteration (see the corrections
     list) → exclude: that rule EXISTS and the correction covers it. A target is one
     thing — correction OR missing, never both. Never keep as missing a target that

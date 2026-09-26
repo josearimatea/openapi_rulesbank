@@ -692,15 +692,20 @@ each type is in:
   2. NOT on the list -> LOCAL, this document defines it:
      "$ref: '#/components/schemas/<Type>'", `file` empty. Complete, never a gap.
 
-  3. ON the list marked "[EXTERNAL — filename not known yet]" -> STILL EXTERNAL.
-     A clause of this document states this type comes from another specification,
-     so it is NOT local and case 2 does NOT apply to it. Keep `file` set to the
-     spec the list names, write the $ref as the external one you can state, and
-     REPORT THE MISSING FILENAME as missing_context for this section.
-     NEVER write case 2's plain "#/components/schemas/<Type>" for a type on this
-     list: that is the form of a type defined HERE, and using it contradicts what
-     the document said. A missing filename is an incomplete external reference,
-     never a local one.
+  3. ON the list marked "[EXTERNAL — filename not known yet]" -> STILL EXTERNAL,
+     filename unknown. Do NOT write it as the internal case-2 form — see the rule
+     below: an external $ref with no filename is not emitted at all.
+
+DO NOT EMIT A RULE WHOSE $ref WOULD BE EXTERNAL BUT HAS NO FILENAME. If a rule you
+are about to write would carry a $ref to a type that is EXTERNAL (imported from
+another spec — case 3 above, or flagged in the Section analysis) and you do NOT have
+its YAML filename, DO NOT GENERATE that rule. Writing "#/components/schemas/<Type>"
+for it would be the LOCAL form, which falsely says the type is defined in this
+document; and there is no complete external form to write without the filename. So
+skip that one rule entirely — no placeholder, no internal $ref. A later section that
+declares the type has the filename and will emit the rule there. Emit every OTHER
+rule this section supports as normal. (A type WITH a filename is case 1 — emit it
+completely; a genuinely LOCAL type is case 2 — emit the internal $ref.)
 {ref_memory}
 
 Auxiliary context — supporting 3GPP documents and any instructions the user

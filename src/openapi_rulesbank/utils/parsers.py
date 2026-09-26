@@ -97,6 +97,21 @@ def format_section_verdict(verdict: dict | None) -> str:
             "it. A callback rule here has no verified anchor; treat a missing one "
             "as a reported gap, not as a rule to invent an anchor for."
         )
+
+    # External-type $refs the pre-analysis told the Extractor to DEFER (external, but
+    # the YAML filename is not known in this section). Their rule was WITHHELD ON
+    # PURPOSE — it is not missing and not wrong. A later section that has the filename
+    # emits it. The judge must NOT list such a rule as missing, nor correct the
+    # section for lacking it.
+    deferred = verdict.get("defer_external_refs", []) or []
+    if deferred:
+        lines.append(
+            f"deferred external $refs (withheld on purpose, NOT missing): {deferred}. "
+            "A rule using one of these types was intentionally not emitted here, "
+            "because its external YAML filename is unknown in this section; the "
+            "section that declares the type emits it. Do NOT report such a rule as "
+            "missing and do NOT correct this section for its absence."
+        )
     return "\n".join(lines)
 
 

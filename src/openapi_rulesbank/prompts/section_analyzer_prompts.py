@@ -90,6 +90,36 @@ class ContextReference(BaseModel):
     )
 
 
+class TypeFilenamePresence(BaseModel):
+    """Whether THIS section itself writes out an imported type's YAML filename.
+
+    A type is imported from another spec but its `$ref` needs that spec's YAML
+    filename, which the section that USES the type often does not carry — it is
+    written in full only in the clause that DECLARES the type. Phase 1 records, per
+    referenced type, whether this section is that declaring clause (the filename is
+    present here) or only a using one (the filename must come from elsewhere), so
+    Phase 2 can tell a type it can complete now from one whose rule must be deferred.
+    """
+
+    type_name: str = Field(description="The referenced type's name.")
+    filename_in_section: bool = Field(
+        description=(
+            "True when THIS section's own text writes the external filename out in "
+            "full for this type — a reference of the form "
+            "'<file>.yaml#/components/schemas/<ThisType>' appears here. False when the "
+            "section only names/uses the type and no such filename is written here."
+        )
+    )
+    filename: str = Field(
+        default="",
+        description=(
+            "The YAML filename copied EXACTLY from this section's text when "
+            "filename_in_section is True (e.g. 'TS28623_ComDefs.yaml'); empty when it "
+            "is False. Never guess or derive it from the spec number."
+        )
+    )
+
+
 class SectionImports(BaseModel):
     """Phase 1 output: the other-spec references this section carries."""
 
@@ -109,6 +139,16 @@ class SectionImports(BaseModel):
             "too — the answer often settles how a rule must be written — but they "
             "never become type origins. Empty when the section points at no such "
             "spec."
+        )
+    )
+    filename_presence: list[TypeFilenamePresence] = Field(
+        default_factory=list,
+        description=(
+            "One entry per type in `references`, saying whether THIS section's text "
+            "writes that type's external YAML filename in full (and which). Lets "
+            "Phase 2 tell a type it can reference completely now from one whose rule "
+            "must be deferred until a declaring section supplies the filename. Empty "
+            "when the section imports no type."
         )
     )
     explanation: str = Field(
@@ -205,6 +245,18 @@ still happens, and no false origin enters the type memory.
 
 Document layouts differ: some declare imports in a table, some in prose, some not
 at all. Look for the link between type and spec, not for a table.
+
+`filename_presence` — for EACH type you put in `references`, say whether THIS
+section's text writes that type's external YAML filename out in full. A filename is
+written out only where a reference appears complete, as
+    <file>.yaml#/components/schemas/<ThisType>
+(e.g. "TS28623_ComDefs.yaml#/components/schemas/NotificationHeader"). This is the
+clause that DECLARES the type. If that appears here for the type, set
+filename_in_section=True and copy the filename exactly. If the section only NAMES
+or USES the type — a table row, a data-type cell, a sentence — with no such full
+reference, set filename_in_section=False and leave filename empty; the filename
+lives in the declaring clause, not here. One entry per type in `references`; do not
+guess a filename and never derive it from the spec number.
 
 Judge from the section text plus the memory. Do not invent a type or a spec that
 appears in neither. Return empty lists when the section references nothing.
@@ -353,6 +405,23 @@ class SectionAnalysis(BaseModel):
         )
     )
 
+    defer_external_refs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of EXTERNAL types whose $ref this section CANNOT write yet, so the "
+            "Extractor must NOT emit a rule for them here — the rule is left for a "
+            "later section that has the YAML filename. List a type when ALL of: (1) it "
+            "is imported from another spec (in references/memory with a spec), (2) NO "
+            "filename is known — Phase 1's filename-presence says not in this section, "
+            "the RAG found none, and the memory has none, and (3) this section would "
+            "otherwise emit a $ref to it (a response body, a property, an allOf base). "
+            "Do NOT list a type whose filename is known (write it now) or a local one. "
+            "Empty when nothing is deferred. This is the signal the Extractor, "
+            "Reflector and Validator read to know the rule was withheld on purpose, "
+            "not lost."
+        )
+    )
+
     section_kind: str = Field(
         description=(
             "What this section fundamentally is, from its own content: "
@@ -479,6 +548,22 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    comes from another specification; Q2 only fills in where. Leaving Q2 empty
    keeps the type external with its origin unresolved, which the extractor
    reports as a gap — it never turns it into a type defined in this document.
+
+   Q3 — MUST THE EXTRACTOR DEFER THIS TYPE'S $ref? Add the type's name to
+   `defer_external_refs` when ALL of these hold:
+     - it is EXTERNAL (answered Q1), AND
+     - its filename is unknown to you here: Phase 1's filename-presence list says
+       "filename NOT in this section" for it, Q2 found none in the RAG, and the
+       reference memory has none either, AND
+     - THIS section would otherwise write a $ref to it (a response body, a property,
+       an allOf base).
+   That name tells the Extractor NOT to emit the rule now: an external $ref with no
+   filename would be written as an internal one, asserting the type is local, which
+   contradicts Q1. The rule waits, parked, until the section that DECLARES the type
+   (its filename-presence will say "filename in THIS section") supplies the filename
+   and emits it. Do NOT defer a type whose filename you DO have (write it in full
+   now) or a local type (internal $ref, never deferred). Leave `defer_external_refs`
+   empty when nothing is deferred.
    Read the property names out of the fetched definition — they are the
    members the type declares, NOT the schema keywords that structure them (allOf,
    type, properties, required, items, $ref are structure, never property names).
@@ -648,6 +733,10 @@ Reference memory so far ('type -> {{spec, fields}}'):
 
 Phase 1 explanation of this section's external references:
 {phase1_explanation}
+
+Phase 1's per-type filename presence — whether THIS section's text writes each
+imported type's external filename in full, or only uses the type:
+{filename_presence}
 
 Fetched definitions of the referenced types (RAG results):
 {rag_results}

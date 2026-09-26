@@ -187,6 +187,17 @@ def _analyze_section(
                 )
         rag_results = "\n\n".join(rag_blocks) or "No definitions retrieved."
 
+        # Serialize Phase 1's per-type filename presence (its own output) for the
+        # Phase 2 prompt — same transport as phase1_explanation just above. Phase 2
+        # uses it to tell a type it can reference completely now from one whose rule
+        # must be deferred. No decision here: filename_in_section is Phase 1's call.
+        filename_presence = "\n".join(
+            f"  - {p.type_name}: "
+            + (f"filename in THIS section = {p.filename}" if p.filename_in_section
+               else "filename NOT in this section")
+            for p in imports.filename_presence
+        ) or "None."
+
         # Phase 2 — write the memory updates and the extractor guidance.
         p2_chain = section_analyzer_prompt | llm.with_structured_output(SectionAnalysis)
         analysis: SectionAnalysis = p2_chain.invoke({
@@ -196,6 +207,7 @@ def _analyze_section(
             "section_content":    section_content,
             "ref_memory":         _format_ref_memory(ref_memory),
             "phase1_explanation": imports.explanation or "None.",
+            "filename_presence":  filename_presence,
             "rag_results":        rag_results,
             "sibling_summary":    sibling_summary or "No sibling sections summarized yet.",
             # First step of the callback-anchor cascade: a decision stated here
@@ -361,6 +373,21 @@ def _format_analysis_guidance(analysis: SectionAnalysis | None) -> str:
             "consumer-supplied address, but the pre-analysis could not resolve the "
             "operation to anchor it on. Emit what the section does support and "
             "report the missing anchor in missing_context — never a placeholder."
+        )
+
+    # External types the pre-analysis found with no filename here: any rule whose
+    # $ref would point at one of them would come out in the internal (no-filename)
+    # form, which falsely marks the type local. The Extractor must NOT emit those
+    # rules — a later section that declares the type has the filename and emits them.
+    if analysis.defer_external_refs:
+        names = ", ".join(analysis.defer_external_refs)
+        lines.append(
+            f"DEFER THESE EXTERNAL $refs — these types are external but their YAML "
+            f"filename is not known in this section: [{names}]. Do NOT emit any rule "
+            f"whose $ref would point at one of them: with no filename it would be "
+            f"written as the internal \"#/components/schemas/<Type>\" form, wrongly "
+            f"marking the type local. Skip those rules entirely (no placeholder); the "
+            f"section that declares the type will emit them. Emit every OTHER rule."
         )
     return "\n".join(lines)
 
@@ -760,6 +787,10 @@ def extractor_node(state: RuleBankState) -> dict:
             # Phase-3 skip list — rules another section already owns. Handed to the
             # Reflector so it never lists one of these as "missing" here.
             "skip_rules":              skip_rules,
+            # External types Phase 2 says to DEFER (external, filename unknown here).
+            # Read by the Extractor (do not emit their $ref, park the rule) and by the
+            # Reflector/Validator (a deferred $ref is withheld on purpose, not missing).
+            "defer_external_refs":     list(analysis.defer_external_refs or []),
         }}
 
     return {

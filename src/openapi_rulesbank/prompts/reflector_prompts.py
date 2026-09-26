@@ -386,11 +386,20 @@ schema_property or 'required'. Only the type's OWN attributes (those NOT in the
 inherited list) can be missing. Reporting an inherited field as missing forces the
 Extractor to re-emit a rule the Validator will only discard again — do not do it.
 
+DEFERRED EXTERNAL $refs ARE NOT MISSING — read the pre-analysis verdict below. When
+it lists deferred external $refs, a rule using one of those types was DELIBERATELY
+withheld from this section: the type is imported from another spec and its YAML
+filename is unknown here, so the section that declares the type emits the rule
+instead. Do NOT report such a rule as missing — telling the Extractor to emit it
+here only reproduces the same incomplete $ref. Its absence is on purpose, not a gap.
+
 Do NOT suggest:
   - Rules already covered by current_rules or already_validated_rules
   - Any inherited field named in the pre-analysis verdict (covered by the allOf base)
   - Rules the pre-analysis verdict shows belong to ANOTHER section (this section only
     references a type/operation whose definition lives elsewhere)
+  - Any rule the pre-analysis verdict lists as a DEFERRED external $ref (withheld on
+    purpose; the declaring section emits it)
   - Rules about the absence of a construct (e.g. 'no query parameters')
   - Vague or non-actionable rules
   - Rules that duplicate what is already extracted under a different phrasing
