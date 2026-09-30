@@ -1,0 +1,389 @@
+=============================================================================
+PROBLEMS — ProvMnS / PerfMnS  |  estado em 20/set/2026
+=============================================================================
+
+Só o que está ABERTO. O histórico do raciocínio e os itens já resolvidos estão
+em Problems_ProvMnS_LEGACY_ate_20260920.txt, com a MESMA numeração — um item
+aqui referido como §3.6 é o §3.6 de lá, continuado.
+
+BANCOS DE REFERÊNCIA desta medição:
+  ProvMnS : rules_bank_28532-i20_full_20260915_214107.json   (122 regras)
+  PerfMnS : rules_bank_28532-i20_full_20260915_232343.json   ( 18 regras)
+  spec    : 28532-i20 (V18.2.0), que casa com rel18_TS28532_ProvMnS.yaml
+
+TODO NÚMERO AQUI FOI MEDIDO EM 20/set/2026 contra esses arquivos. Números sem
+data de medição não entram: foi o que estragou o documento anterior.
+
+Versionado a partir de 30/set/2026 (antes era untracked; passou a ser commitado
+depois que um sync externo apagou arquivos não-versionados em 28/set).
+
+
+=============================================================================
+QUADRO GERAL — onde o pipeline está
+=============================================================================
+
+ProvMnS, 122 regras:
+  cobertura posicional contra o YAML : 91 de 106 alvos (86%)
+  fidelidade de valor onde medível   : 28 de 37       (76%)
+  inválidas incluídas à força        : 14 de 122      (11%)
+  $ref que deveria ser externo e saiu interno: 30 ocorrências (25% das regras)
+
+PerfMnS, 18 regras: 15 corretas, 1 espúria, 2 regredidas.
+
+A INVERSÃO DO DIAGNÓSTICO (20/set/2026). O documento legado afirmava que a
+camada de PATHS era a fraca e a de SCHEMAS estava "pronta". Inverteu:
+
+  paths   : URI literal 18/40 -> 0/60 | param inexistente 3 -> 0 | DELETE 5 -> 0
+            callbacks 0 -> 6 (a "maior lacuna" do legado, §3.1, existe agora)
+  schemas : 30 $ref externos errados, que o legado não media
+
+Hoje a maior fonte de defeito é o $ref externo (§3.6/§3.23), não o path.
+
+
+=============================================================================
+1. ABERTO — REGRESSÕES (defeito que um conserto nosso introduziu)
+=============================================================================
+
+3.23 O $ref EXTERNO REGREDIU COM A SEPARAÇÃO TIPO x CONTEXTO (20/set/2026)
+O DEFEITO DE MAIOR IMPACTO ABERTO. 30 ocorrências, ~25% das 122 regras.
+
+  probe de 15/set (§3.15) : externo 10, interno 0   -> "§3.6 resolvido"
+  run i20 completo        : externo  9, interno 48
+                            das quais DEVERIAM ser externas: 30
+
+  quais: ErrorResponse 17, Filter 3, Uri 2, ErrorResponseDefault 2,
+         ErrorResponseGet 1, ErrorResponsePatch 1, NotificationId 1,
+         SpecificProblem 1, AttributeNameValuePairSet 1, AttributeValueChangeSet 1
+  (o YAML importa 13 tipos de fora; 9 ocorrências saem externas corretamente:
+   Dn 2, NotificationId 2, NotificationHeader 4, AttributeNameValuePairSet 1)
+
+CAUSA — é o §3.17, e foi um trade que não percebi na hora. A separação tornou a
+Fase 1 rigorosa: só registra origem quando UMA linha ou UMA frase nomeia o tipo
+e a spec juntos. Isso matou a origem falsa (Resource -> TS 32.158, §3.14), mas
+matou também os vínculos que ela ANTES INVENTAVA E QUE POR ACASO ACERTAVAM. Os
+10 externos do probe vinham de a Fase 1 chutar ErrorResponse -> TS 28.623.
+
+POR QUE NÃO É SÓ ACEITAR O TRADE: o §3.6 do legado provou que esse vínculo TEM
+gancho textual — a tabela 12.1.1.4.1-2 cita "TS 28.623 [44]", e a [44] é
+exatamente 3GPP TS 28.623. Então não é caso de inventar: é caso de a regra do
+vínculo não estar reconhecendo uma tabela que a satisfaz.
+
+SINTOMA QUE CONFIRMA: source_file vem preenchido em 9 de 57 referências. Sem o
+nome do arquivo YAML não existe $ref externo possível — o spec number sozinho
+nunca basta. É a mesma pendência que o legado registrou como "AINDA ABERTO: o
+source_file continua vazio".
+
+A FAZER: verificar por que a tabela 12.1.1.4.1-2 não satisfaz a regra do
+vínculo. Hipóteses não testadas: (a) a tabela usa "TS 28.623 [44]" com o número
+de referência colado, e o casamento espera "TS 28.623" limpo; (b) o vínculo está
+na tabela mas o tipo aparece em cláusula distante, e a Fase 1 vê os dois em
+blocos separados; (c) a Fase 1 classifica certo e a Fase 2 não grava o
+source_file. Medir ANTES de mexer no prompt — distinguir (c) das outras é
+barato: basta logar o que a Fase 1 devolve e o que a Fase 2 grava.
+
+
+3.24 DUPLICATA DE CALLBACK AINDA PRESENTE (20/set/2026)
+  callbacks no banco i20: notifyMOICreation 1, notifyMOIDeletion 1,
+    notifyMOIAttributeValueChanges 1, notifyEvent 1, notifyMOIChanges 2  <- 2x
+
+O §3.9 do legado registrou essa duplicata como regressão do próprio conserto de
+callback, e ela sobreviveu. A 2ª tem validation_passed=False com nota "Duplicate
+of already-validated rule" — o Validator PEGOU e o Builder incluiu à força por
+esgotamento.
+
+DECISÃO JÁ TOMADA (mantida): o requisito é só NÃO DUPLICAR. Sair com o nome
+errado é aceitável — o erro é da spec, que grafa o mesmo nome de três formas
+(§3.7 do legado). Aqui o problema é que a duplicata ENTRA no arquivo final.
+
+A FAZER: o Builder não deveria force-includar uma regra cuja nota diz
+"Duplicate". Distinguir, no force-include, defeito de CONTEÚDO (aceitável, entra
+marcado) de defeito de EXISTÊNCIA (duplicata: nunca entra).
+
+
+3.25 PerfMnS — CALLBACK ESPÚRIO ONDE NÃO HÁ CALLBACK (15/set/2026)
+O conserto de âncora do ProvMnS vazou para uma MnS que não usa callbacks.
+
+  gerado : callback paths./notificationSink.post.callbacks.notifyThresholdCrossing
+           value = {request.body#/notificationSink}   <- campo INVENTADO
+  certo  : o path_operation paths./notificationSink :: post, que JÁ EXISTIA e
+           está correto nos dois runs. O callback foi acrescentado AO LADO.
+
+O YAML do PerfMnS não tem 'callbacks:' em lugar nenhum; o do ProvMnS tem (linha
+86). notificationSink é o PATH do recurso, não um campo de corpo. O critério já
+está escrito em validator_prompts.py:381-393 (destino em runtime -> callback;
+caminho fixo que o serviço publica -> path_operation) e não foi aplicado.
+
+REFLECTOR E VALIDATOR ERRARAM JUNTOS, NO DIAGNÓSTICO ERRADO: reprovaram por
+faltar um cifrão ({$request.body#/...}), que o YAML oficial NÃO usa (grep
+'$request' em data/inputs/yamls/ não retorna nada) e que nenhum artefato nosso
+exige (rules_check.py:199 só pede chaves; validator_prompts.py:380 diz "as the
+spec writes it"; extractor_prompts.py:471 exemplifica sem cifrão). A exigência
+veio do RAG da referência OpenAPI genérica, aplicada por cima da convenção 3GPP.
+
+PARA A DISSERTAÇÃO: o laço de correção funcionou perfeitamente — nomeou o valor
+literal, repetiu a instrução, girou as 3 tentativas — corrigindo na direção
+errada. O Extractor resistiu às três, e foi essa resistência que preservou o
+valor. Revisão automática bem instrumentada não substitui ancoragem na fonte.
+
+A FAZER: (a) impedir que a convenção de callback se aplique quando o destino é
+caminho fixo publicado pelo próprio serviço; (b) impedir que a referência
+genérica do OpenAPI sobreponha a convenção 3GPP na revisão.
+
+
+3.26 PerfMnS — RESPOSTAS 4XX/5XX PERDERAM O $ref EXTERNO (15/set/2026)
+  4XX  ago/2026: $ref: 'TS28623_ComDefs.yaml#/components/schemas/ErrorResponse'
+       set/2026: "Error-Response body"        <- prosa, sem $ref
+  5XX  idem
+
+Mesma natureza do §3.23, em outra MnS. É por isso que o externo do PerfMnS caiu
+de 4 para 2 — eu havia relatado essa queda como "não é regressão"; ERA.
+(4XX/5XX x default segue valendo como convenção, não como defeito.)
+
+
+=============================================================================
+2. ABERTO — MAPEAMENTO
+=============================================================================
+
+3.22 PARÂMETRO DE OPERAÇÃO ENDEREÇADO NO PATH (20/set/2026)
+MAIOR IMPACTO MEDIDO DO LADO DO GERADOR: 18 folhas de contrato perdidas, de 28
+perdidas na execução.
+
+NÃO É O §1.1 (aquele era QUAL path, e está consertado). Este é o NÍVEL: o path
+está certo, falta o método. Em OpenAPI, `parameters` no nível do path vale para
+TODOS os métodos; no nível da operação, só para aquele.
+
+  #9   rule_text      : "The HTTP GET operation supports an optional query
+                         parameter named scope of type Scope, using form style
+                         with explode=true."
+       openapi_object : paths./{className}={id}
+       openapi_field  : parameters[in=query,name=scope]
+       deveria ser    : paths./{className}={id}.get
+
+9 REGRAS AFETADAS, EM DOIS FORMATOS:
+  (a) query_parameter, seção 149 — 5 regras: scope, filter, attributes, fields,
+      dataNodeSelector. Todas dizem "The HTTP GET operation supports..."
+  (b) path_operation, seção 147 — 4 regras: put, get, patch, delete. Aqui o
+      método foi para o openapi_FIELD em vez de compor o openapi_OBJECT:
+        object=paths./{className}={id}  field=put
+      Mesma confusão de nível, tipo diferente.
+Todas passaram na validação (validation_passed: true).
+
+NÃO É ERRO DE LEITURA — a spec atribui esses parâmetros ao GET e as operações ao
+path. O erro é na tradução texto -> endereço.
+
+O EXTRACTOR SABE FAZER CERTO, 3 contra-exemplos no MESMO banco:
+  #52  query_parameter filter   -> paths./{className}={id}.delete  OK (operação)
+  #5   path_parameter className -> paths./{className}={id}         OK (path)
+  #6   path_parameter id        -> paths./{className}={id}         OK (path)
+A #52 tem a MESMA forma das 5 defeituosas e mapeia certo. className e id ficam
+no path porque realmente valem para todos os métodos.
+
+O YAML CONFIRMA:
+  /{className}={id}:
+    parameters: [className, id]        # nível do path
+    get:
+      parameters: [scope, filter, attributes, fields, dataNodeSelector]
+
+CONSERTO (determinístico, sem custo de LLM, em rules_check.py):
+  para cada regra path_parameter | query_parameter:
+      se rule_text cita método HTTP e openapi_object NÃO termina em .<método>:
+          divergência
+  VERIFICADO contra este banco: pega exatamente as 5, deixa passar as 4
+  corretas. Zero falso positivo, zero falso negativo. O critério "o texto nomeia
+  um método" é textual e verificável, não inferência — é o que o torna seguro.
+  Para o caso (b) a checagem é outra: path_operation legítimo TEM o método no
+  field, então o teste é se object já contém o método OU o field é um método,
+  nunca os dois no mesmo nível.
+
+HIPÓTESE (não investigada): as seções 147 e 149 estão AMBAS na lista das 11 que
+esgotaram as 3 tentativas (§3.18 do legado: 147,148,149,152,160,162,166,172,
+175,189,192). As duas seções deste defeito passaram pelo force-include, onde a
+regra entra sem o mapeamento ter convergido. Vale checar se é defeito de
+mapeamento em geral ou efeito do esgotamento.
+
+RELACIONADO: §3.5 olhou EXATAMENTE estes parâmetros, viu que faltavam style e
+explode, e não viu que o endereço estava no nível errado. E o §1.1, enquanto
+mandava o path errado, ESCONDIA este defeito: não se olha o nível de um endereço
+que já está errado. Segundo caso do padrão "conserto revela defeito atrás de si"
+(o primeiro é o §3.25).
+
+
+3.27 DUAS REGRAS DISPUTANDO O MESMO ENDEREÇO NÃO SÃO DETECTADAS (15/set/2026)
+Descoberto no PerfMnS de agosto: DUAS regras para PerfMetricDirection::enum,
+mesmo object E mesmo field, uma com value=[UP] e outra com [DOWN]. Ambas
+passaram (score 1.0 e 0.98). Aplicando o banco literalmente, a segunda
+sobrescreve a primeira e sai um enum com um valor só. Já corrigido no resultado
+de setembro ([UP, DOWN]), mas a CHECAGEM não existe.
+
+CRITÉRIO DE GRANULARIDADE (genérico, vale para qualquer MnS):
+  cada item tem seu próprio openapi_field -> UMA REGRA POR ITEM
+    ex.: properties.thresholdValue, properties.hysteresis
+  os itens dividem o MESMO openapi_field  -> UMA REGRA SÓ, lista completa
+    ex.: enum, required, oneOf (o valor do campo É uma coleção)
+A granularidade é decidida pelo DESTINO, não pela fonte. No texto 3GPP, UP e
+DOWN são duas linhas de tabela com descrições próprias — o Extractor leu certo
+(source_name=UP / =DOWN). O erro foi de mapeamento.
+
+A FAZER: recusar duas regras com a mesma tripla (rule_type, openapi_object,
+openapi_field) quando o campo for de valor-coleção. Nada em rules_check.py faz
+isso; a checagem de duplicata que existe compara o CONCEITO da notificação
+(derrubou o 6º callback do ProvMnS), não o par objeto+campo.
+
+
+=============================================================================
+3. ABERTO — REGRAS QUE NÃO DEVERIAM ESTAR
+=============================================================================
+
+2.2 EXEMPLO DO TEXTO VIROU NORMA — response 400 (medido 20/set: ainda 1)
+O YAML nunca usa código de erro específico, só `default`. O texto de origem diz
+"such as HTTP 400" e isso virou regra normativa. Persiste do banco de 97 ao i20.
+
+2.1 INVÁLIDAS INCLUÍDAS À FORÇA — PIOROU (medido 20/set)
+  banco 97 : 5 de 97   (5%)
+  banco i20: 14 de 122 (11%)
+O mecanismo funciona (o Validator marca), mas o Builder inclui por esgotamento
+de MAX_ITERATIONS. Com mais seções emitindo, mais força-inclusão. Ver §3.24 para
+o subcaso que nunca deveria entrar (duplicata).
+
+1.2 PUT RESPONSES ESPALHADOS — PIOROU (medido 20/set)
+  banco 97 : 2 seções (335, 355), 6 responses
+  banco i20: 3 seções (148, 172, 182), 20 responses
+             códigos: 204 6x, 4XX 6x, 5XX 5x, 200, 201, default
+O §1.1 consertou o path, mas a CONSOLIDAÇÃO ENTRE SEÇÕES não existe — três
+cláusulas do documento descrevem as mesmas operações sob ângulos diferentes e
+cada uma emite seu conjunto. Com o path agora canônico, as duplicatas ficaram
+visíveis (antes se escondiam em chaves diferentes). A dedup por (object, field)
+do §3.27 pegaria boa parte disto.
+
+
+=============================================================================
+4. ABERTO — LACUNAS (regra que falta)
+=============================================================================
+
+3.19 AS 15 AUSENTES de 106 alvos (medido 15/set) — 14% do YAML não coberto
+  request_body 3 -> media types do PATCH. MEDIDO 20/set: o YAML tem 4
+    (application/merge-patch+json, application/3gpp-merge-patch+json,
+     application/json-patch+json, application/3gpp-json-patch+json);
+    o banco tem 3, falta application/json-patch+json.        [era §3.2]
+  response     2 -> 200 e 204 do PATCH. MEDIDO 20/set: o YAML tem 200, 204,
+    default; o banco emitiu 400, 4XX, 5XX. Nenhum dos dois de sucesso. [era §3.3]
+  callback     1 -> application/yang-data+json do notifyMOIChanges.
+    MEDIDO 20/set: o YAML dá DOIS media types a esse callback
+    (application/json + application/yang-data+json) e só a ele; os outros
+    quatro têm um. LACUNA DA FONTE, não nossa: o texto da spec não distingue.
+                                                              [era §3.11]
+  schema       9 -> todas vivem DENTRO de oneOf/allOf, não no nível raiz:
+    Resource: additionalProperties, oneOf, anyOf
+    NotifyMoiCreation: additionalText, attributeList, sourceIndicator,
+                       correlatedNotifications
+    NotifyEvent: required, allOf
+    NÃO INVESTIGADO: se o Extractor não as emite ou as emite com outro
+    object/field. É a maior lacuna isolada.
+
+3.4 MEDIA TYPES DO GET 200 (medido 20/set — confirmado aberto)
+  YAML: application/json, application/vnd.3gpp.object-tree-hierarchical+json,
+        application/vnd.3gpp.object-tree-flat+json
+  banco: uma regra de response 200 com value "Resource or array(Resource)" —
+         nenhum media type.
+
+3.5 style/explode DOS QUERY PARAMETERS (aberto, menor)
+style: form e explode: true/false estão no YAML para os 4 query params do GET.
+As regras trazem nome e tipo, não esses atributos. Pode estar fora do escopo
+intencional do rules bank — decidir antes de tratar como defeito.
+Ver §3.22: esta mesma inspeção passou por cima do defeito de nível.
+
+3.10 LACUNA DECLARADA — o anyOf dos NRMs. DELEGADO AO openapi_generator.
+NÃO É PARA CONSERTAR AQUI. O Resource do YAML é um oneOf cuja 2ª alternativa é
+um anyOf sobre TODOS os NRMs (9 refs no rel17, 19 no rel18). Não é extraível,
+verificado por três vias: a cláusula não nomeia nenhuma ("contained in the NRM
+definitions", no genérico); das 55 referências normativas da cláusula 2 a única
+de NRM é [3] TS 28.541; a TS 28.623 não serve de catálogo. E a lista cresce por
+decisão editorial, sem sinal na spec — nenhum humano lendo só a 28.532
+produziria aquele anyOf.
+  DECISÃO: uma lista embutida no gerador desatualizaria a cada release sem
+  aviso. Se for necessária, o canal é o helper_context (documento auxiliar), que
+  por precedência vence convenção e deixa registrado que a lista veio de FORA da
+  spec. Detalhe completo no legado §3.10.
+  NÃO CONFUNDIR com §3.6/§3.23: ErrorResponse, Dn, NotificationId e Uri TÊM
+  gancho textual e valem o conserto.
+
+
+=============================================================================
+5. ABERTO — INSTRUMENTAÇÃO E MEDIÇÃO
+=============================================================================
+
+3.20 FALTA O TEMPO DE EXECUÇÃO (medido 20/set — confirmado aberto)
+  usage tem: llm_calls, prompt_tokens, completion_tokens, total_tokens,
+             reasoning_tokens, cached_prompt_tokens, cost_usd
+  falta    : tempo da corrida
+Sem isso não há como comparar configurações (modelo, provider, reasoning on/off)
+pelo critério que mais pesa na prática, nem dimensionar uma corrida maior.
+A FAZER: acrescentar ao UsageTracker (config/llm_config.py) o instante inicial e
+o decorrido, expor no as_dict() — entra sozinho no metadata.usage porque o
+Builder lê o dicionário inteiro. Tempo por nó, se for barato: o Reflector e o
+Validator chamam o modelo uma vez por regra e são os gargalos prováveis.
+
+3.19b A COBERTURA DE 86% MEDE ENDEREÇO, NÃO VALOR (verificado 15/set)
+A função de matching compara só (rule_type, openapi_object, openapi_field). NÃO
+lê openapi_value. Logo as referências quebradas do §3.23 estão DENTRO das 91
+"cobertas", não entre as 15 ausentes.
+  86% = cobertura posicional | 76% = fidelidade de valor onde medível (28/37)
+  Projetar 76% sobre as 91 daria ~65% plenamente corretas — é PROJEÇÃO, não
+  citar como resultado: as 54 restantes (required, format, cardinalidade) não
+  tiveram valor conferido.
+A FAZER: estender a comparação de valor a elas para fechar o número.
+
+3.19c EXTRAS E INVÁLIDAS TÊM ERRO DE MEDIÇÃO (verificado 15/set)
+  extras 15 | inválidas 14 | extra E inválida 9 | extra mas válida 6 |
+  inválida mas casa com o YAML 5
+Das 6 "extras mas válidas", TRÊS existem no YAML (Scope.required,
+CorrelatedNotification.notificationIds, NotifyMoiAttributeValueChanges.
+attributeListValueChanges) — se foram contadas como extras, o erro é do meu
+extrator de alvos. E as 5 "inválidas que casam" são o inverso: regras corretas
+marcadas como falha, não investigadas.
+A FAZER: conferir as 6 item a item ANTES de usar 15/12% em qualquer afirmação.
+
+3.28 SEÇÕES QUE ESGOTAM TENTATIVAS, EM BLOCO CONTÍGUO (aberto)
+11 seções esgotaram as 3 tentativas: 147, 148, 149, 152, 160, 162, 166, 172,
+175, 189, 192. A quase-contiguidade sugere causa comum, não coincidência.
+NÃO INVESTIGADO. Ver §3.22: as duas seções daquele defeito (147, 149) estão
+nesta lista.
+
+LIÇÃO DE INSTRUMENTO — TERCEIRA VEZ (registrar e não repetir)
+  1. "31 refs externos" era contagem no LOG INTEIRO (queries de RAG e traços de
+     raciocínio), não no campo da regra.
+  2. "43% corretas / 98% cobertura" vinha de um extrator de alvos que não descia
+     em oneOf/allOf: achava 54 alvos onde havia 106.
+  3. "0 regras sumiram" entre agosto e setembro no PerfMnS: indexei por uma
+     tripla que PODE REPETIR, as duas regras do enum colidiram, a segunda
+     sobrescreveu a primeira, e comparei 16 contra 18.
+  REGRAS DAÍ: (a) quando dois indicadores da mesma medição se contradizem,
+  suspeitar do instrumento, não do sistema; (b) quando os números não fecham por
+  uma unidade, idem — foi assim que o caso 3 caiu; (c) nunca indexar regras por
+  chave que pode repetir sem checar colisão antes.
+
+
+=============================================================================
+6. FECHADOS — medidos em 20/set/2026, não reabrir sem nova medição
+=============================================================================
+Detalhe e raciocínio no legado, mesma numeração.
+
+  §1.1  fragmentação de path        18/40 com URI literal -> 0/60
+  §1.3  DELETE no path errado        5 de 5 -> 0 de 6
+  §1.4  path_parameter inexistentes  3 (MnSRoot, MnSVersion, URI-LDN) -> 0
+  §2.2  path_operation /eventListener (solution set ONAP VES)  1 -> 0
+  §3.1  os 4 callbacks do PUT        0 -> 6 com nome canônico
+        (era "a maior lacuna"; resta a duplicata do §3.24)
+  §3.7  tabelas não são fonte de nome — convenção de 3 posições escrita nos
+        3 nós (tipo UpperCamelCase sigla normalizada; notificação lowerCamelCase
+        sigla preservada; propriedade lowerCamelCase sigla normalizada)
+  §3.8  o laço de correção não corrigia nada — corrigido 13/set
+  §3.12 a "diferença entre provedores" era a flag de reasoning (0/8 -> 8/8)
+  §3.13 rastreio de custo — cost_usd e llm_calls no metadata: OK
+  §3.14 Fase 1 classificando tipo local como importado — 3 -> 0
+  §3.16 o teste passou a gerar rules bank (fim da medição por grep de log)
+  §3.17 separação tipo x contexto — APLICADA, mas introduziu o §3.23
+  §4    o contrato não chegava aos nós — MEDIDO 20/set: contract_summary chega a
+        5 prompts (planner, extractor, section_analyzer, reflector, validator),
+        não a 1. O legado auditou 1 de 9 chamadas.
+  §4.1  o caso notifyEvent — resolvido 09/set
