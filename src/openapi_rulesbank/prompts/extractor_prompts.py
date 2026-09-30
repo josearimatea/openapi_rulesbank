@@ -373,9 +373,14 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     TS 32.158, which specifies the URI structure common to every
                     MnS, while a resource variable is described right there in
                     terms of what it identifies.
-   openapi_object : the same path key used by that resource's path_operation
-                    rules, e.g. "paths./{{className}}={{id}}" — resource part
-                    only, never the base URL, never abbreviated with "...".
+   openapi_object : the path key that carries this variable. Use the path key
+                    ALONE (e.g. "paths./{{className}}={{id}}") when the parameter
+                    is shared by every method of the path — the path item is that
+                    shared level. Append ".<method>" (e.g.
+                    "paths./alarms/{{alarmId}}.patch") when the parameter belongs
+                    to a single operation, which is how the section presents it.
+                    Resource part only — never the base URL, never abbreviated
+                    with "...".
    openapi_field  : "parameters[in=path,name=<paramName>]"
    openapi_value  : the parameter schema type or reference:
                     "string" | "integer" | "boolean" | "array" |
@@ -384,9 +389,18 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
 4. query_parameter — one rule per query string parameter
    rule_type      : "query_parameter"
    source_name    : the query parameter name (e.g. "scope", "filter", "attributes")
-   openapi_object : the same path key used by that resource's path_operation
-                    rules, e.g. "paths./{{className}}={{id}}" — resource part
-                    only, never the base URL, never abbreviated with "...".
+   openapi_object : the path key AND the HTTP method that accepts this parameter,
+                    e.g. "paths./{{className}}={{id}}.get" — resource part of the
+                    path (never the base URL, never abbreviated with "...") followed
+                    by ".<method>". A query parameter belongs to ONE operation: the
+                    table that lists it sits under a specific HTTP method, and the
+                    text names it ("The HTTP GET operation supports..."). Write the
+                    method from that text. NEVER write the path alone — without the
+                    method the generator cannot tell which operation the parameter
+                    belongs to, and spreads it across every method of the path.
+                    (Contrast path_parameter above: a path variable may sit at the
+                    path level, WITHOUT a method, when every method shares it — a
+                    query parameter never does.)
    openapi_field  : "parameters[in=query,name=<paramName>]"
    openapi_value  : the parameter schema type or reference:
                     "string" | "integer" | "boolean" | "array" |

@@ -145,6 +145,20 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
             errors.append(
                 f"openapi_field must contain 'in={param_in}', got '{field}'."
             )
+        # A query parameter belongs to ONE operation, so its openapi_object must
+        # carry the method ("paths.<path>.<method>"); without it the generator
+        # routes the parameter to the path level and spreads it over every method.
+        # ANY method is accepted — which one is the text's call (a query param can
+        # sit under GET, DELETE, etc.; StreamingDataMnS has one under DELETE). This
+        # only checks the method is PRESENT, not which. A path_parameter is exempt:
+        # it applies to all methods, so its object is the path key with no method.
+        if rule_type == "query_parameter":
+            methods = "|".join(sorted(_VALID_HTTP_METHODS))
+            if not re.search(rf"[./](?:{methods})$", obj):
+                errors.append(
+                    "openapi_object must end with the method that accepts this "
+                    f"parameter, as 'paths.<path>.<method>', got '{obj}'."
+                )
 
     elif rule_type == "response":
         # Normalize a lowercase wildcard ("4xx" -> "4XX") in place before checking,
