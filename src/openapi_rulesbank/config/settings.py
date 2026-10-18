@@ -8,6 +8,7 @@ No side effects on import.
 import os
 from .paths import *  # Import all paths and settings from paths.py for centralization
 from dotenv import load_dotenv  # Load .env file
+from qdrant_3gpp_rag.embedding_config import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
 
 load_dotenv()  # Ensure .env is loaded before os.getenv
 
@@ -84,12 +85,13 @@ LLM_MAX_RETRIES = 2
 OPENAPI_REFERENCE_VERSION = "3.0.1"
 
 # RAG — OpenAPI reference collection
-# Same embedding model used in openapi_chatbotUI (free, local, no API key needed).
+# The embedding model comes from qdrant_3gpp_rag, the single source for every
+# repository: queries must use the model the shared collections were built with.
 OPENAPI_COLLECTION_NAME  = "openapi_reference"
 CHUNK_SIZE               = 1000  # characters per chunk
 CHUNK_OVERLAP            = 200   # overlap between consecutive chunks
-EMBEDDING_MODEL          = "sentence-transformers/all-MiniLM-L6-v2"
-EMBEDDING_DIM            = 384   # output dimension for all-MiniLM-L6-v2
+EMBEDDING_MODEL          = DEFAULT_EMBEDDING_MODEL
+EMBEDDING_DIM            = DEFAULT_EMBEDDING_DIM
 OPENAPI_REFERENCE_RETRIEVE_CHUNKS = 5  # number of chunks returned by search_openapi_reference()
 
 # Spec RAG — the main 3GPP document is indexed into a temporary Qdrant collection

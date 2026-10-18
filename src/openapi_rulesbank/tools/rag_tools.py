@@ -3,9 +3,9 @@
 """
 RAG tools for indexing and retrieving OpenAPI reference chunks from Qdrant.
 
-Uses the same embedding model and vector store pattern as openapi_chatbotUI:
-    - HuggingFaceEmbeddings (sentence-transformers/all-MiniLM-L6-v2, dim=384)
-    - QdrantVectorStore with dense named vector ("text-dense")
+Every collection goes through qdrant_3gpp_rag's QdrantFactory, the one model and
+vector layout shared by all repositories (dense "text-dense" + BM25 "text-sparse",
+searched hybrid when the collection has the sparse vector).
 
 The Qdrant collection is created once (via index_openapi_reference()) and
 persists across pipeline runs. Extractor and Reflector nodes call
@@ -19,12 +19,7 @@ Functions:
 
 import os
 import uuid
-from functools import lru_cache
-
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_qdrant import QdrantVectorStore
-from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
 from qdrant_3gpp_rag import (
@@ -60,7 +55,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 def _spec_factory() -> QdrantFactory:
-    """Shared QdrantFactory for the spec RAG (same host/port/model as this project)."""
+    """The shared QdrantFactory, for every collection this project reads or builds."""
     return QdrantFactory.get_instance(
         host=QDRANT_HOST, port=QDRANT_PORT,
         model_name=EMBEDDING_MODEL, device=device,
@@ -390,34 +385,9 @@ def search_imported_type_ref(
     return search_3gpp_corpus(query, k=k)
 
 
-# ---------------------------------------------------------------------------
-# Cached singletons — loaded once per process, reused across all calls
-# ---------------------------------------------------------------------------
-
-@lru_cache(maxsize=1)
-def _get_client() -> QdrantClient:
-    """Returns a cached Qdrant client."""
-    return QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=120)
-
-
-@lru_cache(maxsize=1)
-def _get_embeddings() -> HuggingFaceEmbeddings:
-    """Returns a cached HuggingFace embeddings model (loads model weights once)."""
-    return HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL,
-        model_kwargs={"device": device},
-        encode_kwargs={"normalize_embeddings": True},
-    )
-
-
-def _get_vector_store() -> QdrantVectorStore:
-    """Returns a QdrantVectorStore bound to the OpenAPI reference collection."""
-    return QdrantVectorStore(
-        client=_get_client(),
-        collection_name=OPENAPI_COLLECTION_NAME,
-        embedding=_get_embeddings(),
-        vector_name="text-dense",
-    )
+def _get_vector_store():
+    """The OpenAPI reference collection, through the shared factory."""
+    return _spec_factory().get_vector_store(OPENAPI_COLLECTION_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +421,7 @@ def index_openapi_reference(force: bool = False) -> None:
     Raises:
         ValueError: If the OpenAPI reference file is missing or empty.
     """
-    client = _get_client()
+    client = _spec_factory().client
 
     # Guard: skip if already indexed
     if client.collection_exists(OPENAPI_COLLECTION_NAME) and not force:
@@ -474,25 +444,18 @@ def index_openapi_reference(force: bool = False) -> None:
     chunks = chunk_document(text)
     logger.info(f"Chunked OpenAPI reference into {len(chunks)} chunk(s).")
 
-    # (Re)create collection with named dense vector
-    if client.collection_exists(OPENAPI_COLLECTION_NAME):
-        client.delete_collection(OPENAPI_COLLECTION_NAME)
-        logger.debug(f"Dropped existing collection '{OPENAPI_COLLECTION_NAME}'.")
-
-    client.create_collection(
+    # (Re)create the collection (dense + BM25) and index the chunks as they are
+    index_segments(
+        [{"text": chunk} for chunk in chunks],
+        factory=_spec_factory(),
         collection_name=OPENAPI_COLLECTION_NAME,
-        vectors_config={
-            "text-dense": VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE)
-        },
+        chunk_size=None,
+        embedding_dim=EMBEDDING_DIM,
     )
     logger.info(
-        f"Collection '{OPENAPI_COLLECTION_NAME}' created "
+        f"Collection '{OPENAPI_COLLECTION_NAME}' rebuilt "
         f"(model={EMBEDDING_MODEL}, dim={EMBEDDING_DIM})."
     )
-
-    # Embed and ingest via LangChain vector store
-    vector_store = _get_vector_store()
-    vector_store.add_texts(texts=chunks)
 
     total = client.count(OPENAPI_COLLECTION_NAME).count
     logger.info(f"Indexing complete — {total} vector(s) in '{OPENAPI_COLLECTION_NAME}'.")
@@ -510,7 +473,7 @@ def search_openapi_reference(query: str, k: int = OPENAPI_REFERENCE_RETRIEVE_CHU
         query: Natural language query (e.g. section title + extraction focus).
         k:     Number of chunks to retrieve (default: 5).
     """
-    client = _get_client()
+    client = _spec_factory().client
 
     if not client.collection_exists(OPENAPI_COLLECTION_NAME):
         logger.warning(
