@@ -176,6 +176,18 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
                 )
 
     elif rule_type == "response":
+        # The object must carry the operation: a method before ".responses".
+        # Without it the generator cannot find the operation and DROPS the rule
+        # silently (unlike a parameter, which it routes to the path level). The
+        # method is the operation's own ("paths./x.put.responses") or, for a
+        # callback's response, its delivery method
+        # ("paths./x.put.callbacks.<name>.post.responses") — ".+" spans either.
+        methods = "|".join(sorted(_VALID_HTTP_METHODS))
+        if not re.search(rf"^paths\..+\.(?:{methods})\.responses$", obj):
+            errors.append(
+                "openapi_object must be the full operation path ending in "
+                f"'.responses', as 'paths.<path>.<method>.responses', got '{obj}'."
+            )
         # Normalize a lowercase wildcard ("4xx" -> "4XX") in place before checking,
         # so a rule that is valid apart from its casing is fixed, not rejected.
         # Combined forms ("4xx/5xx") do not match here and still fail below.
@@ -189,6 +201,16 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
             )
 
     elif rule_type == "request_body":
+        # Same as response: the object must carry the operation (a method before
+        # ".requestBody"), direct ("paths./x.put.requestBody") or a callback's
+        # ("paths./x.put.callbacks.<name>.post.requestBody"). Without a method the
+        # generator cannot find the operation and drops the rule silently.
+        methods = "|".join(sorted(_VALID_HTTP_METHODS))
+        if not re.search(rf"^paths\..+\.(?:{methods})\.requestBody$", obj):
+            errors.append(
+                "openapi_object must be the full operation path ending in "
+                f"'.requestBody', as 'paths.<path>.<method>.requestBody', got '{obj}'."
+            )
         if field != "content":
             errors.append(
                 f"openapi_field must be 'content', got '{field}'."
