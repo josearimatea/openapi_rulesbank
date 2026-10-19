@@ -19,6 +19,92 @@ depois que um sync externo apagou arquivos não-versionados em 28/set).
 
 
 =============================================================================
+*** PRÓXIMOS A CONSERTAR — PRIORIDADE (acordado 01/out/2026) ***
+=============================================================================
+
+Estes 6 são a FILA ATUAL: vêm ANTES de qualquer outro item deste documento.
+
+Natureza distinta de todo o resto. As seções numeradas abaixo registram
+SINTOMAS medidos no banco gerado ("contei 30 $ref errados", "notifyMOIChanges
+saiu 2x"). Estes 6 são defeitos de CÓDIGO-FONTE: o contrato de um rule_type é
+escrito em quatro lugares que podem discordar entre si —
+  (1) prompts/extractor_prompts.py   (o que o Extractor é mandado produzir)
+  (2) utils/rules_check.py           (o que o Validator Stage 1b exige)
+  (3) schemas/rules.py               (a descrição que o structured_output leva
+                                       ao LLM junto do prompt)
+  (4) openapi_generator/.../rule_types.py  (o que o gerador espera consumir)
+Nada força os quatro a concordarem. Achados por LEITURA CRUZADA dos arquivos em
+30/set/2026, não por medição — por isso não entraram antes, que media só output.
+Vários já tinham sintoma medido nas seções abaixo: a causa-raiz está AQUI.
+
+REGRA DE PROCESSO (para não repetir): mudar o contrato de um rule_type em QUALQUER
+um dos quatro lugares obriga rever os outros três no mesmo passo.
+
+  CC.1  schemas/rules.py — a descrição do OpenAPIMapping CONTRADIZ o contrato.
+    Os Field descriptions do OpenAPIMapping dão exemplos openapi_object='NrCellDu'
+    / 'components/schemas' e openapi_field='type' / 'format' / 'operationId' /
+    '$ref'. O rules_check REJEITA todos esses. O Extractor usa
+    with_structured_output(SectionRules) -> RawRule -> OpenAPIMapping, então essas
+    descrições chegam AO MODELO junto do prompt correto, puxando-o para a forma
+    que a validação depois recusa.
+    DIVERGE INDIRETAMENTE: mais ciclos de correção, mais force-include de inválidas
+    — candidato a causa do §2.1 (inválidas subiram 5%->11%).
+    A FAZER: trocar os exemplos pelos do contrato atual (object 'paths.<path>' /
+    'components/schemas/<Name>'; field 'properties.<n>' / método / status code).
+
+  CC.2  request_body/response — rules_check NÃO valida o openapi_object.
+    O ramo 'response' só checa o openapi_FIELD (status code); o 'request_body' só
+    checa field=='content' e value com '/'. NENHUM olha o openapi_OBJECT. Um
+    object sem método ("paths./x.responses" faltando o ".put.") PASSA.
+    DIVERGE O RESULTADO: diferente do path param (que o gerador roteia ao path
+    item), o gerador DESCARTA EM SILÊNCIO uma response/request_body cujo object
+    não tem método — não acha a operação. Regra perdida sem aviso.
+    Mesmo buraco já fechado para query_parameter (§3.22), ainda aberto aqui.
+    A FAZER: exigir no object 'paths.<path>.<method>.responses' /
+    '...<method>.requestBody'. O Extractor já ensina; falta a rede determinística.
+
+  CC.3  request_body — o Validator trata media types diferentes como DUPLICATA.
+    prompts/validator_prompts.py, regra de duplicata: "request_body / parameter:
+    same path+method AND same field". O field do request_body é SEMPRE 'content',
+    logo dois media types da MESMA operação casam a regra e o LLM pode descartar o
+    segundo. CONTRADIZ o extractor ("one rule per media type") e a identidade do
+    tipo (media type vive no VALUE, não no field).
+    DIVERGE O RESULTADO: se o 2o media type for descartado, o dado some do banco.
+    Candidato a CAUSA do §3.19 (PATCH perdeu 'application/json-patch+json': YAML
+    tem 4, banco tem 3). Resolver JUNTO com CC.4 (ver "identidade por tipo").
+
+  CC.4  builder — a identidade da dedup difere da identidade da regra.
+    nodes/builder.py _canonical_rule_key inclui o openapi_VALUE em TODOS os tipos.
+    Contra os 9 YAMLs oficiais: 0 colisões. MAS nos bancos reais deixa passar
+    duplicata de MESMO endereço que só difere no texto do value:
+      i20 ProvMnS : callback notifyMOIChanges 2x; MoiChange.properties.op 2x
+      PerfMnS     : enum 1 regra por item ([UP],[DOWN]); required partido em 6
+    O gerador (rule_types.py) diz que mesmo schema+keyword "are merged into one
+    list" — CONSERTA NO CONSUMO o que o produtor não impede.
+    IDENTIDADE CORRETA É POR TIPO (resolve CC.3 e CC.4 sem contradição):
+      request_body                   -> value (media type) ENTRA na chave
+      enum/required/callback coleção -> value NÃO entra (dedup por object+field)
+    Liga a §3.24 (callback duplicado) e §3.27 (granularidade de enum).
+
+  CC.5  planner — o prompt fala em "seven types", sem callback.
+    prompts/planner_prompts.py: "exactly these seven types", não lista callback e
+    escreve "(GET, POST, PUT, DELETE, PATCH, etc.)". O Planner seleciona seções;
+    omitir callback pode fazer seções de notificação não serem marcadas para
+    extração de callback. (extractor.py e rule_bank_flow.py também dizem 7, mas
+    ali é só docstring, sem efeito no modelo.)
+    DIVERGE: callback não planejado -> não extraído -> ausente no YAML.
+    A FAZER: listar os OITO tipos no prompt do Planner, incluindo callback.
+
+  CC.6  schema_property — rules_check aceita openapi_field ANINHADO.
+    Testa field.startswith("properties."), então
+    "properties.attributeListValueChanges.description" PASSA — caminho profundo,
+    não uma propriedade. MEDIDO: 4 regras nesse endereço no banco i20. O prompt e
+    a extração só usam "properties.<nome>" (um segmento).
+    DIVERGE: o gerador não monta field profundo; vira ruído ou é descartado.
+    A FAZER: exigir EXATAMENTE um segmento após "properties." (sem outro ponto).
+
+
+=============================================================================
 QUADRO GERAL — onde o pipeline está
 =============================================================================
 

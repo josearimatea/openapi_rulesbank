@@ -221,3 +221,43 @@ Há uma refatoração de schema ainda pendente (renomear os campos de reflexão 
 um indicador explícito de validação à regra validada), adiada por não ser bloqueante.
 Novas ideias e mudanças devem ser acrescentadas aqui conforme surgirem, sempre com o
 registro do *porquê* — que é a parte que mais interessa para a dissertação.
+
+---
+
+## Erro de grafia na própria spec (3GPP TS 28.532) — `NotifyAttributeValueChanges`
+
+Registro de um defeito que não é nosso: está no texto da 3GPP e dava erro no pipeline.
+
+**Onde:** seção **12.1.1.3.2.4.3.1** (a operação POST do recurso de callback), na
+**Tabela 12.1.1.3.2.4.3.1-2** ("Data structures supported by the POST Request Body on
+this resource"). No arquivo-fonte que o pipeline lê,
+`data/inputs/3gpp/md/28532-i20.md`, a tabela está na **linha 5964** (a chamada à tabela
+está na linha 5951, o título na 5954).
+
+**O defeito:** a coluna "Data type" dessa tabela, redigida à mão, grafa o mesmo conjunto
+de tipos de três formas inconsistentes. Para o tipo das mudanças de atributo, escreve
+**`NotifyAttributeValueChanges`** — **faltando o "Moi" no meio**. O nome canônico, usado
+no heading da cláusula do tipo e no `components/schemas` do YAML oficial, é
+**`NotifyMoiAttributeValueChanges`**. As quatro linhas da tabela mostram a inconsistência
+lado a lado:
+
+- `NotifyMOICreation` — "MOI" em maiúsculas (nem a forma do callback nem a do schema)
+- `NotifyMOIDeletion` — idem
+- `NotifyAttributeValueChanges` — **sem "Moi" nenhum** (o erro em questão)
+- `NotifyMoiChanges` — por acaso, a forma canônica do schema
+
+**Alcance:** a forma sem "Moi" aparece **1 vez** contra ~22 das formas corretas, e o
+lapso **atravessa as três releases** sem correção (i00, i20, k00). As specs 28.622 e
+28.623 não contêm essa grafia nenhuma vez.
+
+**Por que dava erro:** a coluna "Data type" de uma tabela não nomeia nem o callback nem o
+schema — só os *headings* ("Notification \<name\>", "Type \<Name\>") mantêm a forma
+correta nas três releases. O Extractor, ao tirar o nome da coluna, produzia a grafia
+errada e gerava uma regra duplicada (o defeito registrado como 3.1a).
+
+**Conserto (não na spec — é erro da 3GPP):** instruir os agentes a nunca tirarem o nome
+de uma coluna de tabela. Ficou no bullet "NAMES: THREE KINDS, THREE PLACES, NEVER
+CONVERTED INTO EACH OTHER" do Extractor e na regra correspondente do Validator. O
+requisito final é apenas **não duplicar** — sair com o nome errado é tolerável, porque a
+fonte é a que erra. Detalhe completo e as contagens por release estão em
+`Problems_ProvMnS_LEGACY_ate_20260920.txt` (§3.7).
