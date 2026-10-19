@@ -96,16 +96,30 @@ class OpenAPIMapping(BaseModel):
     """
 
     openapi_object: str = Field(
-        description="The OpenAPI object or schema this rule applies to. "
-                    "E.g. 'NrCellDu', 'paths./nrCellDu/{id}', 'components/schemas'."
+        description="Where this rule lands in the OpenAPI document; the exact form "
+                    "depends on rule_type. For operations, parameters, bodies and "
+                    "responses it is a path, 'paths.<path>' or "
+                    "'paths.<path>.<method>'; for a callback it continues that "
+                    "path with '.callbacks.<name>' "
+                    "('paths.<path>.<method>.callbacks.<name>'); for a "
+                    "schema_property it is 'components/schemas/<Name>'; for a "
+                    "security_scheme it is 'components/securitySchemes/<Name>'."
     )
     openapi_field: str = Field(
-        description="The specific OpenAPI field, property, or keyword. "
-                    "E.g. 'type', 'format', 'required', 'operationId', '$ref'."
+        description="The element the rule constrains, by rule_type: an HTTP method "
+                    "(get|put|post|delete|patch) for path_operation and callback; "
+                    "'properties.<name>' or a schema keyword (enum, required, "
+                    "oneOf, anyOf, allOf, items, additionalProperties) for "
+                    "schema_property; a status code ('200', '4XX', 'default') for "
+                    "response; 'content' for request_body; "
+                    "'parameters[in=path|query,name=<name>]' for a parameter."
     )
     openapi_value: str = Field(
-        description="The value or constraint that applies to the field. "
-                    "E.g. 'string', 'int64', 'GET', '#/components/schemas/NrCellDu'."
+        description="The value or constraint on the field. E.g. 'string', an enum "
+                    "list, a media type ('application/json'), the uppercase HTTP "
+                    "method for a path_operation ('GET'), or a $ref string "
+                    "('#/components/schemas/<Name>' internal, "
+                    "'<file>.yaml#/components/schemas/<Name>' external)."
     )
     references: list[SchemaRef] = Field(
         default_factory=list,
