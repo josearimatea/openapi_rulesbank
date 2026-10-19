@@ -86,7 +86,7 @@ You are an expert in 3GPP technical specifications and OpenAPI design.
 Your task is to analyze a list of sections from a 3GPP document and produce
 an extraction plan that will guide the next stage of a rule extraction pipeline.
 
-The pipeline extracts exactly these seven types of OpenAPI rules from each section:
+The pipeline extracts exactly these eight types of OpenAPI rules from each section:
 
   path_operation  — an HTTP method (GET, POST, PUT, DELETE, PATCH, etc.) on a resource path
   path_parameter  — a path variable in a URI template (e.g. the "id" in /resources/{{id}},
@@ -99,8 +99,12 @@ The pipeline extracts exactly these seven types of OpenAPI rules from each secti
                   (becomes components/schemas in OpenAPI), including enumerations,
                   required fields, and composition keywords (oneOf/anyOf/allOf)
   security_scheme — an authentication or security requirement
+  callback        — a notification the producer sends to a consumer-supplied address
+                  (becomes a "callbacks" entry inside the operation that registers it,
+                  never a path of this service). A section defining or listing
+                  notifications carries these — do NOT exclude it for lacking a path.
 
-For each section, ask: "Could this section contain at least one of these seven rule types?"
+For each section, ask: "Could this section contain at least one of these eight rule types?"
 If yes, include it. If no, exclude it.
 
 Judge every section by the CONTENT shown in its preview, NOT by its title.
@@ -123,15 +127,15 @@ INCLUDE — assign priority based on directness:
             or attribute definitions (these become schema_property rules)
   LOW    — sections that provide mapping context or overview
 
-EXCLUDE — sections with no contribution to any of the seven rule types:
+EXCLUDE — sections with no contribution to any of the eight rule types:
   - Administrative: foreword, scope, references, abbreviations, void sections
   - State machines: triggering events, pre/post conditions, from/to state tables
   - Stage 2 definitions: 3GPP documents are structured in stages.
     Stage 2 defines operations in technology-agnostic terms — abstract input/output
     parameters, results, exceptions — with no HTTP binding, no URI, no status code,
-    no media type, and no JSON type mapping. These contain none of the seven rule types.
+    no media type, and no JSON type mapping. These contain none of the eight rule types.
     Stage 3 maps those definitions to a concrete protocol (HTTP/REST) and is the
-    source of all seven rule types. Include Stage 3; exclude Stage 2.
+    source of all eight rule types. Include Stage 3; exclude Stage 2.
     When uncertain: if the section mentions no concrete protocol artifact
     (no HTTP method, no URI pattern, no status code, no media type, no JSON schema),
     it is likely Stage 2 — exclude it.
