@@ -33,9 +33,19 @@ VALIDATION RULES BY rule_type:
 
     path_parameter:
         openapi_field   must contain "in=path"
+                        (openapi_object not checked for a method: a path param
+                        may sit at the path level or inside one operation)
 
     query_parameter:
         openapi_field   must contain "in=query"
+        openapi_object  must end in ".<method>" (paths.<path>.<method>) — a
+                        query param belongs to one operation; "/get" is rejected,
+                        only the canonical ".get" is accepted
+
+    callback:
+        openapi_object  must be "paths.<path>.<method>.callbacks.<name>"
+        openapi_field   must be the delivery HTTP method (get|put|post|delete|patch)
+        openapi_value   must be the runtime expression in braces (e.g. "{...}")
 
     response:
         openapi_field   must be a 3-digit status code ("200", "404", etc.), an
@@ -150,11 +160,16 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
         # routes the parameter to the path level and spreads it over every method.
         # ANY method is accepted — which one is the text's call (a query param can
         # sit under GET, DELETE, etc.; StreamingDataMnS has one under DELETE). This
-        # only checks the method is PRESENT, not which. A path_parameter is exempt:
-        # it applies to all methods, so its object is the path key with no method.
+        # only checks the method is PRESENT, not which. The separator must be a
+        # dot (".get", the canonical form) — "/get" is rejected, even though the
+        # generator tolerates it, so the bank only ever emits the canonical shape.
+        # A path_parameter is NOT checked for a method: it may sit at the path
+        # level (shared by every method, object stops at the path) OR inside one
+        # operation (object ends in the method). Both are valid OpenAPI, so its
+        # object is accepted either way — only the query param must carry a method.
         if rule_type == "query_parameter":
             methods = "|".join(sorted(_VALID_HTTP_METHODS))
-            if not re.search(rf"[./](?:{methods})$", obj):
+            if not re.search(rf"\.(?:{methods})$", obj):
                 errors.append(
                     "openapi_object must end with the method that accepts this "
                     f"parameter, as 'paths.<path>.<method>', got '{obj}'."
@@ -197,12 +212,20 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
 
     elif rule_type == "callback":
         # A callback hangs off the operation where the consumer supplies its
-        # address: paths.<path>.<method>.callbacks.<notificationName>
-        if not obj.startswith("paths.") or ".callbacks." not in obj:
+        # address: paths.<path>.<method>.callbacks.<notificationName>. Two
+        # methods appear in that structure and they are not the same: the one
+        # BEFORE .callbacks. is the registering operation (put in ProvMnS, post
+        # in FaultMnS/FileDataReporting — verified against the YAMLs, so it must
+        # not be guessed), and openapi_field below is the delivery method (post).
+        # Require the registering method to be present in the object, so the
+        # generator never has to infer it from the delivery field.
+        methods = "|".join(sorted(_VALID_HTTP_METHODS))
+        if not re.search(rf"^paths\..+\.(?:{methods})\.callbacks\.[^.]+", obj):
             errors.append(
                 "openapi_object must anchor the callback on an operation, as "
-                "'paths.<path>.<method>.callbacks.<name>', got "
-                f"'{obj}'. A notification is never a path of this service."
+                "'paths.<path>.<method>.callbacks.<name>' (the method is the "
+                f"registering operation, not the delivery method), got '{obj}'. "
+                "A notification is never a path of this service."
             )
         if field not in _VALID_HTTP_METHODS:
             errors.append(
