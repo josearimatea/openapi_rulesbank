@@ -77,6 +77,16 @@ _VALID_SECURITY_TYPES = {"oauth2", "http", "apiKey", "openIdConnect"}
 _VALID_SCHEMA_KEYWORDS = {
     "enum", "required", "oneOf", "anyOf", "allOf", "items", "additionalProperties",
 }
+# A schema_property field names ONE property: "properties.<name>". When that
+# property is itself a composite, the OpenAPI Schema Object nests exactly one
+# keyword under it — ".items" (the element schema of an array) or
+# ".additionalProperties" (the value schema of an open map). No other suffix is a
+# valid address: ".description", ".type" etc. are data that live INSIDE the
+# property's schema (carried in openapi_value), not a path to it. This is the
+# OpenAPI reference's rule (a property IS a Schema Object, and items /
+# additionalProperties are Schema Object fields), so it holds for any spec, not
+# just this one.
+_PROP_FIELD = re.compile(r"properties\.[^.]+(?:\.(?:items|additionalProperties))?$")
 # Accepts 3-digit codes ("200", "404"), OpenAPI wildcards ("1XX"–"5XX"), and the
 # OpenAPI "default" keyword (the response for all undeclared status codes).
 # Rejects combined forms ("4XX/5XX") and "n/a". A lowercase wildcard ("4xx") is
@@ -140,13 +150,17 @@ def check_mapping_for_type(rule_type: str, mapping: dict) -> list[str]:
                 f"got '{obj}'. Use 'components/schemas/<Name>' and put the property or "
                 "keyword in openapi_field."
             )
-        # The field may be a named property ("properties.<name>") or a schema-level
-        # keyword that applies to the whole schema (enum, required, oneOf, anyOf,
-        # allOf, items, additionalProperties).
-        if not (field.startswith("properties.") or field in _VALID_SCHEMA_KEYWORDS):
+        # The field is a named property — "properties.<name>", optionally with a
+        # single nested ".items" / ".additionalProperties" when that property is an
+        # array or an open map — OR a schema-level keyword applying to the whole
+        # schema (enum, required, oneOf, anyOf, allOf, items, additionalProperties).
+        # A deeper path ("properties.<name>.description") is address noise: that
+        # detail belongs in openapi_value, not in the field.
+        if not (_PROP_FIELD.fullmatch(field) or field in _VALID_SCHEMA_KEYWORDS):
             errors.append(
-                f"openapi_field must be 'properties.<name>' or one of "
-                f"{sorted(_VALID_SCHEMA_KEYWORDS)}, got '{field}'."
+                "openapi_field must be 'properties.<name>' (optionally "
+                "'.items' / '.additionalProperties' for an array or open map) or "
+                f"one of {sorted(_VALID_SCHEMA_KEYWORDS)}, got '{field}'."
             )
 
     elif rule_type in ("path_parameter", "query_parameter"):

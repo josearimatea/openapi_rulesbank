@@ -351,11 +351,30 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     OR a schema-level keyword that constrains the whole schema:
                     "enum" | "required" | "oneOf" | "anyOf" | "allOf" | "items" |
                     "additionalProperties"
+                    WHEN A PROPERTY IS AN ARRAY OR AN OPEN MAP, address the element
+                    schema by NESTING ONE keyword under the property — never emit a
+                    bare "properties.<name>" with value "array", which drops the
+                    element type:
+                    - array        : "properties.<name>.items"
+                    - open map     : "properties.<name>.additionalProperties"
+                    This is the only nesting allowed. A deeper path
+                    ("properties.<name>.description", "...type") is WRONG — that
+                    detail is the value of the property's schema, carried in
+                    openapi_value, not part of the address.
    openapi_value  : depends on openapi_field:
                     - for "properties.<name>": the JSON Schema type or reference:
-                      "string" | "integer" | "boolean" | "array" | "object" |
+                      "string" | "integer" | "boolean" | "object" |
                       "$ref: '#/components/schemas/<Name>'" |
                       "$ref: '<OtherFile>.yaml#/components/schemas/<Name>'"
+                    - for "properties.<name>.items" (array element) and
+                      "properties.<name>.additionalProperties" (map value): the
+                      element/value schema. WHAT DISTINGUISHES THE CASES IS THIS
+                      VALUE — a reference when the element is a named type
+                      ("$ref: '#/components/schemas/<Name>'" internal,
+                      "$ref: '<OtherFile>.yaml#/components/schemas/<Name>'" external),
+                      or a plain type ("string" | "integer" | ...) when it is not.
+                      Prefer a $ref whenever the element is a schema the document
+                      already defines, rather than restating it inline.
                     - for "enum"      : the allowed values, e.g. "[add, remove, replace]"
                     - for "required"  : the required property name(s), e.g. "[id]"
                     - for "oneOf"/"anyOf"/"allOf": the list of referenced schemas, e.g.
