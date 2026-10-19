@@ -441,17 +441,25 @@ DUPLICATES ACROSS SECTIONS — discard ONLY a true duplicate; when unsure, KEEP:
   all describe one PUT), so the same rule can reach you more than once.
 
   Discard THIS rule only when an earlier one has the SAME rule_type AND the SAME
-  target, where the target is identified by openapi_object + openapi_field:
+  target. For most types the target is openapi_object + openapi_field alone:
     - schema_property: same schema AND same property/keyword
       (components/schemas/X · properties.foo);
     - path_operation: same path AND same method;
-    - response: same path+method AND same status code;
-    - request_body / parameter: same path+method AND same field.
-  Only then is it a duplicate: set valid=False, error_type='discard',
+    - parameter: same path+method AND same field.
+  For these, a difference only in the VALUE's wording/format is NOT enough to
+  keep the rule (e.g. a property typed "string" vs
+  {{"type":"string","format":"date-time"}} for the SAME schema+property is still a
+  duplicate), because their address holds at most one such rule.
+
+  EXCEPTION — request_body and response: the target is
+  openapi_object + openapi_field + openapi_VALUE. One operation may carry several
+  request bodies, and one status code several response bodies, that share the
+  field ('content' / the status code) and differ only in media type or schema
+  (the ProvMnS PATCH defines 4 request-body media types, its GET 200 three
+  response media types). So for these two types a DIFFERENT value is a DIFFERENT
+  rule — KEEP it; discard only when object, field AND value all match.
+  Only when a rule is a duplicate: set valid=False, error_type='discard',
   instruction='Duplicate of rule already validated in section <id>'.
-  A difference only in the VALUE's wording/format is not enough to keep it
-  (e.g. a property typed "string" vs {{"type":"string","format":"date-time"}} for
-  the SAME schema+property is still a duplicate).
 
   It is NOT a duplicate — KEEP it — when the target differs in ANY of these,
   however similar the rules look:

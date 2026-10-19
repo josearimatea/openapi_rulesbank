@@ -122,6 +122,19 @@ _FORCE_EXCLUDE_FIELDS = {
 }
 
 
+# Rule types whose openapi_value is part of the rule's identity: the same
+# object+field may legitimately recur with a different value, so the value must
+# stay in the dedup key. OpenAPI 'content' is a MAP of media types, so one
+# operation may carry several request bodies / response bodies that differ only
+# in media type (the ProvMnS PATCH has 4 request-body media types, its GET 200
+# has 3 response media types). For every OTHER type the address is unique by
+# construction — a schema keyword (enum, required, oneOf…) occurs once per
+# schema, a callback once per name — so a differing value is only wording of the
+# same rule, and keeping it in the key would let a true duplicate survive
+# (the [UP]/[DOWN] enum split, the notifyMOIChanges callback repeat).
+_VALUE_IS_IDENTITY = {"request_body", "response"}
+
+
 def _canonical_rule_key(rule: dict) -> tuple:
     """Build a comparison key that ignores harmless wording differences.
 
@@ -130,19 +143,20 @@ def _canonical_rule_key(rule: dict) -> tuple:
     "/{MnSRoot}/ProvMnS/{MnSVersion}/.../{className}={id}") or with the schema name
     in another case. The key therefore uses:
       - the last path segment only, lowercased (path prefixes vary, the tail does not)
-      - lowercased field and value
+      - lowercased field, and the value ONLY for the types where it is part of the
+        identity (see _VALUE_IS_IDENTITY) — elsewhere a differing value is the same
+        rule written another way and must not keep two copies apart.
     Used ONLY to detect duplicates — the stored rule is never rewritten.
     """
     m = rule.get("openapi_mapping", {}) or {}
     obj = (m.get("openapi_object", "") or "").rstrip("/")
     # Keep the meaningful tail: "paths./a/b/{className}={id}" -> "{classname}={id}"
     tail = obj.split("/")[-1].lower() if "/" in obj else obj.lower()
-    return (
-        (rule.get("rule_type", "") or "").lower(),
-        tail,
-        (m.get("openapi_field", "") or "").lower(),
-        str(m.get("openapi_value", "") or "").lower(),
-    )
+    rtype = (rule.get("rule_type", "") or "").lower()
+    key = [rtype, tail, (m.get("openapi_field", "") or "").lower()]
+    if rtype in _VALUE_IS_IDENTITY:
+        key.append(str(m.get("openapi_value", "") or "").lower())
+    return tuple(key)
 
 
 def _dedupe_rules(rules: list[dict]) -> list[dict]:
