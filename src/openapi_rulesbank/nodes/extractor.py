@@ -103,8 +103,16 @@ def _format_ref_memory(ref_memory: dict) -> str:
         # type takes, so falling back to it discards the fact the document stated
         # and emits a rule asserting the opposite.
         file = info.get("file", "")
-        where = (f"{spec} [{file}]" if file
-                 else f"{spec} [EXTERNAL — filename not known yet]")
+        # Several files possible (the lookup found the type in more than one):
+        # show them, so the model can pick one by context (Phase 2, Q2b).
+        options = info.get("file_options") or []
+        if file:
+            where = f"{spec} [{file}]"
+        elif options:
+            where = (f"{spec} [EXTERNAL — filename AMBIGUOUS, choose by context "
+                     f"among: {', '.join(options)}]")
+        else:
+            where = f"{spec} [EXTERNAL — filename not known yet]"
         f = f" fields={fields}" if fields else ""
         lines.append(f"{t} -> {where}{f}")
     return "\n".join(lines)
@@ -171,16 +179,14 @@ def _analyze_section(
         rag_blocks = []
         # Imported types: fetch the type's own definition block.
         for ref in imports.references:
-            # A CHECK 4 pending import has no spec yet (source_spec == ""), so
-            # there is nothing to query — do not guess one. It is recorded in the
-            # memory as pending; the later section that names its spec runs the
-            # lookup then. Skipping the RAG here is the deliberate choice (i).
-            if not ref.source_spec:
-                continue
+            # The definition query is built from the type name and key_terms
+            # alone, so it runs even for a CHECK 4 pending import whose spec is
+            # not known yet (source_spec == "").
             fetched = search_imported_type_ref(ref.type_name, ref.key_terms)
             if fetched:
+                origin = ref.source_spec or "spec not yet known"
                 rag_blocks.append(
-                    f"### TYPE {ref.type_name} (defined in {ref.source_spec}):\n{fetched}"
+                    f"### TYPE {ref.type_name} (defined in {origin}):\n{fetched}"
                 )
         # Context references: a spec the clause points at for procedure or design
         # rules. Worth fetching — that text often settles how a rule must be
@@ -194,6 +200,40 @@ def _analyze_section(
                     f"(no type defined here):\n{fetched}"
                 )
         rag_results = "\n\n".join(rag_blocks) or "No definitions retrieved."
+
+        # Resolve each referenced type's YAML filename BEFORE Phase 2 runs. Phase 2
+        # decides what to defer by whether the filename is known; resolving only
+        # afterwards made it defer a type the annex had already answered, and the
+        # rule was lost. Cascade: helper_context > document annex > corpus RAG —
+        # the filename is only ever READ, never derived from a spec number.
+        resolved: dict[str, tuple[str, list[str], str]] = {}
+        for ref in imports.references:
+            if not ref.type_name or ref.type_name in resolved:
+                continue
+            if ((ref_memory or {}).get(ref.type_name) or {}).get("file"):
+                continue  # already known from an earlier section
+            resolved[ref.type_name] = resolve_external_filename(
+                ref.type_name, ref.source_spec, helper_context, annex_text,
+            )
+            f, opts, src = resolved[ref.type_name]
+            if f:
+                logger.info(f"[analyzer {section_id}] filename for "
+                            f"{ref.type_name!r}: {f!r} (via {src})")
+            elif opts:
+                logger.info(f"[analyzer {section_id}] filename for "
+                            f"{ref.type_name!r} ambiguous ({src}): {opts}")
+
+        # The memory Phase 2 sees: what earlier sections recorded, plus the
+        # filename (or the ambiguous options) just resolved for this section's
+        # references, so its Q2/Q3 read the filename as KNOWN where it is.
+        spec_of = {r.type_name: r.source_spec for r in imports.references}
+        memory_view = {k: dict(v or {}) for k, v in (ref_memory or {}).items()}
+        for t, (f, opts, src) in resolved.items():
+            entry = memory_view.setdefault(t, {"spec": spec_of.get(t, "")})
+            if f:
+                entry["file"] = f
+            elif opts:
+                entry["file_options"] = opts
 
         # Serialize Phase 1's per-type filename presence (its own output) for the
         # Phase 2 prompt — same transport as phase1_explanation just above. Phase 2
@@ -213,7 +253,7 @@ def _analyze_section(
             "section_id":         section_id,
             "section_title":      section_title,
             "section_content":    section_content,
-            "ref_memory":         _format_ref_memory(ref_memory),
+            "ref_memory":         _format_ref_memory(memory_view),
             "phase1_explanation": imports.explanation or "None.",
             "filename_presence":  filename_presence,
             "rag_results":        rag_results,
@@ -241,44 +281,41 @@ def _analyze_section(
             # Filename as the section/memory already has it. Phase 2 writes one only
             # when THIS section's text spells it out; a using section usually has none.
             file = e.source_file or was.get("file", "")
-            # When it is still missing, run the resolution cascade: user
-            # helper_context first, then the document's own annex, then the corpus
-            # RAG (scoped to the source spec, else broad). The filename is only ever
-            # READ from one of those — never derived from the spec number. If none
-            # answers, it stays empty and the rule is deferred (a declared gap),
-            # never guessed. The source is recorded in the note so the Reflector and
-            # the bank show where the filename came from.
+            # Still missing: use the cascade result computed before Phase 2 (or
+            # run it now for a type Phase 2 added that Phase 1 did not reference).
+            # Its source goes into the note, so the Reflector and the bank show
+            # where the filename came from. Ambiguous: Phase 2 was shown the
+            # options and should have written one (Q2b); if it did not, the
+            # options are recorded and the file stays empty.
             if not file and e.type_name:
-                resolved, options, src = resolve_external_filename(
-                    e.type_name, spec, helper_context, annex_text,
-                )
-                if resolved:
-                    # A single file answered: use it, record where it came from.
-                    file = resolved
+                found, options, src = resolved.get(e.type_name) or \
+                    resolve_external_filename(
+                        e.type_name, spec, helper_context, annex_text)
+                if found:
+                    file = found
                     note = (note + " | " if note else "") + \
                         f"filename '{file}' resolved via {src}"
-                    logger.info(
-                        f"[analyzer {section_id}] filename for {e.type_name!r} "
-                        f"resolved: {file!r} (via {src})"
-                    )
                 elif options:
-                    # The source maps the type to several files (e.g. 'resources'
-                    # across NRMs). The code does not choose — the options are
-                    # recorded so the LLM can pick the right one by the using
-                    # clause's context. File stays empty for now (deferred).
                     note = (note + " | " if note else "") + \
                         f"filename AMBIGUOUS via {src}; choose by context among: " \
                         + ", ".join(options)
-                    logger.info(
-                        f"[analyzer {section_id}] filename for {e.type_name!r} "
-                        f"ambiguous ({src}): {options}"
-                    )
             new_refs[e.type_name] = {
                 "spec":   spec,
                 "file":   file,
                 "fields": e.fields or was.get("fields", []),
                 "note":   note,
             }
+        # A filename the cascade resolved must not be lost because Phase 2 left the
+        # type out of memory_updates: record it, keeping what memory already has.
+        for t, (found, _opts, src) in resolved.items():
+            if not found or (new_refs.get(t) or {}).get("file"):
+                continue
+            was = dict(new_refs.get(t) or prev.get(t) or {})
+            was.setdefault("spec", spec_of.get(t, ""))
+            was["file"] = found
+            was["note"] = (was.get("note", "") + " | " if was.get("note") else "") + \
+                f"filename '{found}' resolved via {src}"
+            new_refs[t] = was
         new_cross_refs = {
             c.subject: {"fact": c.fact, "source": c.source}
             for c in (analysis.cross_refs or []) if c.subject and c.fact
@@ -420,19 +457,18 @@ def _format_analysis_guidance(analysis: SectionAnalysis | None) -> str:
             "report the missing anchor in missing_context — never a placeholder."
         )
 
-    # External types the pre-analysis found with no filename here: any rule whose
-    # $ref would point at one of them would come out in the internal (no-filename)
-    # form, which falsely marks the type local. The Extractor must NOT emit those
-    # rules — a later section that declares the type has the filename and emits them.
+    # External types whose filename no source gave (section text, helper context,
+    # annex, corpus): any rule whose $ref would point at one of them would come out
+    # in the internal (no-filename) form, which falsely marks the type local. The
+    # Extractor must NOT emit those rules here.
     if analysis.defer_external_refs:
         names = ", ".join(analysis.defer_external_refs)
         lines.append(
             f"DEFER THESE EXTERNAL $refs — these types are external but their YAML "
-            f"filename is not known in this section: [{names}]. Do NOT emit any rule "
-            f"whose $ref would point at one of them: with no filename it would be "
-            f"written as the internal \"#/components/schemas/<Type>\" form, wrongly "
-            f"marking the type local. Skip those rules entirely (no placeholder); the "
-            f"section that declares the type will emit them. Emit every OTHER rule."
+            f"filename is not known: [{names}]. Do NOT emit any rule whose $ref would "
+            f"point at one of them: with no filename it would be written as the "
+            f"internal \"#/components/schemas/<Type>\" form, wrongly marking the type "
+            f"local. Skip those rules entirely (no placeholder). Emit every OTHER rule."
         )
     return "\n".join(lines)
 

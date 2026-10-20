@@ -735,8 +735,9 @@ another spec — case 3 above, or flagged in the Section analysis) and you do NO
 its YAML filename, DO NOT GENERATE that rule. Writing "#/components/schemas/<Type>"
 for it would be the LOCAL form, which falsely says the type is defined in this
 document; and there is no complete external form to write without the filename. So
-skip that one rule entirely — no placeholder, no internal $ref. A later section that
-declares the type has the filename and will emit the rule there. Emit every OTHER
+skip that one rule entirely — no placeholder, no internal $ref. (Any filename the
+lookup found — helper context, the document's annex, the corpus — is already in the
+reference memory above; a type shown there with "[<file>]" is case 1.) Emit every OTHER
 rule this section supports as normal. (A type WITH a filename is case 1 — emit it
 completely; a genuinely LOCAL type is case 2 — emit the internal $ref.)
 {ref_memory}

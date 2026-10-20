@@ -96,12 +96,13 @@ class ContextReference(BaseModel):
 class TypeFilenamePresence(BaseModel):
     """Whether THIS section itself writes out an imported type's YAML filename.
 
-    A type is imported from another spec but its `$ref` needs that spec's YAML
-    filename, which the section that USES the type often does not carry — it is
-    written in full only in the clause that DECLARES the type. Phase 1 records, per
-    referenced type, whether this section is that declaring clause (the filename is
-    present here) or only a using one (the filename must come from elsewhere), so
-    Phase 2 can tell a type it can complete now from one whose rule must be deferred.
+    A type is imported from another spec but its `$ref` needs the YAML file that
+    spec publishes it in, which the normative text usually does not write at all —
+    not in the section that USES the type, and not in the "data types imported"
+    clause either (that one names the SPEC, e.g. "TS 28.623", never the file). Phase 1
+    records, per referenced type, whether THIS section happens to write the filename
+    out in full; when it does not, the filename is looked up elsewhere (the user's
+    auxiliary context, the document's annex, the corpus) before Phase 2 decides.
     """
 
     type_name: str = Field(description="The referenced type's name.")
@@ -148,10 +149,10 @@ class SectionImports(BaseModel):
         default_factory=list,
         description=(
             "One entry per type in `references`, saying whether THIS section's text "
-            "writes that type's external YAML filename in full (and which). Lets "
-            "Phase 2 tell a type it can reference completely now from one whose rule "
-            "must be deferred until a declaring section supplies the filename. Empty "
-            "when the section imports no type."
+            "writes that type's external YAML filename in full (and which). Usually "
+            "False: the normative text rarely writes the file; it is then looked up "
+            "outside the section text before Phase 2 decides. Empty when the section "
+            "imports no type."
         )
     )
     explanation: str = Field(
@@ -232,7 +233,7 @@ FIRST THAT ANSWERS:
   nothing in the memory for it yet?
       in a table:  "| ErrorResponse | 4xx/5xx | Returned in case of an error |"
   Then it is imported from a spec THIS section does not name: the clause that
-  declares it (with its spec and YAML filename) comes in a LATER section. Put it
+  pairs it with its spec ("data types imported") comes in a LATER section. Put it
   in `references` with source_spec = "" (empty — origin unknown), so it is
   recorded as a PENDING import; a later section that names the spec fills the
   origin in. This check is ONLY for a type in that table position — never for a
@@ -267,13 +268,14 @@ at all. Look for the link between type and spec, not for a table.
 section's text writes that type's external YAML filename out in full. A filename is
 written out only where a reference appears complete, as
     <file>.yaml#/components/schemas/<ThisType>
-(e.g. "TS28623_ComDefs.yaml#/components/schemas/NotificationHeader"). This is the
-clause that DECLARES the type. If that appears here for the type, set
-filename_in_section=True and copy the filename exactly. If the section only NAMES
-or USES the type — a table row, a data-type cell, a sentence — with no such full
-reference, set filename_in_section=False and leave filename empty; the filename
-lives in the declaring clause, not here. One entry per type in `references`; do not
-guess a filename and never derive it from the spec number.
+(e.g. "TS28623_ComDefs.yaml#/components/schemas/NotificationHeader"). If that
+appears here for the type, set filename_in_section=True and copy the filename
+exactly. If the section only NAMES or USES the type — a table row, a data-type
+cell, a sentence, or a "data types imported" row that pairs it with a spec — with no
+such full reference, set filename_in_section=False and leave filename empty. A
+"data types imported" table names the SPEC (e.g. "TS 28.623"), not the file; the
+filename is looked up outside the section text. One entry per type in
+`references`; do not guess a filename and never derive it from the spec number.
 
 Judge from the section text plus the memory. Do not invent a type or a spec that
 appears in neither. Return empty lists when the section references nothing.
@@ -426,11 +428,12 @@ class SectionAnalysis(BaseModel):
         default_factory=list,
         description=(
             "Names of EXTERNAL types whose $ref this section CANNOT write yet, so the "
-            "Extractor must NOT emit a rule for them here — the rule is left for a "
-            "later section that has the YAML filename. List a type when ALL of: (1) it "
-            "is imported from another spec (in references/memory with a spec), (2) NO "
-            "filename is known — Phase 1's filename-presence says not in this section, "
-            "the RAG found none, and the memory has none, and (3) this section would "
+            "Extractor must NOT emit a rule for them here. List a type when ALL of: "
+            "(1) it is imported from another spec (in references/memory), (2) NO "
+            "filename is known — Phase 1's filename-presence says not in this section "
+            "AND the reference memory shows none (the memory already carries any "
+            "filename the lookup found — helper context, annex, corpus), and (3) this "
+            "section would "
             "otherwise emit a $ref to it (a response body, a property, an allOf base). "
             "Do NOT list a type whose filename is known (write it now) or a local one. "
             "Empty when nothing is deferred. This is the signal the Extractor, "
@@ -556,8 +559,9 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
      - Phase 1 referenced it with an EMPTY source_spec (a CHECK 4 pending import —
        a type in a response/request-body table with its origin declared only in a
        later section): it IS an import whose spec is not known yet. Write an entry
-       with source_spec = "" (leave the spec empty — never invent one), go on to
-       Q2 (its filename is unknown too), and DEFER it in Q3. A later section that
+       with source_spec = "" (leave the spec empty — never invent one) and go on
+       to Q2: the filename may already be known from the memory (looked up by the
+       type name), and only if it is not does Q3 defer it. A later section that
        names the spec updates this same entry.
 
    Q2 — WHICH YAML FILE PUBLISHES IT? Ask this ONLY for a type that answered Q1.
@@ -576,9 +580,9 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    Q2b — WHEN SEVERAL FILES ARE POSSIBLE, PICK ONE BY CONTEXT. A deterministic
    lookup runs before you and reads, from the document's annex and the corpus,
    every YAML file a type is tied to. When it finds exactly one, the filename is
-   already set and you do nothing. When it finds SEVERAL — the memory note for the
-   type reads "filename AMBIGUOUS … choose by context among: fileA.yaml,
-   fileB.yaml, …" — the same type name is published by more than one spec (the
+   already set and you do nothing. When it finds SEVERAL — the reference memory shows
+   the type as "[EXTERNAL — filename AMBIGUOUS, choose by context among: fileA.yaml,
+   fileB.yaml, …]" — the same type name is published by more than one spec (the
    clearest case is a generic 'resources' type that each NRM publishes under its
    own file). The code does NOT choose; you do. Pick the ONE file from that list
    whose spec matches the NRM/domain THIS clause is about (its title, its subject,
@@ -593,16 +597,17 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
        pending import (external with source_spec still empty); both are external,
        AND
      - its filename is unknown to you here: Phase 1's filename-presence list says
-       "filename NOT in this section" for it, Q2 found none in the RAG, and the
-       reference memory has none either (a pending import always meets this —
-       no spec here means no filename here), AND
+       "filename NOT in this section" for it, Q2 found none, AND the reference
+       memory shows none for it. The memory already carries any filename the
+       lookup found by the TYPE NAME (helper context, annex, corpus) — so a pending
+       import whose spec is still unknown may well have its filename there; if the
+       memory shows "[<file>]" for the type, it is NOT deferred, AND
      - THIS section would otherwise write a $ref to it (a response body, a property,
        an allOf base).
    That name tells the Extractor NOT to emit the rule now: an external $ref with no
    filename would be written as an internal one, asserting the type is local, which
-   contradicts Q1. The rule waits, parked, until the section that DECLARES the type
-   (its filename-presence will say "filename in THIS section") supplies the filename
-   and emits it. Do NOT defer a type whose filename you DO have (write it in full
+   contradicts Q1. The rule waits, parked. Do NOT defer a type whose filename you DO
+   have — from this section or from the memory (write it in full
    now) or a local type (internal $ref, never deferred). Leave `defer_external_refs`
    empty when nothing is deferred.
    Read the property names out of the fetched definition — they are the
