@@ -264,6 +264,76 @@ fonte é a que erra. Detalhe completo e as contagens por release estão em
 
 ---
 
+## Endereçamento e coerência do contrato (18–20/out/2026)
+
+Uma série de consertos com um fio comum: o contrato de cada rule_type — a forma que
+`openapi_object`, `openapi_field` e `openapi_value` devem ter — estava escrito em quatro
+lugares que não concordavam entre si (o prompt do Extractor, a validação determinística
+`rules_check`, as descrições do schema `rules.py` que o structured output leva ao LLM, e
+o `rule_types.py` do gerador). O critério de cada decisão foi sempre o YAML oficial e a
+referência OpenAPI 3.0.1, nunca uma convenção entre os dois repositórios.
+
+**Parâmetro de query na operação, de path em qualquer nível (§3.22, commit 0cd5be3).**
+Os query parameters saíam endereçados no path (`paths./{className}={id}`), o que em
+OpenAPI os oferece a todos os métodos. Nos seis YAMLs oficiais o query parameter está
+sempre dentro de uma operação (inclusive sob DELETE, no StreamingDataMnS), então o
+endereço passou a carregar o método (`paths.<path>.<method>`), exigido pelo prompt e pelo
+`rules_check` — qualquer método, não só GET. Já o path parameter aparece nos dois níveis
+(no path item quando compartilhado por todos os métodos, como no ProvMnS; dentro da
+operação no FaultMnS e no StreamingDataMnS), e o prompt deixou de afirmar que ele é sempre
+do path. O "caso b" do §3.22 (path_operation com o método no field) não era defeito: é o
+contrato que o gerador lê.
+
+**Endurecimento das checagens (commit 64a520b).** O método no endereço do query parameter
+passou a exigir a forma canônica com ponto (`.get`, não `/get`). No callback, o objeto
+passou a exigir o método da OPERAÇÃO QUE REGISTRA antes de `.callbacks.` — que não é o
+método de entrega: é `put` no ProvMnS e `post` no FaultMnS e no FileDataReportingMnS,
+enquanto a entrega é sempre `post` (no field). Medido no banco i20, o Extractor já
+produzia a forma certa; a checagem é rede de segurança, não correção de erro ativo.
+
+**Seis defeitos de coerência, achados por leitura cruzada (commit 59c7cfe).** Não vinham
+de medição do banco, por isso nunca tinham entrado no Problems. Ficou a regra de processo:
+mudar o contrato de um rule_type em qualquer dos quatro lugares obriga rever os outros
+três no mesmo passo. Os seis foram consertados:
+- **CC.1 (b55e0bb)** — os exemplos do `OpenAPIMapping` (`'NrCellDu'`, `'type'`, `'$ref'`)
+  eram formas que o próprio `rules_check` rejeita, e chegavam ao modelo junto do prompt.
+  Viraram as formas válidas por rule_type, com placeholders genéricos, sem valores de uma
+  spec específica.
+- **CC.2 (0dea7c7)** — o `rules_check` não olhava o objeto de `response` e `request_body`;
+  um objeto sem método passava e o gerador descartava a regra em silêncio. Passou a exigir
+  `….<method>.responses` / `….<method>.requestBody`, aceitando também o caminho de
+  callback. Zero falsos positivos nas 41 regras reais do banco.
+- **CC.6 (d60ed59)** — propriedade que é array: o Extractor usava quatro formas diferentes.
+  Pela referência OpenAPI uma propriedade É um Schema Object e `items` é campo dele, logo
+  a forma é `properties.<nome>.items` (7 casos nos YAMLs); o que distingue um elemento de
+  outro é o valor (`$ref` para tipo nomeado, tipo simples senão). Sufixos como
+  `.description` passaram a ser rejeitados.
+- **CC.5 (c49030d)** — o Planner falava em "sete tipos" e omitia o callback, podendo
+  excluir seções de notificação. Passou a listar os oito.
+- **CC.3 + CC.4 (b0ac2e5)** — a identidade de duplicata era contraditória: o Validator
+  ignorava o valor e o Builder sempre o incluía. Passou a ser por tipo: em `request_body` e
+  `response` o valor conta (o PATCH do ProvMnS tem 4 media types e o GET 200 tem 3 — eram
+  descartados como duplicata, §3.19); nos demais o endereço é único por construção e o
+  valor não conta (funde o enum `[UP]`/`[DOWN]`, §3.27, e o callback repetido, §3.24).
+
+**Reconhecer o tipo importado que só uma seção posterior declara (commit 6d398a4).** Ver
+a seção seguinte: o CHECK 4 da Fase 1 marca como import pendente um tipo que aparece
+sozinho numa célula de tabela de resposta/corpo.
+
+**Do lado do gerador**, o usuário alinhou o `rule_types.py` aos parâmetros (query na
+operação; path em qualquer nível). Ficaram anotados, ainda abertos: o endereço do callback
+aceita "path registrador com o método no field" e o planner usa o método de entrega como
+registrador; o `address` do path_parameter contradiz a própria orientação; o regex aceita
+`/get` (tolerância, benigna).
+
+**Infraestrutura (6ac2a99):** o modelo de embedding e o acesso ao Qdrant passaram a vir do
+pacote `qdrant_3gpp_rag`.
+
+**Lição.** Vários desses defeitos passaram porque cada conserto foi feito no ponto pedido,
+sem reler os outros três lugares do contrato — e alguns foram introduzidos no próprio
+passo de conserto (um comentário que contradizia o prompt recém-alterado). Daí a regra de
+processo acima.
+
 ## De onde vem o nome do arquivo YAML de um `$ref` externo (§3.23/§3.26)
 
 Investigação de 19/out/2026, sobre o maior defeito aberto: tipos importados de outra
@@ -389,3 +459,42 @@ devolve as opções com sufixo `:ambiguous` para a LLM escolher.
 helper_context/annex/rag" ou "AMBIGUOUS via … among: …" — então o Reflector e o banco
 mostram DE ONDE veio cada filename. Nenhum nome é derivado do número da spec; nenhum é
 chutado.
+
+### Adendo — 20/out/2026: o adiamento, revisto
+
+Ao revisar o mecanismo de "adiar" (setembro, docs/plano_regra_adiada.md), três
+descobertas mudaram a leitura do que foi feito:
+
+**A premissa estava errada quanto ao que vem da seção futura.** Supunha-se que a seção
+que declara o tipo traria o nome do arquivo YAML. Não traz: a tabela "Data types
+imported" dá `ErrorResponse   TS 28.623 [44]` — o tipo e a SPEC, nunca o `.yaml` (0
+ocorrências de `28623_ComDefs` no corpo do i00, 96 no anexo). E a seção que usa o tipo
+(`| ErrorResponse | 4xx/5xx | … |`) não tem nem a spec. Então adiar continua tendo
+motivo, mas o que se espera da seção futura é a spec, não o arquivo.
+
+**Só a metade de guardar foi implementada.** A seção que usa o tipo não emite a regra e
+o Reflector/Validator não reclamam da falta; mas nada a emite depois. Conferido no
+código: a lista de adiados só é lida para a própria seção, só o nome do tipo é guardado
+(não a regra), e o prompt do Extractor ainda manda não emitir regra de outra seção. Os
+prompts afirmavam que "a seção declarante emite a regra" sem que isso existisse. Na
+prática, adiar era perder a regra em silêncio — e não faz sentido adiar sem emitir
+depois.
+
+**A hipótese do "[44]" (parágrafo de setembro) foi descartada.** A causa medida em 19/out
+(Problems §3.23, hipótese b) é o tipo aparecer ISOLADO na célula da tabela de resposta,
+longe da cláusula que o pareia com a spec — não o número de referência colado ao
+"TS 28.623".
+
+**Medição** (12 tipos importados declarados no corpo da TS 28.532, sem LLM): o anexo
+resolve 10; o RAG resolve 2, com ou sem a spec (saber a spec não ajuda o RAG); os 2 que o
+anexo não tem não aparecem em nenhum YAML oficial — não são usados.
+
+**Decisões.** Mantém-se o adiamento, completando a parte que falta (a seção futura emite
+a regra; no fim, as que sobrarem saem marcadas). A ordem para o nome do arquivo fica:
+helper_context > anexo > RAG > fallback final pela convenção `TS<spec>_ComDefs.yaml`. No
+fallback, a regra sai com o score do Reflector no limite de aceitação e o Reflector
+explica que a cascata não achou e que se usou a convenção. Com anexo, não há o que
+adiar. Também ficaram anotados três defeitos da cascata a corrigir: a Fase 2 decide
+adiar antes de a cascata resolver o arquivo; as opções ambíguas não chegam à LLM porque
+a memória formatada omite a nota; e a busca da definição do tipo é pulada sem motivo
+quando a spec ainda é desconhecida.

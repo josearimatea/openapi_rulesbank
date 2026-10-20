@@ -24,6 +24,17 @@ depois que um sync externo apagou arquivos não-versionados em 28/set).
 
 Estes 6 são a FILA ATUAL: vêm ANTES de qualquer outro item deste documento.
 
+ADENDO 20/out/2026 — ESTADO: os 6 foram CONSERTADOS (verificados contra os YAMLs
+oficiais; efeito no banco ainda NÃO medido por um run completo):
+  CC.1 b55e0bb | CC.2 0dea7c7 | CC.3+CC.4 b0ac2e5 | CC.5 c49030d | CC.6 d60ed59
+  Também consertados: §3.22 (0cd5be3; o "caso b" não era defeito) e o endurecimento
+  de query param/callback (64a520b).
+  §3.23/§3.26: reconhecimento do import feito (CHECK 4, 6d398a4) e filename resolvido
+  por cascata (4c8a35a). PENDENTE: o adiamento só guarda a regra e nada a emite depois
+  (peças 4/5 de docs/plano_regra_adiada.md); fallback final TS<spec>_ComDefs.yaml com
+  score-limite; três defeitos da cascata. Detalhe no adendo do plano e no RASTREIO.
+  Sintomas a confirmar num run: §3.19, §3.24, §3.27 (CC.3+CC.4), §2.1 (CC.1).
+
 Natureza distinta de todo o resto. As seções numeradas abaixo registram
 SINTOMAS medidos no banco gerado ("contei 30 $ref errados", "notifyMOIChanges
 saiu 2x"). Estes 6 são defeitos de CÓDIGO-FONTE: o contrato de um rule_type é
