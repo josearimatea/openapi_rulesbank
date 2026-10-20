@@ -169,6 +169,12 @@ def _analyze_section(
         rag_blocks = []
         # Imported types: fetch the type's own definition block.
         for ref in imports.references:
+            # A CHECK 4 pending import has no spec yet (source_spec == ""), so
+            # there is nothing to query — do not guess one. It is recorded in the
+            # memory as pending; the later section that names its spec runs the
+            # lookup then. Skipping the RAG here is the deliberate choice (i).
+            if not ref.source_spec:
+                continue
             fetched = search_imported_type_ref(ref.type_name, ref.key_terms)
             if fetched:
                 rag_blocks.append(

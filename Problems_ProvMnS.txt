@@ -159,13 +159,52 @@ nome do arquivo YAML não existe $ref externo possível — o spec number sozinh
 nunca basta. É a mesma pendência que o legado registrou como "AINDA ABERTO: o
 source_file continua vazio".
 
-A FAZER: verificar por que a tabela 12.1.1.4.1-2 não satisfaz a regra do
-vínculo. Hipóteses não testadas: (a) a tabela usa "TS 28.623 [44]" com o número
-de referência colado, e o casamento espera "TS 28.623" limpo; (b) o vínculo está
-na tabela mas o tipo aparece em cláusula distante, e a Fase 1 vê os dois em
-blocos separados; (c) a Fase 1 classifica certo e a Fase 2 não grava o
-source_file. Medir ANTES de mexer no prompt — distinguir (c) das outras é
-barato: basta logar o que a Fase 1 devolve e o que a Fase 2 grava.
+MEDIDO 19/out/2026 — É A HIPÓTESE (b). Não precisou rodar o pipeline: a fonte
+mais os 3 checks da Fase 1 (section_analyzer_prompts.py) resolvem.
+  O tipo aparece ISOLADO na célula de uma tabela de resposta. 28532-i20.md L5714:
+    | ErrorResponse  | 4xx/5xx  | Returned in case of an error  | O |
+  Sem "TS 28.623" ao lado, sem número de cláusula, sem coluna Reference. O
+  vínculo tipo->spec está em OUTRO ponto (tabela 12.1.1.4.1-2 cita "TS 28.623
+  [44]"; a [44] está na L1738). A seção que DECLARA roda depois desta.
+  Rodando os 3 checks da Fase 1 nesta célula:
+    CHECK 1 (local)   : há cláusula deste doc ao lado? NÃO -> não dispara
+    CHECK 2 (import)  : há outra spec NOMEADA aqui?     NÃO -> não dispara
+    CHECK 3 (memória) : a memória já tem ErrorResponse? NÃO (declara depois)
+  Os três falham -> ErrorResponse cai em NENHUMA lista -> tratado como local ->
+  $ref interno sem filename. NÃO é (a) (casamento de string) nem (c) (gravação):
+  é que o pareamento tipo<->spec NÃO está na seção que usa o tipo.
+
+SOLUÇÃO DESENHADA (4º check estrutural na Fase 1) — pré-requisito do deferred:
+  Os 3 checks exigem que o pareamento tipo<->spec esteja VISÍVEL (na seção ou na
+  memória). Falta o caso em que o tipo aparece sozinho e a declaração virá só
+  numa seção futura. Acrescentar, APÓS os 3, um 4º:
+
+    CHECK 4 — IMPORT DE ORIGEM DESCONHECIDA (pendente):
+      Gatilho (estrutural, todos verdadeiros):
+        - o tipo está na POSIÇÃO DE TIPO de uma tabela de response/request_body
+          (coluna "Data type"/"response body", valor na forma UpperCamelCase);
+        - CHECK 1/2/3 não dispararam (sem cláusula local, sem spec aqui, sem
+          memória);
+        - o nome NÃO é um tipo primitivo nem um local já definido nesta seção.
+      Ação: registrar em `references` com source_spec="" (desconhecida) e marcar
+      filename_in_section=False -> entra na memória como PENDENTE (file vazio),
+      e o Extractor NÃO emite o $ref externo agora (o deferred já faz isso).
+      A seção futura que DECLARA (tabela com "TS 28.623 [44]") preenche spec +
+      filename via CHECK 2, atualizando a MESMA entrada da memória (o reducer
+      right-wins já faz o merge; file vazio -> file cheio).
+
+  POR QUE É SEGURO (não pega tipo local nem texto comum):
+    - o critério é a CÉLULA DE TIPO de uma tabela de resposta/corpo, não prose
+      solta; um tipo local teria número de cláusula (cai no CHECK 1 antes);
+    - PerfMetricDirection/PerfMetricValue (locais, sem filename) NÃO disparam
+      porque têm cláusula local -> CHECK 1 os pega antes do 4.
+  ISSO É O ELO QUE FALTA: o deferred (ae951d3) está pronto mas só dispara quando
+  a Fase 1 marca o tipo como externo/pendente. O 4º check é esse reconhecimento.
+
+  AINDA ABERTO (decisão): com source_spec="" a RAG de tipo (search_imported_type_
+  ref) não tem spec para buscar. Duas saídas: (i) não buscar agora, só registrar
+  pendente e deixar a seção declarante buscar; (ii) a seção declarante, ao suprir
+  a spec, dispara a busca. Preferir (i) — mais simples e já cabe no fluxo.
 
 
 3.24 DUPLICATA DE CALLBACK AINDA PRESENTE (20/set/2026)

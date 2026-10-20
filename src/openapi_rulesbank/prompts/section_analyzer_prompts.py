@@ -44,11 +44,14 @@ class SpecReference(BaseModel):
         description="The referenced type's name, e.g. 'NotificationHeader'."
     )
     source_spec: str = Field(
+        default="",
         description=(
             "The spec that DEFINES this type, as written here, e.g. 'TS 11.111'. "
             "Take it from the row or sentence that names the type and the spec "
             "together. A spec number appearing elsewhere in the section is not the "
-            "origin of this type — that one belongs in context_references."
+            "origin of this type — that one belongs in context_references. Leave "
+            "EMPTY ('') only for a CHECK 4 pending import — the type is imported "
+            "but this section does not name its spec; a later section supplies it."
         )
     )
     key_terms: str = Field(
@@ -222,7 +225,21 @@ FIRST THAT ANSWERS:
   spec, and the import does not stop being one for that reason.
   If yes: `references`, with the spec the memory gives.
 
-  None of the three: the type is not an import. Leave it out of `references`.
+  CHECK 4 — IMPORTED, ORIGIN NOT YET KNOWN (a deferred import). Reached only when
+  1–3 all failed. Does the type sit in the TYPE POSITION of a RESPONSE or
+  REQUEST-BODY table — the "Data type" / "response body" column — as an
+  UpperCamelCase name, with no local clause beside it, no spec named here, and
+  nothing in the memory for it yet?
+      in a table:  "| ErrorResponse | 4xx/5xx | Returned in case of an error |"
+  Then it is imported from a spec THIS section does not name: the clause that
+  declares it (with its spec and YAML filename) comes in a LATER section. Put it
+  in `references` with source_spec = "" (empty — origin unknown), so it is
+  recorded as a PENDING import; a later section that names the spec fills the
+  origin in. This check is ONLY for a type in that table position — never for a
+  primitive (string/integer), never for a type a local clause defines (CHECK 1
+  caught those), and never for a name in ordinary prose.
+
+  None of the four: the type is not an import. Leave it out of `references`.
 
 WHY CHECK 3 EXISTS: without it, every clause that merely USES an imported type
 reports nothing, no lookup runs for that type, and the retrieval that carries its
@@ -533,8 +550,15 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    THE FETCHED TEXT NEVER ANSWERS Q1 — a spec number sitting near a type in
    retrieved text does not make it that type's origin, and recording one that way
    puts a false origin in the memory every later section then trusts.
-   No answer to Q1: the type is not an import. Write no entry for it, and do not
-   go on to Q2.
+   No answer to Q1 — TWO cases, tell them apart:
+     - Phase 1 did NOT reference the type at all: it is not an import. Write no
+       entry, and do not go on to Q2.
+     - Phase 1 referenced it with an EMPTY source_spec (a CHECK 4 pending import —
+       a type in a response/request-body table with its origin declared only in a
+       later section): it IS an import whose spec is not known yet. Write an entry
+       with source_spec = "" (leave the spec empty — never invent one), go on to
+       Q2 (its filename is unknown too), and DEFER it in Q3. A later section that
+       names the spec updates this same entry.
 
    Q2 — WHICH YAML FILE PUBLISHES IT? Ask this ONLY for a type that answered Q1.
    One specification publishes several files, so its number never yields the
@@ -551,10 +575,13 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
 
    Q3 — MUST THE EXTRACTOR DEFER THIS TYPE'S $ref? Add the type's name to
    `defer_external_refs` when ALL of these hold:
-     - it is EXTERNAL (answered Q1), AND
+     - it is EXTERNAL — either it answered Q1 with a spec, OR it is a CHECK 4
+       pending import (external with source_spec still empty); both are external,
+       AND
      - its filename is unknown to you here: Phase 1's filename-presence list says
        "filename NOT in this section" for it, Q2 found none in the RAG, and the
-       reference memory has none either, AND
+       reference memory has none either (a pending import always meets this —
+       no spec here means no filename here), AND
      - THIS section would otherwise write a $ref to it (a response body, a property,
        an allOf base).
    That name tells the Extractor NOT to emit the rule now: an external $ref with no
