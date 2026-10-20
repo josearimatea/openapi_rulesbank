@@ -84,10 +84,10 @@ For each rule in previous_missing_rules:
     this section's allOf base (already provided by the base $ref — NOT missing), or
     a rule the verdict shows belongs to ANOTHER section. Keeping such a rule only
     makes the Extractor re-emit what the per-rule check then discards.
-  - ALSO remove it when the verdict lists it as a DEFERRED external $ref: the rule
-    was withheld on purpose because the type's external filename is unknown in this
-    section, and the section that declares the type emits it. It is not missing here.
-  - If still genuinely absent (not inherited / not owned elsewhere / not deferred): keep it.
+  - ALSO remove it when its $ref type is listed in the verdict as HELD: the rule was
+    held on purpose because where the type is defined is not settled in this
+    section; it is kept and emitted by the section that settles it. Not missing here.
+  - If still genuinely absent (not inherited / not owned elsewhere / not held): keep it.
 
 Do NOT add new rules at this stage. Only filter what was previously identified.
 Do NOT list rules about the absence of a construct (e.g. 'no query parameters').
@@ -472,6 +472,34 @@ DUPLICATES ACROSS SECTIONS — discard ONLY a true duplicate; when unsure, KEEP:
   When you are not certain two rules share the exact same object+field, KEEP this
   rule — dropping a distinct rule loses coverage, which is worse than a duplicate
   the deterministic dedup can still catch later.
+
+A RULE THAT SHOULD HAVE BEEN HELD:
+  When the pre-analysis verdict lists "held $refs" and this rule's value refers to
+  one of those types — in any position: a body, a parameter, a property, an items
+  element, a map value, an allOf/oneOf/anyOf member — and the rule is NOT listed as
+  a held rule completed in this section, it was emitted when it should have been
+  held: its $ref form asserts where the type is defined, and nothing has stated
+  that. Set valid=False, error_type='correction', and an instruction naming the
+  type: "Its $ref points at <Type>, which is held in this section (origin not
+  stated yet): move this rule to deferred_rules, written the same way." Do not
+  discard it and do not change its $ref target yourself — the rule is right; only
+  where it goes is wrong.
+
+HELD RULES EMITTED IN THIS SECTION:
+  When the pre-analysis verdict lists "held rules completed and emitted in this
+  section" and this rule is one of them, it was written by the EARLIER section named
+  there and held because the origin of its $ref type was not stated in that section;
+  it is emitted here because THIS section states where the type is defined. It is
+  expected NOT to appear in this section's text and to carry the earlier section's
+  id. Do NOT discard it as "owned by another section" or as unsupported by this
+  section's text, and do not correct its $ref target — the code set it from this
+  section's settling of the type. Validate everything else about it as usual.
+
+FILENAME BUILT BY CONVENTION:
+  When the verdict lists "filenames built by convention" and this rule's $ref uses
+  one of those files, the file was built by the naming convention because no source
+  gave it. Do NOT fail the rule for that, and do not ask for another filename; say in
+  validation_notes that the filename came from the convention fallback.
 """
 
 _USER_RULE = """\
@@ -606,10 +634,10 @@ For each entry in reflector_missing_rules AND current_missing_rules:
     rule the verdict shows belongs to ANOTHER section. This overrides the "do not
     remove" caution below — an inherited or foreign rule must never survive as
     missing, or the Extractor loops re-emitting what gets discarded.
-  - If the verdict lists it as a DEFERRED external $ref → exclude: the rule was
-    withheld on purpose because its external filename is unknown in this section, and
-    the section that declares the type emits it. It must never survive as missing —
-    also overrides the "do not remove" caution.
+  - If its $ref type is listed in the verdict as HELD → exclude: the rule was held
+    on purpose (where the type is defined is not settled here) and is emitted by the
+    section that settles it. It must never survive as missing — also overrides the
+    "do not remove" caution.
   - If its target is already being CORRECTED this iteration (see the corrections
     list) → exclude: that rule EXISTS and the correction covers it. A target is one
     thing — correction OR missing, never both. Never keep as missing a target that

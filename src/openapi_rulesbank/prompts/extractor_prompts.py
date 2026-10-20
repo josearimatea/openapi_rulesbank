@@ -40,6 +40,17 @@ class SectionRules(BaseModel):
             "Return an empty list if no concrete rules are found."
         )
     )
+    deferred_rules: list[RawRule] = Field(
+        default_factory=list,
+        description=(
+            "Rules this section DOES state but whose $ref points at a type that is "
+            "HELD (origin not stated yet, or external with no filename — see the "
+            "Section analysis and the reference memory). Write each completely, with "
+            "the $ref as \"$ref: '#/components/schemas/<Type>'\" and the type in "
+            "`references` (file empty); the code completes the target when a "
+            "section states where the type is defined. Empty when nothing is held."
+        ),
+    )
     missing_context: list[str] = Field(
         default_factory=list,
         description=(
@@ -362,24 +373,24 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     detail is the value of the property's schema, carried in
                     openapi_value, not part of the address.
    openapi_value  : depends on openapi_field:
-                    - for "properties.<name>": the JSON Schema type or reference:
-                      "string" | "integer" | "boolean" | "object" |
-                      "$ref: '#/components/schemas/<Name>'" |
-                      "$ref: '<OtherFile>.yaml#/components/schemas/<Name>'"
+                    - for "properties.<name>": the JSON Schema type ("string" |
+                      "integer" | "boolean" | "object"), or, for a named type, a
+                      $ref in the form the REFERENCE CASES below give it (internal
+                      for a local type, external with the file for an imported one,
+                      held when not settled)
                     - for "properties.<name>.items" (array element) and
                       "properties.<name>.additionalProperties" (map value): the
                       element/value schema. WHAT DISTINGUISHES THE CASES IS THIS
-                      VALUE — a reference when the element is a named type
-                      ("$ref: '#/components/schemas/<Name>'" internal,
-                      "$ref: '<OtherFile>.yaml#/components/schemas/<Name>'" external),
-                      or a plain type ("string" | "integer" | ...) when it is not.
-                      Prefer a $ref whenever the element is a schema the document
-                      already defines, rather than restating it inline.
+                      VALUE — a $ref when the element is a named type (form per the
+                      REFERENCE CASES), or a plain type ("string" | "integer" | ...)
+                      when it is not. Prefer a $ref whenever the element is a named
+                      schema, rather than restating it inline.
                     - for "enum"      : the allowed values, e.g. "[add, remove, replace]"
                     - for "required"  : the required property name(s), e.g. "[id]"
-                    - for "oneOf"/"anyOf"/"allOf": the list of referenced schemas, e.g.
+                    - for "oneOf"/"anyOf"/"allOf": the list of referenced schemas,
+                      each $ref in its REFERENCE CASES form, e.g. two local ones:
                       "[$ref: '#/components/schemas/A', $ref: '#/components/schemas/B']"
-                    - for "items"     : the item type or "$ref: '#/components/schemas/<Name>'"
+                    - for "items"     : the item type, or a $ref (REFERENCE CASES form)
                     - for "additionalProperties": the value type or "true"/"false"
 
 3. path_parameter  — one rule per path variable in the RESOURCE part of the path
@@ -401,9 +412,9 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     Resource part only — never the base URL, never abbreviated
                     with "...".
    openapi_field  : "parameters[in=path,name=<paramName>]"
-   openapi_value  : the parameter schema type or reference:
-                    "string" | "integer" | "boolean" | "array" |
-                    "$ref: '#/components/schemas/<Name>'"
+   openapi_value  : the parameter schema type ("string" | "integer" | "boolean" |
+                    "array"), or, for a named type, a $ref in its REFERENCE CASES
+                    form (internal / external with the file / held)
 
 4. query_parameter — one rule per query string parameter
    rule_type      : "query_parameter"
@@ -421,9 +432,9 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     path level, WITHOUT a method, when every method shares it — a
                     query parameter never does.)
    openapi_field  : "parameters[in=query,name=<paramName>]"
-   openapi_value  : the parameter schema type or reference:
-                    "string" | "integer" | "boolean" | "array" |
-                    "$ref: '#/components/schemas/<Name>'"
+   openapi_value  : the parameter schema type ("string" | "integer" | "boolean" |
+                    "array"), or, for a named type, a $ref in its REFERENCE CASES
+                    form (internal / external with the file / held)
 
 5. response        — one rule per HTTP response code or range for an operation
    rule_type      : "response"
@@ -447,10 +458,9 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                        one with openapi_field "4XX" and one with "5XX". Never emit a
                        single rule for both, and never let the rule's description say
                        "4xx or 5xx" — each rule names ONLY its own single range.
-   openapi_value  : "$ref: '#/components/responses/<Name>'" or
-                    "$ref: '#/components/schemas/<Name>'" or
-                    "$ref: '<OtherFile>.yaml#/components/schemas/<Name>'" or
-                    a brief schema description
+   openapi_value  : "$ref: '#/components/responses/<Name>'", or a $ref to the body's
+                    named type in its REFERENCE CASES form (internal / external with
+                    the file / held), or a brief schema description
 
 6. request_body    — one rule per operation that accepts a request body
    rule_type      : "request_body"
@@ -570,7 +580,10 @@ REFERENCES — structure every schema reference so the YAML builder needs no par
 
   Whenever a rule's openapi_value is, or contains, a reference to another schema
   (a "$ref"), ALSO fill the mapping's `references` list. Every 3GPP $ref has the
-  shape `[file]#/components/schemas/<schema>`, so each entry is {{file, schema_name}}:
+  shape `[file]#/components/schemas/<schema>`, so each entry is {{file, schema_name}}.
+  Which of the two a type takes is decided by the REFERENCE CASES below — never by
+  habit (a HELD rule in `deferred_rules` also leaves file empty: there it means "not
+  settled yet", and the code fills it in):
     - INTERNAL reference (a schema defined in THIS same YAML): file is "" (empty).
       e.g. value "$ref: '#/components/schemas/PerfMetricValue'"
            → references: [{{"file": "", "schema_name": "PerfMetricValue"}}]
@@ -612,7 +625,9 @@ MISSING CONTEXT — report what the spec did not give you, in `missing_context`:
 
   A section is extracted alone, so a fact it depends on may live in a clause no
   context reached. Always emit the best rule you can — then report what was
-  missing. The Reflector reads these, checks whether the spec really is silent,
+  missing. One exception: WHERE A $ref TYPE IS DEFINED is never guessed and never
+  reported here — a rule whose $ref type is not settled goes to `deferred_rules`
+  (REFERENCE CASES), and a later section settles it. The Reflector reads these, checks whether the spec really is silent,
   and retrieves the clause when it is not, so the next attempt maps it right.
   Reporting is how a wrong mapping gets found: a fact you keep to yourself is one
   nobody can check.
@@ -709,37 +724,46 @@ ceiling):
 Rules to SKIP — of the above, already owned by another section (do NOT re-emit
 these specific rules; they belong elsewhere):
 {skip_rules}
-  This is the ONLY reason to skip a candidate. It is a precise, per-rule list — NOT
-  a reason to suppress the section. Emit every OTHER rule this section supports. If
-  a skip entry names this operation's path or request_body but NOT a given response
-  code, you MUST still emit that response (e.g. 204, 4XX, 5XX are separate — one
-  being skipped does not skip the others).
+  This list is a precise, per-rule list — NOT a reason to suppress the section. A
+  skip entry covers only the rule it names: if it names this operation's path or
+  request_body but NOT a given response code, that response is still produced (each
+  status code is its own rule). Every candidate not skipped is produced — in `rules`,
+  or in `deferred_rules` when its $ref points at a HELD type (REFERENCE CASES below).
+  Holding a rule is producing it, not skipping it.
 
-Imported types seen so far, as "<Type> -> <spec> [<YAML filename>]". THIS LIST IS
-EXHAUSTIVE, and it decides the FORM of the $ref in three cases — read which one
-each type is in:
+REFERENCE CASES — every $ref to a named type, in any rule type. Where the type is
+defined decides the form: INTERNAL for a type of this document, EXTERNAL (with the
+YAML file) for a type of another spec, HELD when that is not settled yet. The
+reference memory below records what earlier sections settled — read which case each
+type is in:
 
-  1. ON the list WITH a filename -> EXTERNAL, filename before the '#':
-     "$ref: '<filename>.yaml#/components/schemas/<Type>'". Complete, no gap.
+  1. "<Type> -> <spec> [<filename>]" -> EXTERNAL, filename before the '#':
+     "$ref: '<filename>.yaml#/components/schemas/<Type>'". Complete.
 
-  2. NOT on the list -> LOCAL, this document defines it:
-     "$ref: '#/components/schemas/<Type>'", `file` empty. Complete, never a gap.
+  2. LOCAL — the memory says "LOCAL", or THIS section's text shows the type is
+     defined in this document (a clause number of this document beside it, or this
+     section defines it): "$ref: '#/components/schemas/<Type>'", `file` empty.
 
-  3. ON the list marked "[EXTERNAL — filename not known yet]" -> STILL EXTERNAL,
-     filename unknown. Do NOT write it as the internal case-2 form — see the rule
-     below: an external $ref with no filename is not emitted at all.
+  3. NOT SETTLED — the memory says "ORIGIN NOT STATED" or "filename not known yet",
+     the Section analysis lists the type under HOLD, or the type is not in the
+     memory and nothing in this section says where it is defined. Do NOT write it in
+     `rules`: the internal form would assert it is local, which nothing states. Put
+     the rule in `deferred_rules` instead, written completely, with
+     "$ref: '#/components/schemas/<Type>'" and the type in `references`; the code
+     completes the target when a section states where the type is defined.
 
-DO NOT EMIT A RULE WHOSE $ref WOULD BE EXTERNAL BUT HAS NO FILENAME. If a rule you
-are about to write would carry a $ref to a type that is EXTERNAL (imported from
-another spec — case 3 above, or flagged in the Section analysis) and you do NOT have
-its YAML filename, DO NOT GENERATE that rule. Writing "#/components/schemas/<Type>"
-for it would be the LOCAL form, which falsely says the type is defined in this
-document; and there is no complete external form to write without the filename. So
-skip that one rule entirely — no placeholder, no internal $ref. (Any filename the
-lookup found — helper context, the document's annex, the corpus — is already in the
-reference memory above; a type shown there with "[<file>]" is case 1.) Emit every OTHER
-rule this section supports as normal. (A type WITH a filename is case 1 — emit it
-completely; a genuinely LOCAL type is case 2 — emit the internal $ref.)
+     Types held in this section: {held_types}
+
+     This applies wherever OpenAPI expects a schema — a $ref can stand in any of
+     those places, so check every rule you write, not only the obvious ones. EVERY
+     rule whose value refers to one of the held types goes to `deferred_rules`,
+     never to `rules`, whatever its position, for example: a response body or a
+     request body; a parameter or a response header; a schema property; an array
+     element (items); a map value (additionalProperties); a member of
+     allOf / oneOf / anyOf; a schema that is itself just a $ref.
+
+A type is never taken as local merely because it is missing from the memory —
+being unlisted means its origin has not been stated yet, not that it is local.
 {ref_memory}
 
 Auxiliary context — supporting 3GPP documents and any instructions the user

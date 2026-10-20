@@ -42,6 +42,9 @@ State writes:
     section_iteration_count (int)        — incremented by 1
 """
 
+import copy
+import re
+
 from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.llm_config import llm
 from openapi_rulesbank.config.settings import (
@@ -96,6 +99,17 @@ def _format_ref_memory(ref_memory: dict) -> str:
     for t, info in ref_memory.items():
         spec = info.get("spec", "")
         fields = info.get("fields", [])
+        f = f" fields={fields}" if fields else ""
+        # Origin settled as this document: an internal $ref.
+        if info.get("origin") == "local":
+            lines.append(f"{t} -> LOCAL (defined in this document)")
+            continue
+        # Used earlier, but nothing has stated where it is defined yet — neither
+        # local nor imported may be assumed; rules that $ref it are held.
+        if not spec:
+            lines.append(f"{t} -> [ORIGIN NOT STATED yet — rules that $ref it are "
+                         f"held until a section states where it is defined]{f}")
+            continue
         # The YAML filename a retrieval revealed. The spec number alone does not
         # supply it — one specification publishes several files. But the clause
         # that named the spec already settled that the type is EXTERNAL, and that
@@ -113,7 +127,6 @@ def _format_ref_memory(ref_memory: dict) -> str:
                      f"among: {', '.join(options)}]")
         else:
             where = f"{spec} [EXTERNAL — filename not known yet]"
-        f = f" fields={fields}" if fields else ""
         lines.append(f"{t} -> {where}{f}")
     return "\n".join(lines)
 
@@ -210,6 +223,11 @@ def _analyze_section(
         for ref in imports.references:
             if not ref.type_name or ref.type_name in resolved:
                 continue
+            # Origin not stated (CHECK 4): local or imported is a question for the
+            # spec's text, not for the annex — a filename is sought only once the
+            # type is known to be imported.
+            if not ref.source_spec:
+                continue
             if ((ref_memory or {}).get(ref.type_name) or {}).get("file"):
                 continue  # already known from an earlier section
             resolved[ref.type_name] = resolve_external_filename(
@@ -299,7 +317,10 @@ def _analyze_section(
                     note = (note + " | " if note else "") + \
                         f"filename AMBIGUOUS via {src}; choose by context among: " \
                         + ", ".join(options)
+            # Start from what the entry already holds (origin, held rules), so the
+            # right-wins reducer does not drop it when this section rewrites it.
             new_refs[e.type_name] = {
+                **was,
                 "spec":   spec,
                 "file":   file,
                 "fields": e.fields or was.get("fields", []),
@@ -316,6 +337,40 @@ def _analyze_section(
             was["note"] = (was.get("note", "") + " | " if was.get("note") else "") + \
                 f"filename '{found}' resolved via {src}"
             new_refs[t] = was
+
+        # Origin of each type, as this section's text settles it — the fact a held
+        # rule waits for, and the one later sections read. External: paired with a
+        # spec. Local: the text shows it is defined in this document (always
+        # recorded — a later section that uses the type needs to know). Not stated:
+        # tracked so its rules are held, never presumed either way.
+        def _entry(t: str) -> dict:
+            return dict(new_refs.get(t) or prev.get(t) or {})
+
+        for r in imports.references:
+            if not r.type_name:
+                continue
+            entry = _entry(r.type_name)
+            if r.source_spec:
+                entry.setdefault("spec", r.source_spec)
+                entry["spec"] = entry.get("spec") or r.source_spec
+                entry["origin"] = "external"
+            elif entry.get("origin") not in ("local", "external") and not entry.get("spec"):
+                entry.update({"spec": "", "file": "", "origin": "unknown"})
+            new_refs[r.type_name] = entry
+        for t in (imports.local_types or []):
+            if not t:
+                continue
+            entry = _entry(t)
+            entry.update({"origin": "local", "spec": "", "file": ""})
+            new_refs[t] = entry
+
+        # Every type whose origin is still not stated is deferred, whatever Phase 2
+        # wrote — the decision is the text's, and here the text said nothing.
+        unknown = [t for t, v in new_refs.items() if (v or {}).get("origin") == "unknown"]
+        if unknown:
+            analysis.defer_external_refs = sorted(
+                set(analysis.defer_external_refs or []) | set(unknown)
+            )
         new_cross_refs = {
             c.subject: {"fact": c.fact, "source": c.source}
             for c in (analysis.cross_refs or []) if c.subject and c.fact
@@ -337,7 +392,7 @@ def _analyze_section(
             # the later section simply has nothing to anchor on and no trace says why.
             f"maps={analysis.maps_operation!r}:{analysis.maps_method!r} "
             f"{analysis.maps_path!r} "
-            f"| memory_updates: { {t: v['fields'] for t, v in new_refs.items()} }"
+            f"| memory_updates: { {t: (v or {}).get('fields', []) for t, v in new_refs.items()} }"
         )
         return analysis, new_refs, new_cross_refs
     except Exception as e:
@@ -457,18 +512,22 @@ def _format_analysis_guidance(analysis: SectionAnalysis | None) -> str:
             "report the missing anchor in missing_context — never a placeholder."
         )
 
-    # External types whose filename no source gave (section text, helper context,
-    # annex, corpus): any rule whose $ref would point at one of them would come out
-    # in the internal (no-filename) form, which falsely marks the type local. The
-    # Extractor must NOT emit those rules here.
+    # Types whose $ref cannot be written yet: origin not stated in the text, or
+    # external with no filename. A rule pointing at one would come out in the
+    # internal form, asserting the type is local. The Extractor HOLDS those rules
+    # (deferred_rules); the code keeps them and the section that settles the type
+    # emits them, with the $ref completed.
     if analysis.defer_external_refs:
         names = ", ".join(analysis.defer_external_refs)
         lines.append(
-            f"DEFER THESE EXTERNAL $refs — these types are external but their YAML "
-            f"filename is not known: [{names}]. Do NOT emit any rule whose $ref would "
-            f"point at one of them: with no filename it would be written as the "
-            f"internal \"#/components/schemas/<Type>\" form, wrongly marking the type "
-            f"local. Skip those rules entirely (no placeholder). Emit every OTHER rule."
+            f"HOLD THESE $refs — where these types are defined is not settled yet: "
+            f"[{names}]. A rule whose $ref points at one of them goes in "
+            f"`deferred_rules`, NOT in `rules`. Write it completely, exactly as you "
+            f"would otherwise, with the $ref written as "
+            f"\"$ref: '#/components/schemas/<Type>'\" and the type in `references` "
+            f"(file empty): the code completes the target (internal, or the external "
+            f"file) once a section states where the type is defined, and emits the "
+            f"rule then. Emit every OTHER rule in `rules` as normal."
         )
     return "\n".join(lines)
 
@@ -531,6 +590,9 @@ def _build_correction_task(
         "Where an instruction names NO value — it asks you to apply a fact, resolve",
         "a gap or consult a source — there is nothing new to write: keep the rule as",
         "it stands and report in missing_context that the correction named no value.",
+        "Where an instruction says to MOVE a rule to deferred_rules (its $ref points",
+        "at a held type), put that rule in deferred_rules, written the same way, and",
+        "leave it out of rules — that is the correction.",
         "",
     ]
 
@@ -611,10 +673,57 @@ def _build_correction_task(
     n_missing = sum(len(sr.get("missing_rules", [])) for sr in section_reflection)
     lines += [
         "",
-        f"EXPECTED OUTPUT: {n_fix} corrected rule(s) and {n_missing} new rule(s). "
+        f"EXPECTED OUTPUT: {n_fix} corrected rule(s) and {n_missing} new rule(s) — "
+        "a corrected or new rule whose $ref points at a held type goes in "
+        "deferred_rules, the rest in rules. "
         "Anything already listed as validated above must not appear in your output.",
     ]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Held rules — a rule whose $ref points at a type whose origin is not settled yet
+# is kept under that type in other_spec_ref_memory ("pending_rules") and emitted
+# by the section that settles it, with the $ref target completed by code.
+# ---------------------------------------------------------------------------
+
+_SCHEMA_TARGET = re.compile(r"#/components/schemas/([A-Za-z0-9_\-]+)")
+
+
+def _ref_targets(rule: dict) -> list[str]:
+    """The schema names a rule's $ref points at: `references` first, else the value."""
+    m = rule.get("openapi_mapping") or {}
+    names = [r.get("schema_name") for r in (m.get("references") or []) if r.get("schema_name")]
+    return names or _SCHEMA_TARGET.findall(str(m.get("openapi_value", "")))
+
+
+def _settled_file(entry: dict) -> str | None:
+    """Where a held type's $ref now points: "" for local, the YAML file for an
+    import whose file is known, None while its origin (or file) is still open."""
+    if (entry or {}).get("origin") == "local":
+        return ""
+    if (entry or {}).get("spec") and (entry or {}).get("file"):
+        return entry["file"]
+    return None
+
+
+def _complete_held_rule(rule: dict, type_name: str, file: str) -> dict:
+    """The held rule with its $ref to `type_name` pointed at the settled target."""
+    r = copy.deepcopy(rule)
+    m = r.setdefault("openapi_mapping", {})
+    target = f"{file}#/components/schemas/{type_name}"
+    m["openapi_value"] = re.sub(
+        rf"[A-Za-z0-9_.\-]*#/components/schemas/{re.escape(type_name)}(?![A-Za-z0-9_])",
+        target, str(m.get("openapi_value", "")),
+    )
+    refs = [dict(x) for x in (m.get("references") or [])]
+    for x in refs:
+        if x.get("schema_name") == type_name:
+            x["file"] = file
+    if not any(x.get("schema_name") == type_name for x in refs):
+        refs.append({"file": file, "schema_name": type_name})
+    m["references"] = refs
+    return r
 
 
 def extractor_node(state: RuleBankState) -> dict:
@@ -813,6 +922,10 @@ def extractor_node(state: RuleBankState) -> dict:
         "ref_memory":                 _format_ref_memory({
             **(state.get("other_spec_ref_memory", {}) or {}), **new_refs,
         }),
+        # The types this section must hold, named where the $ref form is decided
+        # (REFERENCE CASES, case 3) — filled per section from its own analysis.
+        "held_types":                 ", ".join(
+            (analysis.defer_external_refs or []) if analysis else []) or "none",
         "stage2_context":             stage2_context,
         "stage3_context":             stage3_context,
         "candidate_rules":            candidate_rules,
@@ -823,6 +936,71 @@ def extractor_node(state: RuleBankState) -> dict:
     })
 
     raw_rules = [rule.model_dump() for rule in result.rules]
+
+    # --- Held rules: keep them (piece 1) and emit the settled ones (piece 4) ---
+    # The memory as it stands after this section's own findings.
+    mem_now = {k: dict(v or {}) for k, v in
+               {**(state.get("other_spec_ref_memory", {}) or {}), **new_refs}.items()}
+    annex_text = state.get("annex_text", "") or ""
+
+    # Piece 1 — store each rule the Extractor held under the type it waits for.
+    for held in (result.deferred_rules or []):
+        r = held.model_dump()
+        m = r.get("openapi_mapping") or {}
+        key = (section_id, r.get("rule_type", ""),
+               m.get("openapi_object", ""), m.get("openapi_field", ""))
+        targets = [t for t in _ref_targets(r) if _settled_file(mem_now.get(t, {})) is None]
+        for t in targets or _ref_targets(r)[:1]:
+            entry = mem_now.setdefault(t, {"spec": "", "file": "", "origin": "unknown"})
+            pend = [dict(p) for p in entry.get("pending_rules", [])]
+            if not any(p.get("key") == list(key) for p in pend):
+                pend.append({"key": list(key), "rule": r, "section_id": section_id,
+                             "section_title": section_title, "completed_in": ""})
+            entry["pending_rules"] = pend
+            new_refs[t] = entry
+            logger.info(f"[held {section_id}] {r.get('rule_type')} "
+                        f"{r.get('source_name')!r} waits for {t!r}")
+
+    # Piece 4 — a held rule whose type is now settled is completed and emitted
+    # here. A held type with a known spec but no filename yet gets the cascade
+    # (helper > annex > corpus > convention fallback) first.
+    completed_held = []
+    for t, entry in mem_now.items():
+        pend = [dict(p) for p in entry.get("pending_rules", [])]
+        if not pend:
+            continue
+        file = _settled_file(entry)
+        if file is None and entry.get("spec"):
+            found, _opts, src = resolve_external_filename(
+                t, entry["spec"], helper_context, annex_text)
+            if found:
+                entry["file"], file = found, found
+                entry["note"] = (entry.get("note", "") + " | " if entry.get("note") else "") \
+                    + f"filename '{found}' resolved via {src}"
+        if file is None:
+            continue
+        for p in pend:
+            if p.get("completed_in") and p["completed_in"] != section_id:
+                continue  # already emitted by another section
+            raw_rules.append(_complete_held_rule(p["rule"], t, file))
+            p["completed_in"] = section_id
+            completed_held.append({
+                "type": t, "rule_type": p["rule"].get("rule_type", ""),
+                "source_name": p["rule"].get("source_name", ""),
+                "from_section": p.get("section_id", ""),
+                "settled_as": "local" if file == "" else f"external ({file})",
+            })
+        entry["pending_rules"] = pend
+        new_refs[t] = entry
+    if completed_held:
+        logger.info(f"[held {section_id}] emitted here: {completed_held}")
+
+    # Types whose filename was built by the naming convention, not read anywhere —
+    # the Reflector scores their rules at the acceptance floor and says why.
+    fallback_files = {
+        t: v.get("file") for t, v in mem_now.items()
+        if "via convention-fallback" in (v.get("note") or "") and v.get("file")
+    }
     # Facts the section depended on and no context supplied. Reported here only;
     # nothing acts on them yet — the Reflector is where they will be weighed and
     # turned into a retrieval query for the next attempt.
@@ -874,6 +1052,14 @@ def extractor_node(state: RuleBankState) -> dict:
             # Reflector/Validator (a deferred $ref is withheld on purpose, not missing).
             "defer_external_refs":     list(analysis.defer_external_refs or []),
         }}
+    # Held rules emitted HERE (written in an earlier section, settled by this one)
+    # and filenames built by convention. The Reflector and Validator read them so a
+    # carried rule is judged by why it is emitted here, not by this section's text.
+    if completed_held or fallback_files:
+        verdict_update.setdefault(section_id, {}).update({
+            "completed_held_rules": completed_held,
+            "fallback_filenames":   fallback_files,
+        })
 
     return {
         "raw_rules":               raw_rules,

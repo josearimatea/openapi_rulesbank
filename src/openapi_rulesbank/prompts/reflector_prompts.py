@@ -90,7 +90,9 @@ class ReflectionResult(BaseModel):
             "    to another schema) — it must not be re-emitted as an own property "
             "    or 'required' of the subtype from this section;\n"
             "  - the rule is OWNED BY ANOTHER SECTION (this section only references a "
-            "    type/operation whose real definition lives elsewhere);\n"
+            "    type/operation whose real definition lives elsewhere) — EXCEPT a "
+            "    held rule the verdict lists as completed and emitted in this "
+            "    section: it was written by an earlier section and belongs here;\n"
             "  - the rule DUPLICATES one already validated in another section;\n"
             "  - the rule is the SAME CONCEPT as another rule of THIS section "
             "    under a different spelling — the spec may name one notification "
@@ -172,8 +174,10 @@ For each rule, reason through the following questions:
   3. Does the OpenAPI reference context below confirm or contradict this rule?
   4. Does this rule BELONG in the final set for THIS section? It does NOT when it is
      an inherited field (present via an allOf $ref to a base type), when another
-     section is the real owner of the type/operation, when it duplicates a rule
-     already validated elsewhere, or when its mapping is invalid/unmappable. Set
+     section is the real owner of the type/operation (but NOT a held rule the
+     verdict lists as completed and emitted in this section — that one belongs
+     here, see below), when it duplicates a rule already validated elsewhere, or
+     when its mapping is invalid/unmappable. Set
      reflector_score to reflect this belonging (1.0 = clearly belongs, 0.0 = clearly
      must go), NOT how closely it echoes the text.
   5. Should this rule be split into multiple more specific rules?
@@ -184,9 +188,31 @@ For each rule, reason through the following questions:
      split of 4XX — they are separate co-existing rules.
   6. Should this rule be discarded? Set discard_suggestion True whenever it does NOT
      belong (question 4): an inherited field re-emitted here, a rule owned by another
-     section, a cross-section duplicate, the absence of a construct (e.g. 'no query
-     parameters'), or anything not mappable to OpenAPI. A low reflector_score and
-     discard_suggestion=True must agree.
+     section (except a held rule completed here, below), a cross-section duplicate,
+     the absence of a construct (e.g. 'no query parameters'), or anything not
+     mappable to OpenAPI. A low reflector_score and discard_suggestion=True must
+     agree.
+
+A RULE THAT SHOULD HAVE BEEN HELD — when the verdict lists "held $refs" and this
+rule's value refers to one of those types (in any position) without being listed as
+a held rule completed here, it was emitted when it should have been held. Set
+reflection_flagged = True and say so in the reasoning ("should be held: its $ref
+type <Type> has no stated origin yet"), so the Validator sends it back to be held.
+Do NOT lower the score below 0.5 or suggest discarding it for this — the rule is
+right; only where it goes is wrong.
+
+HELD RULES EMITTED IN THIS SECTION — a rule the verdict lists as "held rules completed
+and emitted in this section" was written by the EARLIER section named there, held
+because the origin of its $ref type was not stated in that section, and emitted here
+because THIS section states where the type is defined. That it is absent from this
+section's text and carries the earlier section's id is expected, not a fault. Judge
+it by its own statement and by how this section settled its type.
+
+FILENAME BUILT BY CONVENTION — when the verdict lists "filenames built by convention"
+and this rule's $ref uses one of those files, set reflector_score = 0.5 (the
+acceptance floor), reflection_flagged = True, and say in the reasoning that no source
+(user auxiliary context, the document's annex, the corpus) gave the type's YAML file,
+so it was built by the naming convention as TS<spec>_ComDefs.yaml.
 
 Then produce:
   - A confidence score (0.0 to 1.0)
@@ -386,20 +412,32 @@ schema_property or 'required'. Only the type's OWN attributes (those NOT in the
 inherited list) can be missing. Reporting an inherited field as missing forces the
 Extractor to re-emit a rule the Validator will only discard again — do not do it.
 
-DEFERRED EXTERNAL $refs ARE NOT MISSING — read the pre-analysis verdict below. When
-it lists deferred external $refs, a rule using one of those types was DELIBERATELY
-withheld from this section: the type is imported from another spec and its YAML
-filename is unknown here, so the section that declares the type emits the rule
-instead. Do NOT report such a rule as missing — telling the Extractor to emit it
-here only reproduces the same incomplete $ref. Its absence is on purpose, not a gap.
+HELD $refs ARE NOT MISSING — read the pre-analysis verdict below. When it lists held
+$refs, a rule using one of those types was DELIBERATELY held in this section: where
+the type is defined is not settled yet (or it is imported and its YAML filename is
+unknown), so the rule is kept and emitted by the section that settles the type. Do
+NOT report such a rule as missing — telling the Extractor to emit it here only
+reproduces an incomplete $ref. Its absence is on purpose, not a gap.
+
+HELD RULES EMITTED HERE ARE EXPECTED — when the verdict lists "held rules completed
+and emitted in this section", those rules in current_rules were written by an EARLIER
+section and are emitted now because THIS section settled where their $ref type is
+defined. They are not this section's own text, and that is expected: do not treat
+them as foreign, and do not derive missing rules from them.
+
+AN UNSETTLED ORIGIN IS NOT A GAP — a type the reference memory shows as "ORIGIN NOT
+STATED", or a filename the verdict lists as "built by convention", is already
+handled: the first waits for the section that states where the type is defined, the
+second was built as a last resort after every source was searched. Neither is a
+missing rule, and neither gets a context query.
 
 Do NOT suggest:
   - Rules already covered by current_rules or already_validated_rules
   - Any inherited field named in the pre-analysis verdict (covered by the allOf base)
   - Rules the pre-analysis verdict shows belong to ANOTHER section (this section only
     references a type/operation whose definition lives elsewhere)
-  - Any rule the pre-analysis verdict lists as a DEFERRED external $ref (withheld on
-    purpose; the declaring section emits it)
+  - Any rule whose $ref type the pre-analysis verdict lists as HELD (kept on
+    purpose; the section that settles the type emits it)
   - Rules about the absence of a construct (e.g. 'no query parameters')
   - Vague or non-actionable rules
   - Rules that duplicate what is already extracted under a different phrasing
@@ -468,7 +506,9 @@ Emit NO query for a gap when:
   - the fact is a modelling choice the target YAML makes, written down in no
     specification;
   - the gap names a topic ("more about callbacks") rather than one fact, so no
-    query could answer it.
+    query could answer it;
+  - the gap is where a HELD type is defined, or the YAML file of a type whose
+    filename was built by convention — both are handled already (see above).
 
 Write the query for what is left: a fact only this document or another 3GPP spec
 holds — which operation owns a body, which resource a URI belongs to, what a

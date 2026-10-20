@@ -98,19 +98,50 @@ def format_section_verdict(verdict: dict | None) -> str:
             "as a reported gap, not as a rule to invent an anchor for."
         )
 
-    # External-type $refs the pre-analysis told the Extractor to DEFER (external, but
-    # the YAML filename is not known in this section). Their rule was WITHHELD ON
-    # PURPOSE — it is not missing and not wrong. A later section that has the filename
-    # emits it. The judge must NOT list such a rule as missing, nor correct the
-    # section for lacking it.
+    # Types whose $ref this section could not write yet (origin not stated, or
+    # external with no filename). Their rules were HELD ON PURPOSE — kept, and
+    # emitted by the section that settles the type. Not missing, not wrong.
     deferred = verdict.get("defer_external_refs", []) or []
     if deferred:
         lines.append(
-            f"deferred external $refs (withheld on purpose, NOT missing): {deferred}. "
-            "A rule using one of these types was intentionally not emitted here, "
-            "because its external YAML filename is unknown in this section; the "
-            "section that declares the type emits it. Do NOT report such a rule as "
-            "missing and do NOT correct this section for its absence."
+            f"held $refs (withheld on purpose, NOT missing): {deferred}. A rule "
+            "whose $ref points at one of these types was held, not emitted here: "
+            "where the type is defined is not settled yet. It is kept and emitted by "
+            "the section that settles it. Do NOT report such a rule as missing and "
+            "do NOT correct this section for its absence. Conversely, a rule that DOES "
+            "appear among this section's rules with a $ref to one of these types "
+            "(unless listed below as a held rule completed here) was emitted when it "
+            "should have been held: its $ref form asserts an origin nothing states."
+        )
+
+    # Held rules emitted HERE: written in an earlier section, emitted now because
+    # this section settled where their type is defined. They are not in this
+    # section's text, and that is expected.
+    carried = verdict.get("completed_held_rules", []) or []
+    if carried:
+        items = "; ".join(
+            f"{c.get('rule_type')} {c.get('source_name')!r} from section "
+            f"{c.get('from_section')} -> {c.get('type')} settled as {c.get('settled_as')}"
+            for c in carried
+        )
+        lines.append(
+            f"held rules completed and emitted in this section: {items}. Each was "
+            "written by the section named, held because the origin of its $ref type "
+            "was not stated there, and is emitted here because this section states "
+            "it. Judge it by that section's statement and this one's settling of the "
+            "type — do NOT reject it for not appearing in this section's text."
+        )
+
+    # Filenames built by the naming convention (no source gave them).
+    fallback = verdict.get("fallback_filenames", {}) or {}
+    if fallback:
+        lines.append(
+            f"filenames built by convention (last resort): {fallback}. No source — "
+            "user auxiliary context, the document's annex, the corpus — gave the YAML "
+            "file of these types, so it was built as TS<spec>_ComDefs.yaml. A rule "
+            "whose $ref uses one of them is scored at the acceptance floor (0.5), "
+            "flagged, and its reasoning says the lookup found nothing and the "
+            "convention was used."
         )
     return "\n".join(lines)
 

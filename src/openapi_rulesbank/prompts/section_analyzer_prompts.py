@@ -50,8 +50,9 @@ class SpecReference(BaseModel):
             "Take it from the row or sentence that names the type and the spec "
             "together. A spec number appearing elsewhere in the section is not the "
             "origin of this type — that one belongs in context_references. Leave "
-            "EMPTY ('') only for a CHECK 4 pending import — the type is imported "
-            "but this section does not name its spec; a later section supplies it."
+            "EMPTY ('') only for CHECK 4 — the type is used here but nothing states "
+            "where it is defined (neither local nor imported is assumed); a later "
+            "section settles it."
         )
     )
     key_terms: str = Field(
@@ -155,6 +156,15 @@ class SectionImports(BaseModel):
             "imports no type."
         )
     )
+    local_types: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Types this section's text shows are defined in THIS document (CHECK 1): "
+            "the reference beside them points at a clause of this document, or this "
+            "section itself defines the type (its heading is 'Type <Name>' / "
+            "'Enumeration <Name>'). Empty when none."
+        )
+    )
     explanation: str = Field(
         default="",
         description=(
@@ -206,8 +216,9 @@ FIRST THAT ANSWERS:
   "Type <Name>", "Enumeration <Name>")?
       in a table:  "<TypeName>   11.111.2.3   <description>"     -> LOCAL
       in prose  :  "<TypeName> is defined in clause 11.111.2.3"  -> LOCAL
-  If yes: LOCAL. Put it in NEITHER list and move on, however many spec numbers
-  appear nearby.
+  If yes: LOCAL. Put it in `local_types` (never in `references`) and move on,
+  however many spec numbers appear nearby. The reference memory may also already
+  mark it "LOCAL" — then it is local too.
 
   CHECK 2 — IS IT IMPORTED? Does the reference for it point at ANOTHER
   SPECIFICATION?
@@ -226,21 +237,20 @@ FIRST THAT ANSWERS:
   spec, and the import does not stop being one for that reason.
   If yes: `references`, with the spec the memory gives.
 
-  CHECK 4 — IMPORTED, ORIGIN NOT YET KNOWN (a deferred import). Reached only when
-  1–3 all failed. Does the type sit in the TYPE POSITION of a RESPONSE or
-  REQUEST-BODY table — the "Data type" / "response body" column — as an
-  UpperCamelCase name, with no local clause beside it, no spec named here, and
-  nothing in the memory for it yet?
-      in a table:  "| ErrorResponse | 4xx/5xx | Returned in case of an error |"
-  Then it is imported from a spec THIS section does not name: the clause that
-  pairs it with its spec ("data types imported") comes in a LATER section. Put it
-  in `references` with source_spec = "" (empty — origin unknown), so it is
-  recorded as a PENDING import; a later section that names the spec fills the
-  origin in. This check is ONLY for a type in that table position — never for a
-  primitive (string/integer), never for a type a local clause defines (CHECK 1
-  caught those), and never for a name in ordinary prose.
+  CHECK 4 — ORIGIN NOT STATED. Reached only when 1–3 all failed. The section USES
+  a named type — anywhere: a response or body table, a parameter table, an
+  attribute table, a sentence — that is not a primitive (string, integer, boolean,
+  …), and nothing you were given says where it is defined: no clause of this
+  document beside it, no spec paired with it, nothing in the memory.
+      e.g. "| ErrorResponse | 4xx/5xx | Returned in case of an error |"
+           "| filter | query | Filter | … |"
+  Then its origin is NOT KNOWN. Do not presume either way — it may be defined later
+  in this document or imported from another spec. Put it in `references` with
+  source_spec = "" (empty = origin not stated). A rule whose $ref points at it is
+  held until a later section states where the type is defined: a clause of this
+  document defining it (local), or a row/sentence pairing it with a spec (import).
 
-  None of the four: the type is not an import. Leave it out of `references`.
+  None of the four (a primitive, or a type that is not used here): leave it out.
 
 WHY CHECK 3 EXISTS: without it, every clause that merely USES an imported type
 reports nothing, no lookup runs for that type, and the retrieval that carries its
@@ -427,9 +437,11 @@ class SectionAnalysis(BaseModel):
     defer_external_refs: list[str] = Field(
         default_factory=list,
         description=(
-            "Names of EXTERNAL types whose $ref this section CANNOT write yet, so the "
-            "Extractor must NOT emit a rule for them here. List a type when ALL of: "
-            "(1) it is imported from another spec (in references/memory), (2) NO "
+            "Names of types whose $ref this section CANNOT write yet; the Extractor "
+            "holds those rules instead of emitting them here. List every type whose "
+            "origin is not stated (Phase 1 CHECK 4, empty spec). Also list an "
+            "external type when ALL of: (1) it is imported from another spec (in "
+            "references/memory), (2) NO "
             "filename is known — Phase 1's filename-presence says not in this section "
             "AND the reference memory shows none (the memory already carries any "
             "filename the lookup found — helper context, annex, corpus), and (3) this "
@@ -556,13 +568,12 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    No answer to Q1 — TWO cases, tell them apart:
      - Phase 1 did NOT reference the type at all: it is not an import. Write no
        entry, and do not go on to Q2.
-     - Phase 1 referenced it with an EMPTY source_spec (a CHECK 4 pending import —
-       a type in a response/request-body table with its origin declared only in a
-       later section): it IS an import whose spec is not known yet. Write an entry
-       with source_spec = "" (leave the spec empty — never invent one) and go on
-       to Q2: the filename may already be known from the memory (looked up by the
-       type name), and only if it is not does Q3 defer it. A later section that
-       names the spec updates this same entry.
+     - Phase 1 referenced it with an EMPTY source_spec (CHECK 4 — origin not
+       stated): nothing says whether it is local or imported. Write an entry with
+       source_spec = "" (never invent one), do NOT go on to Q2 — a filename is only
+       sought once the type is known to be imported — and defer it in Q3. A later
+       section that pairs it with a spec, or shows it defined in this document,
+       settles this same entry.
 
    Q2 — WHICH YAML FILE PUBLISHES IT? Ask this ONLY for a type that answered Q1.
    One specification publishes several files, so its number never yields the
@@ -591,25 +602,24 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    reported gap beats guessing the wrong file. Choose ONLY from the listed options;
    never type a file that is not among them, and never derive one from a number.
 
-   Q3 — MUST THE EXTRACTOR DEFER THIS TYPE'S $ref? Add the type's name to
-   `defer_external_refs` when ALL of these hold:
-     - it is EXTERNAL — either it answered Q1 with a spec, OR it is a CHECK 4
-       pending import (external with source_spec still empty); both are external,
-       AND
+   Q3 — MUST THE EXTRACTOR DEFER THIS TYPE'S $ref? Every type whose ORIGIN IS NOT
+   STATED (Phase 1 CHECK 4, source_spec empty) is deferred — add it to
+   `defer_external_refs`. Also add a type when ALL of these hold:
+     - it is EXTERNAL — it answered Q1 with a spec, AND
      - its filename is unknown to you here: Phase 1's filename-presence list says
        "filename NOT in this section" for it, Q2 found none, AND the reference
        memory shows none for it. The memory already carries any filename the
-       lookup found by the TYPE NAME (helper context, annex, corpus) — so a pending
-       import whose spec is still unknown may well have its filename there; if the
-       memory shows "[<file>]" for the type, it is NOT deferred, AND
+       lookup found for an imported type (helper context, annex, corpus, or the
+       naming convention as a last resort); if the memory shows "[<file>]" for the
+       type, it is NOT deferred, AND
      - THIS section would otherwise write a $ref to it (a response body, a property,
        an allOf base).
-   That name tells the Extractor NOT to emit the rule now: an external $ref with no
-   filename would be written as an internal one, asserting the type is local, which
-   contradicts Q1. The rule waits, parked. Do NOT defer a type whose filename you DO
-   have — from this section or from the memory (write it in full
-   now) or a local type (internal $ref, never deferred). Leave `defer_external_refs`
-   empty when nothing is deferred.
+   That name tells the Extractor to HOLD the rule instead of emitting it here: a
+   $ref to a type of unknown origin, or an external one with no filename, would be
+   written in the internal form, asserting the type is local. The held rule is
+   kept and emitted by the section that settles the type. Do NOT defer a type whose
+   origin is stated and whose filename you have (write it in full now), or a local
+   type (internal $ref). Leave `defer_external_refs` empty when nothing is deferred.
    Read the property names out of the fetched definition — they are the
    members the type declares, NOT the schema keywords that structure them (allOf,
    type, properties, required, items, $ref are structure, never property names).

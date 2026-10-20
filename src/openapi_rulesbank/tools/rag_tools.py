@@ -439,7 +439,10 @@ def resolve_external_filename(
       2. annex_text — the document's own embedded OpenAPI annex, read ONLY for
          the filenames it spells out; skipped when the document has none.
       3. corpus RAG — first scoped to the known source_spec, then, only if that
-         finds nothing, a broader query.
+         finds nothing, a broader query;
+      4. only when source_spec is known: the naming convention,
+         "TS<spec digits>_ComDefs.yaml", source "convention-fallback" — built, not
+         read, so the rule using it is scored at the acceptance floor.
     Each source is read into the FULL set of files it ties to the type (the code
     never decides which is right). Returns (filename, options, source):
       - exactly one file at the first source that answers -> (file, [file], src):
@@ -478,6 +481,15 @@ def resolve_external_filename(
             return options[0], options, src
         if len(options) > 1:
             return "", options, src + ":ambiguous"
+
+    # 4. Last resort, only when the spec is known: the file-name convention
+    # ("TSxxyyy_<group>.yaml"), with the common-definitions group of the 28.x
+    # family, "ComDefs". This one is BUILT, not read — so the source says so and
+    # the Reflector scores the rule at the acceptance floor and explains it.
+    digits = re.sub(r"\D", "", source_spec or "")
+    if digits:
+        fallback = f"TS{digits}_ComDefs.yaml"
+        return fallback, [fallback], "convention-fallback"
 
     return "", [], "unresolved"
 

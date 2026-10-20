@@ -240,6 +240,40 @@ def builder_node(state: RuleBankState) -> dict:
             if force_count:
                 logger.info(f"Force-included {force_count} semantic rule(s).")
 
+    # Held rules never settled (piece 5): a rule held because the origin of its
+    # $ref type was not stated, and that no later section settled, is emitted at the
+    # end of the run — marked as not validated — so it does not vanish.
+    if (current_section_idx + 1) >= len(plan_sections):
+        orphan_count = 0
+        for type_name, entry in (state.get("other_spec_ref_memory", {}) or {}).items():
+            for held in (entry or {}).get("pending_rules", []) or []:
+                if held.get("completed_in"):
+                    continue
+                rule_dict = dict(held.get("rule") or {})
+                try:
+                    orphan = ValidatedRule(
+                        **{k: v for k, v in rule_dict.items()
+                           if k not in _FORCE_EXCLUDE_FIELDS},
+                        reflector_score=0.0,
+                        reflection_reasoning=(
+                            "Not reviewed: held because no section stated where "
+                            f"{type_name!r} is defined."
+                        ),
+                        reflection_flagged=True,
+                        validation_notes=(
+                            f"Held rule never settled: no section stated whether "
+                            f"{type_name!r} is local or imported; its $ref target "
+                            "was left as written."
+                        ),
+                        validation_passed=False,
+                    )
+                    validated_rules.append(orphan.model_dump())
+                    orphan_count += 1
+                except Exception as e:
+                    logger.warning(f"  Skipped held rule (could not construct ValidatedRule): {e}")
+        if orphan_count:
+            logger.info(f"Emitted {orphan_count} held rule(s) never settled, marked not validated.")
+
     # Final safety net: drop rules that say the same thing. The Validator already
     # discards cross-section duplicates it recognises, but variants can still slip
     # through, so compare on a canonical key. Normalisation is for COMPARISON ONLY —
