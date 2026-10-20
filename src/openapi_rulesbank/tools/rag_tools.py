@@ -18,6 +18,7 @@ Functions:
 """
 
 import os
+import re
 import uuid
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client.http.models import Distance, VectorParams
@@ -383,6 +384,102 @@ def search_imported_type_ref(
         return ""
     query = f"{type_name} type: object properties required {key_terms}".strip()
     return search_3gpp_corpus(query, k=k)
+
+
+# A 3GPP OpenAPI file reference: "<File>.yaml#/components/schemas/<TypeName>".
+# Captures the filename so, given a type, the file it is published in can be read
+# back from text (helper_context, annex, or a retrieved corpus chunk). Pandoc
+# escapes '_' and '#' as '\_' and '\#' in the annex Markdown, so a backslash is
+# allowed (and stripped) before each such character; the filename and type names
+# are read with the escapes removed.
+_YAML_REF = re.compile(
+    r"((?:[A-Za-z0-9]|\\?_)+\.yaml)\s*\\?#\s*/\s*components\s*/\s*schemas\s*/\s*"
+    r"((?:[A-Za-z0-9]|\\?_)+)"
+)
+
+
+def _unescape(s: str) -> str:
+    """Drop pandoc's backslash escapes before '_' and '#'."""
+    return s.replace("\\_", "_").replace("\\#", "#")
+
+
+def _files_for_type_in_text(type_name: str, text: str) -> list[str]:
+    """Every YAML file a block of text ties to `type_name`, as a sorted list.
+
+    Collects all '<File>.yaml#/components/schemas/<type_name>' references and
+    returns the distinct file parts. Deterministic reading — it never derives a
+    name from a spec number, only reports the ones the text writes out. Pandoc's
+    '\\_'/'\\#' escapes are normalised. Returns [] when the text ties the type to
+    no file, one entry when unambiguous, several when the text itself maps the
+    same type to more than one file (e.g. 'resources', published by each NRM
+    under its own file) — the caller then lets the LLM pick, never guesses.
+    """
+    if not type_name or not text:
+        return []
+    files = {
+        _unescape(m.group(1))
+        for m in _YAML_REF.finditer(text)
+        if _unescape(m.group(2)) == type_name
+    }
+    return sorted(files)
+
+
+def resolve_external_filename(
+    type_name: str,
+    source_spec: str = "",
+    helper_context: str = "",
+    annex_text: str = "",
+) -> tuple[str, list[str], str]:
+    """Resolve the YAML filename an external $ref to `type_name` must carry.
+
+    A cascade, stopping at the first source that offers any filename, in priority
+    order:
+      1. helper_context — whatever the USER supplied (may be empty); highest
+         authority, an explicit human-provided override.
+      2. annex_text — the document's own embedded OpenAPI annex, read ONLY for
+         the filenames it spells out; skipped when the document has none.
+      3. corpus RAG — first scoped to the known source_spec, then, only if that
+         finds nothing, a broader query.
+    Each source is read into the FULL set of files it ties to the type (the code
+    never decides which is right). Returns (filename, options, source):
+      - exactly one file at the first source that answers -> (file, [file], src):
+        unambiguous, the caller uses it directly;
+      - several files -> ("", options, src + ":ambiguous"): the caller hands the
+        options to the LLM, which picks by the using clause's context;
+      - nothing anywhere -> ("", [], "unresolved"): the caller defers / declares a
+        gap and NEVER invents a name.
+    src is "helper_context" | "annex" | "rag:source-spec" | "rag:broad".
+    The filename is only ever READ from text, never derived from a spec number.
+    """
+    if not type_name:
+        return "", [], "unresolved"
+
+    sources = [
+        ("helper_context", helper_context),
+        ("annex",          annex_text),
+    ]
+    if source_spec:
+        sources.append((
+            "rag:source-spec",
+            search_3gpp_corpus(
+                f"{source_spec} {type_name} OpenAPI file name components schemas .yaml"
+            ),
+        ))
+    sources.append((
+        "rag:broad",
+        search_3gpp_corpus(
+            f"{type_name} OpenAPI file name components schemas .yaml"
+        ),
+    ))
+
+    for src, text in sources:
+        options = _files_for_type_in_text(type_name, text)
+        if len(options) == 1:
+            return options[0], options, src
+        if len(options) > 1:
+            return "", options, src + ":ambiguous"
+
+    return "", [], "unresolved"
 
 
 def _get_vector_store():

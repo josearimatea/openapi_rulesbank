@@ -336,8 +336,14 @@ def parse_sections(md_text: str) -> tuple[list[dict], list[dict]]:
         # Discard the annex embedding the finished OpenAPI document. Extracting
         # from it would copy the answer instead of deriving it from the spec — and
         # a new release has no such annex until the YAML exists.
+        # The content IS kept on this excluded entry (only for the annex), so the
+        # reader can consult it for ONE narrow purpose: resolving the YAML filename
+        # of an external $ref whose type is already known to be imported. It is
+        # never fed back into extraction — excluded sections do not reach the
+        # Planner — so the "do not derive rules from the annex" rule stands.
         if _is_embedded_openapi_annex(title, content):
-            excluded.append({"section_id": str(i), "title": title, "reason": "openapi_annex"})
+            excluded.append({"section_id": str(i), "title": title,
+                             "reason": "openapi_annex", "content": content})
             continue
 
         # Optionally filter by keywords (disabled by default — see settings.py)

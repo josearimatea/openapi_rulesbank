@@ -74,6 +74,7 @@ from openapi_rulesbank.tools.rag_tools import (
     # does not fit it: what it points at is a procedure or a design rule, not a
     # schema block. It goes to the corpus with the clause's own words instead.
     search_3gpp_corpus,
+    resolve_external_filename,
     umbrella_mns_for as _umbrella_mns,
 )
 
@@ -117,6 +118,7 @@ def _analyze_section(
     sibling_summary: str = "",
     helper_context: str = "",
     contract_summary: str = "",
+    annex_text: str = "",
 ) -> tuple[SectionAnalysis | None, dict]:
     """Triage a section before extraction: build reference memory + extractor guidance.
 
@@ -234,11 +236,48 @@ def _analyze_section(
             if not e.type_name:
                 continue
             was = prev.get(e.type_name, {}) or {}
+            spec = e.source_spec or was.get("spec", "")
+            note = e.note or was.get("note", "")
+            # Filename as the section/memory already has it. Phase 2 writes one only
+            # when THIS section's text spells it out; a using section usually has none.
+            file = e.source_file or was.get("file", "")
+            # When it is still missing, run the resolution cascade: user
+            # helper_context first, then the document's own annex, then the corpus
+            # RAG (scoped to the source spec, else broad). The filename is only ever
+            # READ from one of those — never derived from the spec number. If none
+            # answers, it stays empty and the rule is deferred (a declared gap),
+            # never guessed. The source is recorded in the note so the Reflector and
+            # the bank show where the filename came from.
+            if not file and e.type_name:
+                resolved, options, src = resolve_external_filename(
+                    e.type_name, spec, helper_context, annex_text,
+                )
+                if resolved:
+                    # A single file answered: use it, record where it came from.
+                    file = resolved
+                    note = (note + " | " if note else "") + \
+                        f"filename '{file}' resolved via {src}"
+                    logger.info(
+                        f"[analyzer {section_id}] filename for {e.type_name!r} "
+                        f"resolved: {file!r} (via {src})"
+                    )
+                elif options:
+                    # The source maps the type to several files (e.g. 'resources'
+                    # across NRMs). The code does not choose — the options are
+                    # recorded so the LLM can pick the right one by the using
+                    # clause's context. File stays empty for now (deferred).
+                    note = (note + " | " if note else "") + \
+                        f"filename AMBIGUOUS via {src}; choose by context among: " \
+                        + ", ".join(options)
+                    logger.info(
+                        f"[analyzer {section_id}] filename for {e.type_name!r} "
+                        f"ambiguous ({src}): {options}"
+                    )
             new_refs[e.type_name] = {
-                "spec":   e.source_spec or was.get("spec", ""),
-                "file":   e.source_file or was.get("file", ""),
-                "fields": e.fields      or was.get("fields", []),
-                "note":   e.note        or was.get("note", ""),
+                "spec":   spec,
+                "file":   file,
+                "fields": e.fields or was.get("fields", []),
+                "note":   note,
             }
         new_cross_refs = {
             c.subject: {"fact": c.fact, "source": c.source}
@@ -686,6 +725,7 @@ def extractor_node(state: RuleBankState) -> dict:
         sibling_summary,
         helper_context,
         contract_summary,
+        state.get("annex_text", "") or "",
     )
     section_analysis = _format_analysis_guidance(analysis)
     # What earlier sections learned about how things relate, plus whatever this

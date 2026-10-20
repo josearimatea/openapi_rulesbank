@@ -107,6 +107,21 @@ def reader_node(state: RuleBankState) -> dict:
 
     helper_context = "\n\n---\n\n".join(helper_parts)
 
+    # --- Annex text, kept ONLY to resolve external $ref filenames ---
+    # The embedded OpenAPI annex was excluded from extraction (see parse_sections),
+    # but its text is the one place the document itself spells out the YAML file an
+    # imported type lives in (e.g. 'TS28623_ComDefs.yaml'). It is carried here as a
+    # separate field, consulted only by the filename-resolution cascade, never fed
+    # to the Planner or the extraction prompts. Empty when the document has no such
+    # annex (a new release before its YAML exists) — the cascade then skips it.
+    annex_text = "\n\n".join(
+        s.get("content", "") for s in excluded_sections_reader
+        if s.get("reason") == "openapi_annex" and s.get("content")
+    )
+    if annex_text:
+        logger.info(f"Reader: kept {len(annex_text)} chars of annex text for "
+                    f"external-$ref filename resolution only.")
+
     # --- Local OpenAPI spec snapshot ---
     # load_openapi_reference_context() reads from OPENAPI_REFERENCE_DIR using discover_specs().
     # Returns "" with a warning if the directory is missing or empty — in that case
@@ -121,5 +136,6 @@ def reader_node(state: RuleBankState) -> dict:
         "parsed_sections":          parsed_sections,
         "excluded_sections_reader": excluded_sections_reader,
         "helper_context":           helper_context,
+        "annex_text":               annex_text,
         "openapi_reference_context": openapi_reference_context,
     }

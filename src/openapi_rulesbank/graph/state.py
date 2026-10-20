@@ -86,6 +86,11 @@ class RuleBankState(TypedDict):
     # Used as background context by the Planner and Extractor nodes.
     helper_context: str
 
+    # Text of the document's embedded OpenAPI annex, carried ONLY so the external
+    # $ref filename cascade can look up the YAML file an imported type lives in.
+    # Never fed to the Planner or extraction prompts. Empty when there is no annex.
+    annex_text: str
+
     # Content retrieved from the local snapshot of the OpenAPI/Swagger
     # specification (data/references/openapi_reference/).
     # Used by the Reflector node for RAG-grounded self-reflection.

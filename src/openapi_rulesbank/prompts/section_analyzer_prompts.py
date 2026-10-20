@@ -573,6 +573,20 @@ A. UPDATE THE REFERENCE MEMORY. For each external type this section references,
    keeps the type external with its origin unresolved, which the extractor
    reports as a gap — it never turns it into a type defined in this document.
 
+   Q2b — WHEN SEVERAL FILES ARE POSSIBLE, PICK ONE BY CONTEXT. A deterministic
+   lookup runs before you and reads, from the document's annex and the corpus,
+   every YAML file a type is tied to. When it finds exactly one, the filename is
+   already set and you do nothing. When it finds SEVERAL — the memory note for the
+   type reads "filename AMBIGUOUS … choose by context among: fileA.yaml,
+   fileB.yaml, …" — the same type name is published by more than one spec (the
+   clearest case is a generic 'resources' type that each NRM publishes under its
+   own file). The code does NOT choose; you do. Pick the ONE file from that list
+   whose spec matches the NRM/domain THIS clause is about (its title, its subject,
+   the relationship facts), and write it as the filename. If the clause does not
+   make the choice clear, leave the filename empty and say so in the note — a
+   reported gap beats guessing the wrong file. Choose ONLY from the listed options;
+   never type a file that is not among them, and never derive one from a number.
+
    Q3 — MUST THE EXTRACTOR DEFER THIS TYPE'S $ref? Add the type's name to
    `defer_external_refs` when ALL of these hold:
      - it is EXTERNAL — either it answered Q1 with a spec, OR it is a CHECK 4

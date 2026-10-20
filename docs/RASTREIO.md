@@ -325,3 +325,67 @@ tipo marcado como externo/pendente, deferred dispara). Falta ligar o FILENAME: p
 comuns da 28.623, `ComDefs` via helper_context/convenção, com registro no Reflector de
 que foi derivado e de onde; para os NRMs, declarar gap sem inventar. Fonte de verdade e
 numeração em `Problems_ProvMnS.txt` §3.23/§3.26.
+
+### A solução implementada: cascata de resolução do filename
+
+Decidido e implementado em 19/out/2026, depois de estabelecer que o nome do arquivo não
+existe em texto normativo (só em anexo) e que **não** é derivável do número da spec.
+
+**Onde a definição realmente mora (recapitulando, porque orienta a solução):**
+- O nome do arquivo (`TS28623_ComDefs.yaml`, `TS28623_GenericNrm.yaml`, …) só aparece
+  **nos anexos OpenAPI**: Anexo A da TS 28.532 (o YAML-alvo) e Anexo C da TS 28.623 (as
+  definições comuns). O corpo normativo de ambas dá o tipo + "TS 28.623", nunca o `.yaml`.
+- Existe uma **convenção de nomes normativa** no corpus, fora de anexo — cláusula
+  "Conventions for Open API specification files" (5.2.9.6 / 5.3.6, das specs de regras
+  da **série 29**, ex. TS 29.501): o nome = `TSxxyyy` + `_` + (nome da API **ou**, para
+  dados comuns, um token como `CommonData`) + `.yaml`. Ela dá a FORMA e o prefixo para
+  qualquer spec, mas o TOKEN do grupo comum varia por família (série 29 → `CommonData`;
+  série 28 → `ComDefs`), e esse token exato só o anexo confirma. Por isso a convenção
+  sozinha não basta — serve de estrutura, não de resposta.
+
+**A ideia central (o que o usuário pediu):** não hardcodar `ComDefs` (se fosse isso,
+bastava o prompt). O anexo contém o CATÁLOGO COMPLETO de pares `tipo → arquivo` que o
+documento usa — todos os ~10 arquivos da série 28 mais os de outras. A solução extrai
+esse catálogo e usa o arquivo CERTO para cada tipo, genérico para qualquer spec/arquivo.
+
+**Determinístico onde é seguro, LLM onde é ambíguo** (verificado contra o anexo do
+ProvMnS: 21/21 refs capturados pelo regex, 0 perdidos, nenhuma forma alternativa):
+- O código varre o anexo e monta `tipo → {arquivos}`. Dos 13 tipos, 12 mapeiam para UM
+  arquivo (ErrorResponse, Dn, Filter, NotificationHeader, Uri, … → `ComDefs`;
+  `Subscription` → `FaultMnS`; `TraceJob` → `GenericNrm`). 1 é AMBÍGUO: `resources`
+  aparece em 9 arquivos NRM (cada NRM publica o seu).
+- **Um arquivo só** → o código resolve (determinístico, seguro).
+- **Vários arquivos** → o código NÃO escolhe; entrega as opções e a **LLM** decide pelo
+  contexto da cláusula (qual NRM). O `resources` é exatamente o §3.10, aqui tratado pela
+  mesma máquina em vez de delegado por fora.
+
+**A cascata de prioridade** (`resolve_external_filename` em `tools/rag_tools.py`), para
+no primeiro degrau que oferece algum arquivo:
+1. **helper_context** — o arquivo que o USUÁRIO fornecer (upload opcional); maior
+   autoridade, override humano explícito. Vazio quando o usuário não dá nada.
+2. **anexo do documento** — lido SÓ pela função (regex), nunca enviado a prompt nenhum;
+   pulado quando o documento não tem anexo (releases novas antes do YAML existir).
+3. **RAG do corpus** — primeiro filtrado pela spec de origem, depois busca ampla.
+4. nada responde → filename vazio, regra ADIADA (gap declarado), nunca inventada.
+Em cada degrau o código lê o CONJUNTO de arquivos do tipo: um → resolve; vários →
+devolve as opções com sufixo `:ambiguous` para a LLM escolher.
+
+**Peças de código:**
+- `utils/parsers.py` — a entrada excluída do anexo passa a guardar seu `content` (só o
+  anexo), para o reader poder consultá-lo; os excluídos não chegam ao Planner, então a
+  regra "não extrair regras do anexo" continua valendo.
+- `nodes/reader.py` — monta `annex_text` separado (campo próprio no state), usado apenas
+  pela cascata.
+- `tools/rag_tools.py` — `_files_for_type_in_text` (extração determinística, tolera os
+  escapes `\_`/`\#` do pandoc — sem isso a leitura do anexo falhava em silêncio) e
+  `resolve_external_filename` (a cascata, devolve `(filename, options, source)`).
+- `nodes/extractor.py` — na gravação da memória: filename único → grava + registra a
+  fonte no `note`; ambíguo → grava vazio e registra as opções no `note`.
+- `prompts/section_analyzer_prompts.py` — Q2b: a LLM, ao ver "filename AMBIGUOUS … choose
+  among: …" no note, escolhe o arquivo cujo NRM/domínio bate com a cláusula; só das
+  opções listadas; se a cláusula não decide, deixa vazio e reporta gap.
+
+**Registro de proveniência:** toda resolução vai para o `note` da memória — "resolved via
+helper_context/annex/rag" ou "AMBIGUOUS via … among: …" — então o Reflector e o banco
+mostram DE ONDE veio cada filename. Nenhum nome é derivado do número da spec; nenhum é
+chutado.
