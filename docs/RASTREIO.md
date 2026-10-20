@@ -261,3 +261,67 @@ CONVERTED INTO EACH OTHER" do Extractor e na regra correspondente do Validator. 
 requisito final é apenas **não duplicar** — sair com o nome errado é tolerável, porque a
 fonte é a que erra. Detalhe completo e as contagens por release estão em
 `Problems_ProvMnS_LEGACY_ate_20260920.txt` (§3.7).
+
+---
+
+## De onde vem o nome do arquivo YAML de um `$ref` externo (§3.23/§3.26)
+
+Investigação de 19/out/2026, sobre o maior defeito aberto: tipos importados de outra
+spec (ErrorResponse, Dn, Filter, …) saíam com `$ref` **interno** em vez de externo
+(`TS28623_ComDefs.yaml#/…`). Perseguindo *por que*, cheguei a onde a informação do
+nome do arquivo realmente mora — e a conclusão reorienta o conserto.
+
+**O reconhecimento do import melhorou, mas o filename continua faltando.** Rodando o
+teste `tests/investigation/provmns/test_imported_type_origin.py` (ProvMnS, extractor
+real, seções em ordem de documento), os 11 tipos importados passaram a ser reconhecidos
+com a spec (`spec=TS 28.623` em todos), mas **todos** com `file=—` → 0 `$ref` externos,
+10 internos. A spec chega; o nome do arquivo não.
+
+**Por quê: o nome do arquivo não está no texto normativo de nenhuma spec — só nos
+anexos OpenAPI.** Verificado:
+- Na TS 28.532, `TS28623_ComDefs.yaml` aparece **só no Anexo A** (o YAML-alvo, proibido
+  de usar — é a própria resposta). O corpo e a tabela de imports (12.1.1.4.1-2) dão o
+  nome do tipo + "TS 28.623", **nunca** o `.yaml`.
+- Na TS 28.623 (a spec de origem), `ComDefs` aparece **só no Anexo C** (61×); as 2
+  ocorrências "no corpo" são entradas do índice que apontam para o Anexo C. O corpo
+  normativo também não traz o nome do arquivo.
+- Reordenar as seções **não resolveria** (corrige uma hipótese que eu havia levantado e
+  estava errada): a informação não está em nenhuma seção do corpo, em ordem nenhuma.
+
+**Existe, porém, uma CONVENÇÃO normativa de nomes de arquivo — e está no corpus RAG,
+fora de anexo.** Recuperada do `3gpp_rel18_all` (cláusula "Conventions for Open API
+specification files", 5.2.9.6 / 5.3.6, da família de specs de regras 3GPP):
+> o nome = `TSxxyyy` + `_` + (nome da API **ou**, para dados comuns, o token do grupo
+> comum — ex. `CommonData`) + `.yaml`; *"unless a specific file name is indicated in the
+> Annex of a 3GPP specification"*.
+Exemplos normativos citados: `TS29122_CommonData.yaml#/…`, `TSabcde_Nxxx_Yyy.yaml#/…`.
+
+**A ressalva que define a decisão:** a convenção dá a FORMA e o PREFIXO para qualquer
+spec (`TS28623_…`), mas o TOKEN exato do grupo comum **varia por família** — a série 29
+usa `CommonData`, a TS 28.623 usa **`ComDefs`**. E o que diz que a 28.623 usa justamente
+`ComDefs` (e não `CommonData`) só aparece **no Anexo C da 28.623** — ou seja, a própria
+exceção que a cláusula prevê ("unless indicated in the Annex"). Então a convenção pura
+produziria `TS28623_CommonData.yaml`, que está errado; o certo (`ComDefs`) só se confirma
+no anexo.
+
+**Decisão (19/out/2026): usar `ComDefs` para os tipos comuns da TS 28.623, registrando a
+ressalva.** O token `ComDefs` vem do conhecimento de que a 28.623 o usa — informação que,
+no fim, só o anexo confirma. Portanto NÃO é derivação pura da convenção nem extração do
+corpo: é um token fornecido/conhecido, e deve ser tratado como tal (o canal honesto é o
+`helper_context`, que por precedência vence a convenção e deixa registrado que veio de
+fora da spec). O que É derivável e genérico (e pode sair da convenção 5.2.9.6 do corpus):
+o prefixo `TSxxyyy_` e a estrutura `…_<grupo>.yaml#/components/schemas/<Tipo>`. O que NÃO
+é derivável sem o anexo: o token exato `ComDefs` da família 28.x.
+
+Mapeamento tipo→arquivo verificado nos 6 YAMLs oficiais (como evidência, não como fonte
+da solução): os tipos comuns — ErrorResponse, NotificationHeader, Dn, Filter, Uri,
+NotificationId, DateTime, Float, AttributeNameValuePairSet, AttributeValueChangeSet — são
+**sempre** `ComDefs` (96 de 108 refs externas, 1-para-1, sem exceção). O tipo genérico
+`resources` espalha-se por 8 arquivos NRM diferentes e **não** é derivável do nome —
+esse é o §3.10 (anyOf dos NRMs), já delegado ao gerador/helper_context, fora deste escopo.
+
+**Estado:** o CHECK 4 (commit 6d398a4) fechou o reconhecimento do import (spec presente,
+tipo marcado como externo/pendente, deferred dispara). Falta ligar o FILENAME: para os
+comuns da 28.623, `ComDefs` via helper_context/convenção, com registro no Reflector de
+que foi derivado e de onde; para os NRMs, declarar gap sem inventar. Fonte de verdade e
+numeração em `Problems_ProvMnS.txt` §3.23/§3.26.
