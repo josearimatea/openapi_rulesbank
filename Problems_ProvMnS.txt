@@ -35,6 +35,39 @@ oficiais; efeito no banco ainda NÃO medido por um run completo):
   score-limite; três defeitos da cascata. Detalhe no adendo do plano e no RASTREIO.
   Sintomas a confirmar num run: §3.19, §3.24, §3.27 (CC.3+CC.4), §2.1 (CC.1).
 
+NOVOS (20/out/2026, sonda da 358 = DELETE 12.1.1.3.2.1.3.4, 3 rodadas, mesma entrada):
+  N.1 Regra que devia ser guardada saiu emitida: ErrorResponse interno em 1 de 3
+      rodadas (Scope/Filter certos 3/3). A instrução chegava certa nas três —
+      variação do modelo, não falta de informação. Mitigado: os tipos guardados
+      passam a ser nomeados no próprio REFERENCE CASES ({held_types}), e o
+      Validator/Reflector por regra devolvem como correção a regra que escapar.
+  N.2 Path como placeholder: a DELETE reporta que a seção não dá o URI do recurso e
+      usa "paths.<resource>" (rodadas 1 e 2). CAUSA: o texto da cláusula de método
+      não traz o URI; ele está nas cláusulas de estrutura de recursos (12.1.1.3.1,
+      coluna "Resource URI") e na tabela de mapeamento de operações; o contrato não
+      tem paths. A sonda não roda essas cláusulas — a única fonte era o resumo das
+      irmãs (GET/PATCH com /{className}={id}), que a Fase 2 da DELETE aproveitou em
+      só 1 de 3 rodadas. Em boa parte artefato da sonda (o banco i20, documento
+      inteiro, tem o DELETE no path certo). A FAZER: confirmar num run completo se a
+      fragilidade da Fase 2 aparece antes de mexer.
+  N.3 array(T) não tratado. DUAS COISAS:
+      (a) No caso da sonda, texto x YAML divergem: a spec diz que a 200 do DELETE
+          devolve array(Uri); os três YAMLs oficiais (rel17, rel18, v18.2.0) dão corpo
+          vazio. Inconsistência da 3GPP — mesmo extraído certo, não bate com o YAML.
+      (b) Geral: array(T) é notação da 3GPP (29x no corpo: array(FileInfo) 7,
+          array(CorrelatedNotification) 7, array(PatchItem) 5, array(MoiChange),
+          array(Resource), array(Uri)…). CAUSAS: a Fase 1 não tem instrução de que T
+          dentro de array(T) é uso de T (Uri nem entrou na análise, logo nem foi
+          guardado); e o Extractor só tem forma de array para propriedades (CC.6,
+          properties.<nome>.items) — para corpo de resposta/requisição não há, e a
+          instrução de response aceita "a brief schema description" como saída.
+      A FAZER: Fase 1 — T dentro de array(T) é uso de T; Extractor — forma de array
+      para corpo (type array + items no $ref de T pelos REFERENCE CASES), sem a saída
+      por descrição quando o tipo é nomeado.
+  N.4 Variação de completude: na rodada 3 a resposta 204 não saiu.
+  N.5 Header de resposta sem rule_type: 8 $refs em response headers (StreamingData)
+      não viram regra — nenhum rule_type cobre headers.
+
 Natureza distinta de todo o resto. As seções numeradas abaixo registram
 SINTOMAS medidos no banco gerado ("contei 30 $ref errados", "notifyMOIChanges
 saiu 2x"). Estes 6 são defeitos de CÓDIGO-FONTE: o contrato de um rule_type é
