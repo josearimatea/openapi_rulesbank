@@ -12,7 +12,7 @@ persists across pipeline runs. Extractor and Reflector nodes call
 retrieve_chunks() directly — no re-indexing needed.
 
 Functions:
-    chunk_document(text)           — splits text into overlapping chunks
+    chunk_document(text)           — cuts the reference along its heading tree
     index_openapi_reference(force) — indexes openapi_reference.md into Qdrant
     search_openapi_reference(query, k) — semantic search, returns joined chunk texts
 """
@@ -25,7 +25,7 @@ from qdrant_client.http.models import Distance, VectorParams
 
 from qdrant_3gpp_rag import (
     QdrantFactory,
-    chunk_markdown_by_headers,
+    chunk_markdown_tree,
     index_segments,
     drop_collection,
     retrieve,
@@ -36,7 +36,7 @@ from openapi_rulesbank.config.hardware import device
 from openapi_rulesbank.config.settings import (
     QDRANT_HOST, QDRANT_PORT,
     OPENAPI_COLLECTION_NAME,
-    CHUNK_SIZE, CHUNK_OVERLAP,
+    OPENAPI_REFERENCE_VERSION,
     EMBEDDING_MODEL, EMBEDDING_DIM,
     OPENAPI_REFERENCE_RETRIEVE_CHUNKS,
     SPEC_COLLECTION_PREFIX, SPEC_RETRIEVE_CHUNKS,
@@ -503,18 +503,16 @@ def _get_vector_store():
 # Public functions
 # ---------------------------------------------------------------------------
 
-def chunk_document(text: str) -> list[str]:
+def chunk_document(text: str) -> list[dict]:
     """
-    Splits the OpenAPI reference into chunks, respecting markdown section headers.
-
-    Uses the shared chunk_markdown_by_headers helper so the reference (a
-    header-structured spec) is split on '#'/'##'/'###' boundaries before size —
-    keeping objects like "Parameter Object" whole instead of cut mid-section.
-    Chunk size and overlap are configured in settings.py.
+    Cuts the OpenAPI reference along its own heading tree (qdrant_3gpp_rag's
+    chunk_markdown_tree): a section that fits is one chunk, a larger one is cut at
+    its child headings, small pieces join a sibling, and every chunk starts with its
+    heading path ("... › Parameter Object › Fixed Fields (part 2/4)"). The object
+    level differs by version (3.0.1 "####", 3.2.0 "###"), so no level is fixed.
+    Returns segments (text + title / path / part / parts) for index_segments.
     """
-    return chunk_markdown_by_headers(
-        text, chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP,
-    )
+    return chunk_markdown_tree(text, {"openapi_version": OPENAPI_REFERENCE_VERSION})
 
 
 def index_openapi_reference(force: bool = False) -> None:
@@ -550,12 +548,12 @@ def index_openapi_reference(force: bool = False) -> None:
         )
 
     # Chunk document
-    chunks = chunk_document(text)
-    logger.info(f"Chunked OpenAPI reference into {len(chunks)} chunk(s).")
+    segments = chunk_document(text)
+    logger.info(f"Cut OpenAPI reference {OPENAPI_REFERENCE_VERSION} into {len(segments)} chunk(s).")
 
     # (Re)create the collection (dense + BM25) and index the chunks as they are
     index_segments(
-        [{"text": chunk} for chunk in chunks],
+        segments,
         factory=_spec_factory(),
         collection_name=OPENAPI_COLLECTION_NAME,
         chunk_size=None,
