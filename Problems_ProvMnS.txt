@@ -68,6 +68,51 @@ NOVOS (20/out/2026, sonda da 358 = DELETE 12.1.1.3.2.1.3.4, 3 rodadas, mesma ent
   N.5 Header de resposta sem rule_type: 8 $refs em response headers (StreamingData)
       não viram regra — nenhum rule_type cobre headers.
 
+REGRESSÃO DO PerfMnS (run completo 20/out + sonda 24/out, causas medidas)
+  Banco 20/out (i20): 21 regras, 14 validadas, 237 chamadas, US$ 0,52 — contra
+  agosto (i00, 17/17 certas) e setembro (i20, 18). Sonda pelo grafo real nas seções
+  251/253/255/261/263: tests/investigation/perfmns/test_held_rules_perfmns.py, log em
+  data/outputs/diagnostic/held_rules_perfmns_20261024.log (o log do run de 20/out se
+  perdeu: estava em /tmp).
+  R.1 allOf NotificationHeader perdido (5 campos herdados viraram próprios,
+      notificationType órfão). A 253 grava NotificationHeader com fields=[] porque a
+      busca da definição não traz os campos. CAUSA: o corpus (reindexado com
+      bge-base-en-v1.5 no commit 6ac2a99) tem só 7 trechos da TS 28.623 (cláusulas
+      '',1,2,3.1,3.2,4): o 28623-i40.md tem só 16 títulos "###" e 5 "########" (8
+      níveis, inválido), e o indexador não reconheceu nada depois da cláusula 4 —
+      anexos e tipos comuns fora do corpus. Em setembro (MiniLM, corpus antigo) os
+      campos vinham. Não é o modelo. RESOLVER no qdrant_3gpp_rag (usuário).
+  R.2 A 251 saiu com 0 regras (POST, 204, corpo perdidos). DEFEITO DO FLUXO
+      (extractor_node, peça 1): regra posta em deferred_rules SEM $ref para tipo
+      guardado não acha alvo e é descartada sem aviso. Muito provável que o modelo
+      tenha posto ali até regras sem $ref — o escopo do "guardar" não está claro.
+  R.3 PerfMetricValue nunca resolvido (observedPerfMetricValue, thresholdValue e
+      hysteresis órfãs — por isso o hysteresis some). A 261 DEFINE o tipo numa
+      tabela de "Simple data types"; o CHECK 1 só reconhece título "Type X" ou número
+      de cláusula, e a classifica como origem não declarada na própria seção que a
+      define.
+  R.4 observedPerfMetricDirection reprovada: a 263 resolveu (local) e emitiu a cópia
+      completada; a cópia da 255, que o Extractor não moveu nas tentativas (correção
+      "mover para deferred_rules" não seguida), entrou por force-include, e o
+      _dedupe_rules do Builder fica com a PRIMEIRA, sem olhar validation_passed.
+  R.5 4XX/5XX órfãs: a 251 escreve "Error-Response" (com hífen), a 253 resolve
+      "ErrorResponse"; o tipo guardado nunca casa com o resolvido. Grafia da spec.
+  R.6 Callback espúrio + lentidão (3 tentativas na 242, 248, 249): o Planner passou
+      a escolher a 248 ("resource on a MnS consumer") e a 249 ("URI provided by the
+      notification subscription") — provável efeito do texto do CC.5; pela regra
+      CALLBACK vs PATH isso é callback, sem âncora no documento, e a checagem
+      endurecida (64a520b) reprova nas 3 tentativas. Por trás, conflito de
+      modelagem: o YAML do PerfMnS descreve o próprio receptor (consumidor) como path.
+  R.7 Cobertura do Resource (sonda ProvMnS 25/out, após o alinhamento ao RAG): o YAML
+      tem 9 $ref para Resource (3 no PUT, 3 no GET por media type, 3 no PATCH); a
+      sonda produziu 3 (os do PUT, guardados e emitidos na 12.1.1.4.1). Não se sabe se
+      as regras do GET 200 e dos corpos do PATCH não foram geradas ou saíram sem $ref
+      — o resumo da sonda não mostra regras sem $ref. Investigar com a etapa 0 do
+      plano. Obs.: a sonda roda o i00, e o YAML de comparação é de versão posterior.
+  LIÇÃO: todas as mudanças de 18–20/out foram medidas só no ProvMnS. Medir cada uma
+  também no PerfMnS antes de seguir (regra registrada na memória do projeto).
+  Plano de correção: docs/plano_correcao_regras_guardadas.md.
+
 Natureza distinta de todo o resto. As seções numeradas abaixo registram
 SINTOMAS medidos no banco gerado ("contei 30 $ref errados", "notifyMOIChanges
 saiu 2x"). Estes 6 são defeitos de CÓDIGO-FONTE: o contrato de um rule_type é
