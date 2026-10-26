@@ -26,6 +26,7 @@ from qdrant_client.http.models import Distance, VectorParams
 from qdrant_3gpp_rag import (
     QdrantFactory,
     chunk_markdown_tree,
+    chunk_spec_sections,
     index_segments,
     drop_collection,
     retrieve,
@@ -42,6 +43,7 @@ from openapi_rulesbank.config.settings import (
     SPEC_COLLECTION_PREFIX, SPEC_RETRIEVE_CHUNKS,
     SPEC_CHUNK_SIZE, SPEC_CHUNK_OVERLAP,
     GPP_CORPUS_COLLECTIONS, GPP_CORPUS_RETRIEVE_CHUNKS,
+    EXCLUDE_TARGET_SPEC_FROM_CORPUS, EXCLUDE_TARGET_ANNEX,
     IMPORTED_TYPE_RETRIEVE_CHUNKS,
     RULES_COLLECTION_PREFIX, RULES_RETRIEVE_CHUNKS,
 )
@@ -152,23 +154,58 @@ def _label_target_spec_sections(sections: list[dict], stage3_clause: str = "") -
     return segments
 
 
-def index_target_spec_sections(sections: list[dict], stage3_clause: str = "") -> str:
-    """Index the document's sections into a fresh temporary collection.
+def _label_spec_chunks(chunks: list[dict], sections: list[dict],
+                       stage3_clause: str = "") -> list[dict]:
+    """Add our mns/stage retrieval filters to chunks cut by chunk_spec_sections.
 
-    Each chunk keeps mns/stage/clause metadata so retrieval can be scoped to one
-    service and stage. Returns the collection name (unique per call).
+    The chunks carry the corpus format (heading path, clause, defines, mentions,
+    annex, part/parts); mns and stage are computed from each chunk's own clause
+    number, the same way _label_target_spec_sections does from a section title.
+    """
+    umbrellas = _umbrella_titles(sections)
+    for c in chunks:
+        clause = c.get("clause", "") or ""
+        clause2 = ".".join(clause.split(".")[:2]) if clause[:1].isdigit() else ""
+        in_stage3 = bool(stage3_clause) and (
+            clause == stage3_clause or clause.startswith(stage3_clause + ".")
+        )
+        c["mns"] = umbrellas.get(clause2, "")
+        c["stage"] = "3" if in_stage3 else "2"
+    return chunks
+
+
+def index_target_spec_sections(
+    sections: list[dict], stage3_clause: str = "", doc_text: str = "",
+) -> str:
+    """Index the document being processed into a fresh temporary collection.
+
+    With doc_text, the document is cut by qdrant_3gpp_rag's chunk_spec_sections —
+    the same format as the corpus (heading path at the start of each chunk;
+    clause, title, path, defines, mentions, annex, part/parts in metadata) — and
+    its annexes are left out when EXCLUDE_TARGET_ANNEX is on (the annex of this
+    spec is the YAML being built). Without doc_text, the parsed sections are
+    indexed as before. Every chunk keeps mns/stage so retrieval can be scoped to
+    one service and stage. Returns the collection name (unique per call).
     """
     collection_name = f"{SPEC_COLLECTION_PREFIX}{uuid.uuid4().hex[:12]}"
-    segments = _label_target_spec_sections(sections, stage3_clause=stage3_clause)
+    if doc_text:
+        segments = _label_spec_chunks(
+            chunk_spec_sections(doc_text, include_annexes=not EXCLUDE_TARGET_ANNEX),
+            sections, stage3_clause,
+        )
+        chunk_size, chunk_overlap = None, 0
+    else:
+        segments = _label_target_spec_sections(sections, stage3_clause=stage3_clause)
+        chunk_size, chunk_overlap = SPEC_CHUNK_SIZE, SPEC_CHUNK_OVERLAP
     index_segments(
         segments,
         factory=_spec_factory(),
         collection_name=collection_name,
-        chunk_size=SPEC_CHUNK_SIZE,
-        chunk_overlap=SPEC_CHUNK_OVERLAP,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
         embedding_dim=EMBEDDING_DIM,
     )
-    logger.info(f"Indexed {len(segments)} spec section(s) into '{collection_name}'.")
+    logger.info(f"Indexed {len(segments)} spec chunk(s) into '{collection_name}'.")
     return collection_name
 
 
@@ -177,11 +214,13 @@ def search_target_spec(
     collection_name: str,
     k: int = SPEC_RETRIEVE_CHUNKS,
     filters: dict | None = None,
+    exclude: list[dict] | None = None,
 ) -> str:
     """Retrieve the most relevant spec chunks for a query, optionally filtered.
 
     Dense similarity search over the temporary spec collection. Pass filters
-    (e.g. {"mns": "...", "stage": "2"}) to scope retrieval to one service/stage.
+    (e.g. {"mns": "...", "stage": "2"}) to scope retrieval to one service/stage,
+    and exclude (e.g. [{"clause": "..."}]) to leave chunks out by metadata.
     Returns the chunk texts joined for prompt injection, or "" if unavailable.
     """
     if not collection_name:
@@ -192,6 +231,7 @@ def search_target_spec(
         return ""
     result = retrieve(
         query, factory=factory, collection_name=collection_name, k=k, filters=filters,
+        exclude=exclude,
     )
     if not result.docs:
         return ""
@@ -333,18 +373,37 @@ def _resolve_corpus_collection(factory) -> str:
     return ""
 
 
-def search_3gpp_corpus(
-    query: str,
-    k: int = GPP_CORPUS_RETRIEVE_CHUNKS,
-    filters: dict | None = None,
-) -> str:
-    """Retrieve chunks from the persistent 3GPP corpus collection for a query.
+def target_spec_number(doc_path: str) -> str:
+    """The spec number of the document being processed, as the corpus records it.
 
-    Resolves the corpus collection from GPP_CORPUS_COLLECTIONS (first candidate
-    present in Qdrant). Used to ground rules in referenced 3GPP specs. Returns
-    joined chunk texts, or "" (with a warning) when no candidate collection has
-    been indexed — the pipeline then proceeds without corpus RAG.
+    "…/28532-i20.md" -> "28532"; "…/38101-1-i20.md" -> "38101-1". Matches the
+    corpus metadata `spec_number` (dots removed), so the target spec can be left
+    out of corpus searches. "" when the file name carries no spec number.
     """
+    stem = os.path.splitext(os.path.basename(doc_path or ""))[0]
+    m = re.match(r"^(\d{3,5}(?:-\d+)?)-[a-z0-9]{3}", stem)
+    return m.group(1) if m else ""
+
+
+def _exclude_target_spec(exclude_spec: str) -> list[dict] | None:
+    """The exclusion group that keeps the spec being processed out of the corpus.
+
+    The whole spec, any version — its content is searched in its own collection,
+    indexed at run time from the exact version processed. Every other spec stays
+    searchable. None when the flag is off or the spec is unknown.
+    """
+    if EXCLUDE_TARGET_SPEC_FROM_CORPUS and exclude_spec:
+        return [{"spec_number": exclude_spec}]
+    return None
+
+
+def _corpus_docs(
+    query: str,
+    k: int,
+    filters: dict | None = None,
+    exclude_spec: str = "",
+) -> list:
+    """Corpus documents (text + metadata) for a query, or [] without a corpus."""
     factory = _spec_factory()
     collection = _resolve_corpus_collection(factory)
     if not collection:
@@ -353,17 +412,68 @@ def search_3gpp_corpus(
             "run qdrant_3gpp_rag/scripts/index_3gpp_all.py to build one. "
             "Continuing without corpus RAG."
         )
-        return ""
+        return []
     result = retrieve(
         query, factory=factory, collection_name=collection, k=k, filters=filters,
+        exclude=_exclude_target_spec(exclude_spec),
     )
-    if not result.docs:
+    return list(result.docs or [])
+
+
+def search_3gpp_corpus(
+    query: str,
+    k: int = GPP_CORPUS_RETRIEVE_CHUNKS,
+    filters: dict | None = None,
+    exclude_spec: str = "",
+) -> str:
+    """Retrieve chunks from the persistent 3GPP corpus collection for a query.
+
+    Resolves the corpus collection from GPP_CORPUS_COLLECTIONS (first candidate
+    present in Qdrant). Used to ground rules in referenced 3GPP specs. exclude_spec
+    is the spec number of the document being processed: that spec is left out
+    (EXCLUDE_TARGET_SPEC_FROM_CORPUS), its content coming from its own collection.
+    Returns joined chunk
+    texts, or "" when nothing comes back or no candidate collection exists — the
+    pipeline then proceeds without corpus RAG.
+    """
+    docs = _corpus_docs(query, k=k, filters=filters, exclude_spec=exclude_spec)
+    return "\n\n---\n\n".join(doc.page_content for doc in docs)
+
+
+def spec_number_of(spec_ref: str) -> str:
+    """The corpus spec_number of a spec as the text cites it, or "".
+
+    "TS 28.623 [44]" -> "28623"; "TS 38.101-1" -> "38101-1". Same form as the
+    corpus metadata `spec_number` (dots removed).
+    """
+    m = re.search(r"(\d{2})\.(\d{3})(-\d+)?", spec_ref or "")
+    return f"{m.group(1)}{m.group(2)}{m.group(3) or ''}" if m else ""
+
+
+def search_cited_spec(subject: str, cited_spec: str, exclude_spec: str = "") -> str:
+    """Corpus chunks about a subject, from the spec the clause cites for it.
+
+    Scoped to the cited spec's spec_number, so another spec on the same subject
+    does not answer for it; unscoped when the citation carries no number or the
+    cited spec is not in the corpus. "" when the cited spec is the one being
+    processed: it is left out of the corpus, and its text is in its own collection.
+    """
+    number = spec_number_of(cited_spec)
+    if number and number == exclude_spec:
         return ""
-    return "\n\n---\n\n".join(doc.page_content for doc in result.docs)
+    if number:
+        found = search_3gpp_corpus(subject, filters={"spec_number": number},
+                                   exclude_spec=exclude_spec)
+        if found:
+            return found
+    return search_3gpp_corpus(f"{subject} {cited_spec}", exclude_spec=exclude_spec)
 
 
 def search_imported_type_ref(
-    type_name: str, key_terms: str = "", k: int = IMPORTED_TYPE_RETRIEVE_CHUNKS
+    type_name: str,
+    key_terms: str = "",
+    k: int = IMPORTED_TYPE_RETRIEVE_CHUNKS,
+    exclude_spec: str = "",
 ) -> str:
     """Fetch a common type's definition from the corpus of other 3GPP specs.
 
@@ -372,18 +482,22 @@ def search_imported_type_ref(
     `allOf $ref`. To tell a section's own fields from the inherited ones we need
     the imported type's OWN definition block.
 
-    The query is assembled here (deterministic), not written by the LLM: the type
-    name plus the shape of an OpenAPI schema definition ("type: object properties
-    required"), optionally seeded with the analyzer's key_terms to disambiguate
-    similar names. This shape matches the definition chunk itself — a prose
-    question ("retrieve the definition of ... including its properties") matched
-    every type and buried the target; this form surfaces it. Returns the matching
-    chunks, or "" when the type is unknown or the corpus is absent.
+    The corpus records, per chunk, the types it defines (metadata `defines`), so
+    the definition is first asked for exactly: the chunks that define this type.
+    Only when none does (a type the corpus does not mark) the earlier similarity
+    query runs — the type name plus the shape of an OpenAPI schema definition
+    ("type: object properties required"), seeded with the analyzer's key_terms.
+    Returns the matching chunks, or "" when the type is unknown or the corpus is
+    absent.
     """
     if not type_name:
         return ""
     query = f"{type_name} type: object properties required {key_terms}".strip()
-    return search_3gpp_corpus(query, k=k)
+    defining = _corpus_docs(query, k=k, filters={"defines": type_name},
+                            exclude_spec=exclude_spec)
+    if defining:
+        return "\n\n---\n\n".join(doc.page_content for doc in defining)
+    return search_3gpp_corpus(query, k=k, exclude_spec=exclude_spec)
 
 
 # A 3GPP OpenAPI file reference: "<File>.yaml#/components/schemas/<TypeName>".
@@ -424,11 +538,48 @@ def _files_for_type_in_text(type_name: str, text: str) -> list[str]:
     return sorted(files)
 
 
+def _files_from_defining_chunks(type_name: str, exclude_spec: str = "") -> list[str]:
+    """YAML files that publish `type_name`, read from the corpus metadata.
+
+    A chunk whose metadata says it DEFINES the type and that sits in an annex
+    carries the OpenAPI document it belongs to in its title (e.g. 'C.4.2a OpenAPI
+    document "TS28623_ComDefs.yaml"'). Each such title gives one file. Read only,
+    never built; the spec being processed is excluded like in every corpus search.
+    """
+    docs = _corpus_docs(f"{type_name} OpenAPI document components schemas", k=20,
+                        filters={"defines": type_name}, exclude_spec=exclude_spec)
+    files = set()
+    for d in docs:
+        meta = getattr(d, "metadata", {}) or {}
+        meta = meta.get("metadata", meta)          # langchain may nest it once more
+        if not meta.get("annex"):
+            continue
+        title = _unescape((meta.get("title") or "").replace('\\"', '"'))
+        files.update(re.findall(r"[A-Za-z0-9_]+\.yaml", title))
+    return sorted(files)
+
+
+def _prefer_source_spec(options: list[str], source_spec: str) -> list[str]:
+    """Narrow several candidate files to those of the type's own spec, if any.
+
+    3GPP names a spec's OpenAPI files "TS<number>_<…>.yaml", so when the spec a
+    type is imported from is known (e.g. "TS 28.623"), the files of that spec are
+    the ones that can hold it. Keeps the full list when none matches, and changes
+    nothing for a single option.
+    """
+    digits = re.sub(r"\D", "", source_spec or "")
+    if len(options) < 2 or not digits:
+        return options
+    own = [f for f in options if f.startswith(f"TS{digits}_")]
+    return own or options
+
+
 def resolve_external_filename(
     type_name: str,
     source_spec: str = "",
     helper_context: str = "",
     annex_text: str = "",
+    exclude_spec: str = "",
 ) -> tuple[str, list[str], str]:
     """Resolve the YAML filename an external $ref to `type_name` must carry.
 
@@ -438,45 +589,45 @@ def resolve_external_filename(
          authority, an explicit human-provided override.
       2. annex_text — the document's own embedded OpenAPI annex, read ONLY for
          the filenames it spells out; skipped when the document has none.
-      3. corpus RAG — first scoped to the known source_spec, then, only if that
-         finds nothing, a broader query;
+      3. corpus RAG — first the chunks the corpus marks as DEFINING the type
+         (their annex title names the file), then the text of a query scoped to
+         the known source_spec, then a broader one;
       4. only when source_spec is known: the naming convention,
          "TS<spec digits>_ComDefs.yaml", source "convention-fallback" — built, not
          read, so the rule using it is scored at the acceptance floor.
-    Each source is read into the FULL set of files it ties to the type (the code
-    never decides which is right). Returns (filename, options, source):
+    Each source is read into the FULL set of files it ties to the type; when the
+    source spec is known, files of other specs are dropped (_prefer_source_spec).
+    Returns (filename, options, source):
       - exactly one file at the first source that answers -> (file, [file], src):
         unambiguous, the caller uses it directly;
       - several files -> ("", options, src + ":ambiguous"): the caller hands the
         options to the LLM, which picks by the using clause's context;
       - nothing anywhere -> ("", [], "unresolved"): the caller defers / declares a
         gap and NEVER invents a name.
-    src is "helper_context" | "annex" | "rag:source-spec" | "rag:broad".
-    The filename is only ever READ from text, never derived from a spec number.
+    src is "helper_context" | "annex" | "rag:defines" | "rag:source-spec" |
+    "rag:broad". exclude_spec keeps the spec being processed out of the corpus
+    searches. Corpus searches run only when the sources before them gave nothing.
     """
     if not type_name:
         return "", [], "unresolved"
 
     sources = [
-        ("helper_context", helper_context),
-        ("annex",          annex_text),
+        ("helper_context", lambda: _files_for_type_in_text(type_name, helper_context)),
+        ("annex",          lambda: _files_for_type_in_text(type_name, annex_text)),
+        ("rag:defines",    lambda: _files_from_defining_chunks(type_name, exclude_spec)),
     ]
     if source_spec:
-        sources.append((
-            "rag:source-spec",
-            search_3gpp_corpus(
-                f"{source_spec} {type_name} OpenAPI file name components schemas .yaml"
-            ),
-        ))
-    sources.append((
-        "rag:broad",
-        search_3gpp_corpus(
-            f"{type_name} OpenAPI file name components schemas .yaml"
-        ),
-    ))
+        sources.append(("rag:source-spec", lambda: _files_for_type_in_text(
+            type_name, search_3gpp_corpus(
+                f"{source_spec} {type_name} OpenAPI file name components schemas .yaml",
+                exclude_spec=exclude_spec))))
+    sources.append(("rag:broad", lambda: _files_for_type_in_text(
+        type_name, search_3gpp_corpus(
+            f"{type_name} OpenAPI file name components schemas .yaml",
+            exclude_spec=exclude_spec))))
 
-    for src, text in sources:
-        options = _files_for_type_in_text(type_name, text)
+    for src, read in sources:
+        options = _prefer_source_spec(read(), source_spec)
         if len(options) == 1:
             return options[0], options, src
         if len(options) > 1:

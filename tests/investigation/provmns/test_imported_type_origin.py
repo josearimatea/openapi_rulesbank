@@ -124,7 +124,9 @@ def main():
     r = reader_node({"main_doc_path": TSPEC_DATA_TEST_FILE,
                      "auxiliary_doc_paths": [], "target_yaml": TARGET_YAML})
     secs = r["parsed_sections"]
-    cb = contract_builder_node({"parsed_sections": secs, "target_yaml": TARGET_YAML})
+    cb = contract_builder_node({"parsed_sections": secs, "target_yaml": TARGET_YAML,
+                                "main_doc_path": TSPEC_DATA_TEST_FILE,
+                                "target_spec_number": r.get("target_spec_number", "")})
     spec_coll  = cb["spec_collection_name"]
     rules_coll = cb.get("rules_collection_name", "")
 

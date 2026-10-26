@@ -91,31 +91,17 @@ def _search_spec_excluding_own(
     it comes back first and takes the place of the clause that does hold the fact.
     The Extractor already has it in full, so dropping it loses nothing.
 
-    Dropping alone would leave fewer chunks than asked for, so the search is
-    reissued for exactly as many as were discarded: the prompt receives
-    CONTEXT_RETRIEVE_CHUNKS either way.
+    The section is left out by its chunks' `clause` metadata, inside the search,
+    so every part of it goes and nothing else does — its subclauses and the
+    clauses that merely cite it stay searchable — and the prompt still receives
+    CONTEXT_RETRIEVE_CHUNKS.
     """
-    # Chunks carry the heading they came from, and a title reads
-    # "12.1.1.3.2.1.3.1 HTTP PUT", so the clause number identifies this section's.
+    # A title reads "12.1.1.3.2.1.3.1 HTTP PUT", so its first token is the clause.
     clause = (section_title or "").strip().split(" ", 1)[0]
-
-    def _keep(text: str) -> list[str]:
-        if not text:
-            return []
-        chunks = text.split("\n\n---\n\n")
-        return [c for c in chunks if not (clause and clause in c)]
-
-    kept = _keep(search_target_spec(
+    return search_target_spec(
         query, collection, k=CONTEXT_RETRIEVE_CHUNKS, filters=filters,
-    ))
-    missing = CONTEXT_RETRIEVE_CHUNKS - len(kept)
-    if missing > 0:
-        # Ask for the shortfall on top of the original k: the same top results
-        # come back, so the extra ones are the chunks ranked just below them.
-        kept = _keep(search_target_spec(
-            query, collection, k=CONTEXT_RETRIEVE_CHUNKS + missing, filters=filters,
-        ))
-    return "\n\n---\n\n".join(kept[:CONTEXT_RETRIEVE_CHUNKS])
+        exclude=[{"clause": clause}] if clause else None,
+    )
 
 
 def _retrieve_missing_context(
@@ -154,7 +140,9 @@ def _retrieve_missing_context(
             ("spec",    _search_spec_excluding_own(
                             query, spec_collection,
                             {"mns": mns} if mns else None, title)),
-            ("corpus",  search_3gpp_corpus(query, k=CONTEXT_RETRIEVE_CHUNKS)),
+            ("corpus",  search_3gpp_corpus(
+                            query, k=CONTEXT_RETRIEVE_CHUNKS,
+                            exclude_spec=state.get("target_spec_number", "") or "")),
             ("openapi", search_openapi_reference(query, k=CONTEXT_RETRIEVE_CHUNKS)),
         ):
             logger.info(

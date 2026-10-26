@@ -45,6 +45,7 @@ from openapi_rulesbank.prompts.contract_builder_prompts import (
     contract_extract_prompt,
 )
 from openapi_rulesbank.schemas.contract import ServiceContract
+from openapi_rulesbank.tools.document_tools import load_markdown
 from openapi_rulesbank.tools.rag_tools import (
     create_rules_collection,
     index_target_spec_sections,
@@ -142,7 +143,8 @@ def contract_builder_node(state: RuleBankState) -> dict:
     # target service from the persistent corpus collection (referenced specs like
     # TS 28.533/32.160 that define the MnS). Empty when the corpus is not indexed.
     corpus_context = search_3gpp_corpus(
-        f"{service_name} management service purpose capabilities operations notifications key concepts"
+        f"{service_name} management service purpose capabilities operations notifications key concepts",
+        exclude_spec=state.get("target_spec_number", "") or "",
     ) or "No external 3GPP corpus context available."
 
     contract_chain = contract_extract_prompt | llm.with_structured_output(ServiceContract)
@@ -226,7 +228,15 @@ def contract_builder_node(state: RuleBankState) -> dict:
     # run ends. Non-fatal: the pipeline continues without spec RAG on failure.
     spec_collection_name = ""
     try:
-        spec_collection_name = index_target_spec_sections(parsed_sections, locator.stage3_clause)
+        # The whole document, cut the way the corpus is (qdrant_3gpp_rag), without
+        # its annex when settings.EXCLUDE_TARGET_ANNEX is on. A state without the
+        # document path (a caller building it by hand) falls back to indexing the
+        # parsed sections.
+        doc_path = state.get("main_doc_path", "") or ""
+        spec_collection_name = index_target_spec_sections(
+            parsed_sections, locator.stage3_clause,
+            doc_text=load_markdown(doc_path) if doc_path else "",
+        )
     except Exception as e:
         logger.warning(f"Spec RAG indexing failed ({e}); continuing without spec RAG.")
 

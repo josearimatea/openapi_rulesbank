@@ -91,6 +91,12 @@ class RuleBankState(TypedDict):
     # Never fed to the Planner or extraction prompts. Empty when there is no annex.
     annex_text: str
 
+    # Spec number of the document being processed, as the corpus records it
+    # ("28532"). Corpus searches leave this spec out (its content comes from its own
+    # run-time collection) when settings.EXCLUDE_TARGET_SPEC_FROM_CORPUS is on.
+    # "" when the file name has none.
+    target_spec_number: str
+
     # Content retrieved from the local snapshot of the OpenAPI/Swagger
     # specification (data/references/openapi_reference/).
     # Used by the Reflector node for RAG-grounded self-reflection.

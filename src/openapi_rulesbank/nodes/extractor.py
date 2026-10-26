@@ -75,8 +75,8 @@ from openapi_rulesbank.tools.rag_tools import (
     # A context reference names no type, so the type-shaped query that
     # search_imported_type_ref builds ("<name> type: object properties required")
     # does not fit it: what it points at is a procedure or a design rule, not a
-    # schema block. It goes to the corpus with the clause's own words instead.
-    search_3gpp_corpus,
+    # schema block. It goes to the cited spec with the clause's own words instead.
+    search_cited_spec,
     resolve_external_filename,
     umbrella_mns_for as _umbrella_mns,
 )
@@ -140,6 +140,7 @@ def _analyze_section(
     helper_context: str = "",
     contract_summary: str = "",
     annex_text: str = "",
+    target_spec: str = "",
 ) -> tuple[SectionAnalysis | None, dict]:
     """Triage a section before extraction: build reference memory + extractor guidance.
 
@@ -195,7 +196,8 @@ def _analyze_section(
             # The definition query is built from the type name and key_terms
             # alone, so it runs even for a CHECK 4 pending import whose spec is
             # not known yet (source_spec == "").
-            fetched = search_imported_type_ref(ref.type_name, ref.key_terms)
+            fetched = search_imported_type_ref(ref.type_name, ref.key_terms,
+                                               exclude_spec=target_spec)
             if fetched:
                 origin = ref.source_spec or "spec not yet known"
                 rag_blocks.append(
@@ -206,7 +208,8 @@ def _analyze_section(
         # written — but it defines no type, so its block is labelled so phase 2
         # does not turn it into a type-memory entry.
         for cref in imports.context_references:
-            fetched = search_3gpp_corpus(f"{cref.subject} {cref.source_spec}")
+            fetched = search_cited_spec(cref.subject, cref.source_spec,
+                                        exclude_spec=target_spec)
             if fetched:
                 rag_blocks.append(
                     f"### CONTEXT from {cref.source_spec} — {cref.subject} "
@@ -232,6 +235,7 @@ def _analyze_section(
                 continue  # already known from an earlier section
             resolved[ref.type_name] = resolve_external_filename(
                 ref.type_name, ref.source_spec, helper_context, annex_text,
+                exclude_spec=target_spec,
             )
             f, opts, src = resolved[ref.type_name]
             if f:
@@ -308,7 +312,8 @@ def _analyze_section(
             if not file and e.type_name:
                 found, options, src = resolved.get(e.type_name) or \
                     resolve_external_filename(
-                        e.type_name, spec, helper_context, annex_text)
+                        e.type_name, spec, helper_context, annex_text,
+                        exclude_spec=target_spec)
                 if found:
                     file = found
                     note = (note + " | " if note else "") + \
@@ -871,6 +876,7 @@ def extractor_node(state: RuleBankState) -> dict:
         helper_context,
         contract_summary,
         state.get("annex_text", "") or "",
+        state.get("target_spec_number", "") or "",
     )
     section_analysis = _format_analysis_guidance(analysis)
     # What earlier sections learned about how things relate, plus whatever this
@@ -972,7 +978,8 @@ def extractor_node(state: RuleBankState) -> dict:
         file = _settled_file(entry)
         if file is None and entry.get("spec"):
             found, _opts, src = resolve_external_filename(
-                t, entry["spec"], helper_context, annex_text)
+                t, entry["spec"], helper_context, annex_text,
+                exclude_spec=state.get("target_spec_number", "") or "")
             if found:
                 entry["file"], file = found, found
                 entry["note"] = (entry.get("note", "") + " | " if entry.get("note") else "") \

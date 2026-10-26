@@ -109,8 +109,12 @@ SPEC_SIBLING_RETRIEVE_CHUNKS = 8       # chunks for the stage 3 sibling lookup
 # fragment. At 1000 chars, 28% of sections were split; at 3000, only ~10% are —
 # the oversized data tables, which the Extractor rarely needs. Larger than the
 # global CHUNK_SIZE (which serves the reference/corpus collections) on purpose.
-SPEC_CHUNK_SIZE         = 3000         # chunk size for the temporary spec RAG
-SPEC_CHUNK_OVERLAP      = 200          # overlap for the temporary spec RAG
+# Used only when the document text is not available to the indexer: the spec is
+# then indexed from the parsed sections with these sizes. Normally the whole
+# document is cut by qdrant_3gpp_rag's chunk_spec_sections (the corpus format),
+# whose own section-aware limits apply instead.
+SPEC_CHUNK_SIZE         = 3000         # chunk size for the temporary spec RAG (fallback)
+SPEC_CHUNK_OVERLAP      = 200          # overlap for the temporary spec RAG (fallback)
 
 # 3GPP corpus RAG — a persistent Qdrant collection holding many 3GPP specs
 # (built once via qdrant_3gpp_rag/scripts/index_3gpp_all.py). The ContractBuilder
@@ -122,11 +126,24 @@ SPEC_CHUNK_OVERLAP      = 200          # overlap for the temporary spec RAG
 # back to the 28-series subset that is enough for management-service specs.
 GPP_CORPUS_COLLECTIONS  = ["3gpp_rel18_all", "3gpp_rel18_28"]
 GPP_CORPUS_RETRIEVE_CHUNKS = 5              # chunks returned by search_3gpp_corpus()
-# Looking up an imported common type's definition needs a wider net: the corpus
-# was chunked small, so a type's fields (e.g. NotificationHeader's href,
-# notificationId, eventTime, systemDN) are spread across several chunks. At k=5
-# they don't all come back; ~20 gathers the whole field set even though the
-# fields sit in different chunks. Used by search_imported_type_ref().
+# The spec being processed is indexed here, at run time, into its own temporary
+# collection — the exact version being processed. The corpus may hold the same spec
+# in another version (e.g. 28532-i00 while processing i20): searching it there too
+# only brings the same text back from another release, which can contradict the
+# one processed. When True, every corpus search excludes that spec entirely
+# (matched by spec_number, any version); its content comes only from its own
+# collection. Other specs, annexes included, stay searchable — an imported type's
+# definition lives there (e.g. NotificationHeader in TS 28.623 Annex C).
+EXCLUDE_TARGET_SPEC_FROM_CORPUS = True
+# The annex of the spec being processed IS the YAML being built — the answer. When
+# True, its own temporary collection is indexed without its annexes, so no search
+# returns them.
+EXCLUDE_TARGET_ANNEX = True
+# Looking up an imported common type's definition (search_imported_type_ref). The
+# corpus marks the chunks that define each type (metadata `defines`), so the
+# definition is asked for exactly and usually comes back as ONE chunk; this k is
+# the ceiling for that, and the breadth of the similarity query used only when no
+# chunk is marked as defining the type.
 IMPORTED_TYPE_RETRIEVE_CHUNKS = 20
 
 # Validated-rules RAG — rules are indexed into a temporary collection as they are

@@ -48,6 +48,7 @@ from openapi_rulesbank.config.settings import (
 )
 from openapi_rulesbank.graph.state import RuleBankState
 from openapi_rulesbank.tools.document_tools import load_markdown, load_openapi_reference
+from openapi_rulesbank.tools.rag_tools import target_spec_number
 from openapi_rulesbank.utils.parsers import parse_sections
 
 logger = get_logger(__name__)
@@ -137,5 +138,6 @@ def reader_node(state: RuleBankState) -> dict:
         "excluded_sections_reader": excluded_sections_reader,
         "helper_context":           helper_context,
         "annex_text":               annex_text,
+        "target_spec_number":       target_spec_number(main_doc),
         "openapi_reference_context": openapi_reference_context,
     }
