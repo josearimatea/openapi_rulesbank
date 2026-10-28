@@ -151,6 +151,24 @@ REGRESSÃO DO PerfMnS (run completo 20/out + sonda 24/out, causas medidas)
   emissão única neste conserto.
   A CONFIRMAR NO RUN COMPLETO (etapa 7): R.1–R.5, §3.23/§3.26, N.2, N.4, §3.27.
 
+  ADENDO 28/out/2026 — R.6 e §3.25 (callback espúrio, Planner):
+  R.6 RESOLVIDO NAS SONDAS. Causa: a ideia "recurso no consumidor é callback" estava
+      em vários prompts (parágrafo de julho no Extractor, texto do CC.5 no Planner,
+      Fase 2), cada etapa com sua redação. Agora há UMA definição de cada tipo de regra
+      (prompts/rule_type_definitions.py: REFERENCE da OpenAPI 3.0.1 + 3GPP CONVENTION
+      verificada), entregue a todas as etapas. Callback exige uma operação desta API
+      que carregue o endereço; o PerfMnS não tem nenhuma. Sonda PerfMnS (242/248/249 +
+      as 5 de antes): nenhum callback, 16 regras validadas — log
+      data/outputs/diagnostic/held_rules_perfmns_defs_20261027.log.
+      Planner: contrato aponta a solução RESTful (12.3.1/12.1.1, não o pai) — some o
+      formato XML 12.3.2; cláusula só em prosa (248/249) não é escolhida; resposta com
+      um campo obrigatório por seção. 5/5 planos idênticos nas duas MnS — logs
+      data/outputs/diagnostic/planner_*_schema_20261028.log.
+  NOVO (a analisar): na sonda de callbacks da ProvMnS saiu um path_operation em
+      /{notificationTarget}, validado — a convenção do placeholder estava só na
+      definição de callback. Material em
+      data/outputs/diagnostic/provmns_callbacks_20261028/LEIA-ME.md.
+
 Natureza distinta de todo o resto. As seções numeradas abaixo registram
 SINTOMAS medidos no banco gerado ("contei 30 $ref errados", "notifyMOIChanges
 saiu 2x"). Estes 6 são defeitos de CÓDIGO-FONTE: o contrato de um rule_type é

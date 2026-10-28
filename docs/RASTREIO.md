@@ -10,7 +10,7 @@ Ele não é versionado (está no `.gitignore`), justamente por ser um registro p
 em evolução. A cada mudança relevante no projeto, acrescente um parágrafo novo em vez
 de reescrever o que já está aqui.
 
-Última atualização: 2026-09-30 (parágrafos de ago/set reconstruídos — ver nota abaixo).
+Última atualização: 2026-10-28 (adendo 21–28/out ao fim).
 
 ---
 
@@ -498,3 +498,110 @@ adiar. Também ficaram anotados três defeitos da cascata a corrigir: a Fase 2 d
 adiar antes de a cascata resolver o arquivo; as opções ambíguas não chegam à LLM porque
 a memória formatada omite a nota; e a busca da definição do tipo é pulada sem motivo
 quando a spec ainda é desconhecida.
+
+---
+
+## Adendo — 21 a 28/out/2026: regras guardadas, RAG reindexado, definições únicas
+
+**A regressão do PerfMnS e a lição de medir nos dois.** O run completo do PerfMnS de
+20/out saiu pior que os de agosto e setembro (21 regras, 14 validadas, US$ 0,52). Todas as
+mudanças de 18–20/out tinham sido medidas só no ProvMnS. A partir daí ficou como regra:
+cada mudança é medida no ProvMnS E no PerfMnS, com os logs guardados em
+data/outputs/diagnostic/ (o log de 20/out se perdeu em /tmp). A sonda
+tests/investigation/perfmns/test_held_rules_perfmns.py passou a ser o instrumento,
+rodando pelo grafo real (Extractor → Reflector → Validator → Builder) só as seções
+envolvidas. As causas medidas viraram R.1–R.7 em Problems_ProvMnS.txt e o plano em
+docs/plano_correcao_regras_guardadas.md.
+
+**O RAG reindexado (25–26/out).** A herança perdida (R.1) não era do fluxo: o corpus
+tinha só 7 trechos da TS 28.623, e a definição do NotificationHeader não vinha. O
+corpus foi reindexado no repositório qdrant_3gpp_rag (bge-base, trechos por árvore de
+títulos, com metadados como `defines`, `annex`, `spec_number`). Aqui o fluxo foi alinhado:
+a spec processada sai inteira das buscas no corpus (vem só da coleção dela, indexada no
+mesmo formato e sem o anexo — o anexo é o YAML que se quer gerar, não conhecimento); a
+definição de um tipo importado é pedida pelo metadado `defines`; uma spec citada como
+contexto é buscada só nela; e o Reflector exclui a própria seção pelo metadado de
+cláusula, não pelo texto. Com isso o allOf do NotificationHeader voltou.
+
+**As regras guardadas, emitidas uma vez (27/out).** As cópias do hysteresis não vinham
+de seções diferentes, e sim do retry da seção que resolve o tipo: a regra guardada era
+reemitida a cada tentativa, e — o ponto principal — continuava com o id da seção que a
+guardou. O Reflector e o Validator a julgavam pelo veredito daquela seção, onde o tipo
+ainda estava guardado, e mandavam "mover para deferred_rules"; o Extractor obedecia e
+criava mais cópias. Agora a regra completada é emitida uma única vez, como regra da seção
+que resolveu o tipo; o Extractor é avisado, em toda tentativa, das regras que o código já
+emitiu e não deve escrever; e uma cópia que ele escreva mesmo assim é descartada pelo
+código, que é quem sabe qual é a sua. Junto: regra guardada sem $ref (ou com o tipo já
+resolvido) volta ao fluxo em vez de sumir (R.2); `Error-Response` e `ErrorResponse` são o
+mesmo tipo (R.5); e uma correção pedida que o Extractor não responde fica pendente até
+ser respondida, uma entrada por regra — a nova instrução substitui a antiga, e o
+Validator recebe a que já falhou para escrever outra mais clara. Na sonda do PerfMnS as
+16 regras saíram validadas, sem cópia.
+
+**O callback espúrio e a decisão de uma definição única (27–28/out).** O PerfMnS ganhava
+um callback que o YAML oficial não tem. A investigação mostrou que a mesma ideia errada —
+"recurso no consumidor é callback" — estava espalhada: no Extractor (um parágrafo de
+julho que um conserto de agosto não removeu), no Planner (o texto do CC.5), na Fase 2, e
+cada etapa tinha a sua própria redação de callback vs path. A referência OpenAPI resolve
+sem ambiguidade: um callback pertence a uma operação-mãe da API e sua chave é uma
+expressão avaliada na requisição/resposta dessa operação. O PerfMnS não tem operação
+nenhuma ("Mapping of operations" vazia), logo não pode ter callback; o ProvMnS e o
+FileData têm a operação que carrega o endereço. Decidiu-se então ter UMA definição de
+cada um dos oito tipos de regra (prompts/rule_type_definitions.py), escrita no código,
+com duas partes rotuladas — REFERENCE (citação literal da OpenAPI 3.0.1, com o objeto de
+origem) e 3GPP CONVENTION (o que é observado na spec e nos YAMLs, com onde foi
+verificado) — e entregue igual a todas as etapas que decidem ou julgam tipo de regra. Uma
+categoria intermediária, "derivado", foi descartada: na revisão, a maior parte era a
+referência reescrita e o resto estava com o rótulo errado. As redações próprias de cada
+prompt saíram. Resultado na sonda do PerfMnS: nenhum callback. Na sonda do ProvMnS
+apareceu um path_operation em `/{notificationTarget}` (validado), porque a convenção do
+placeholder estava só na definição de callback; isso e outras observações ficaram
+guardados em data/outputs/diagnostic/provmns_callbacks_20261028/ para análise.
+
+**O Planner e o contrato (28/out).** Duas descobertas sobre o que o Planner escolhe. A
+primeira: o nível LOW do prompt pedia literalmente "sections that provide mapping context
+or overview", e ele escolhia cláusulas só em prosa (Description, URI) como "apoio" — que
+não geram regra e só gastam tentativas. O LOW passou a ser só tabela que traz regras ou
+fatos de que outras seções dependem (como a tabela de tipos importados), e cláusula só em
+prosa saiu. A segunda: o Planner decide por uma prévia de 500 caracteres, e a cláusula do
+POST do PerfMnS começa por uma tabela de query parameters vazia — as tabelas do corpo e das
+respostas ficam depois do corte, e ela às vezes ficava de fora. A linha de cada seção
+passou a trazer, lidos por código do texto inteiro, os títulos de todas as tabelas (com a
+marca "(empty: n/a)") e os sinais de cada tipo de regra — métodos, paths, códigos de
+status, media types, tipos de dado —, com o vocabulário tirado das mesmas definições. Os
+sinais são delicados: casamento de padrões lê palavra em outro sentido (um JSON Pointer de
+exemplo como path, um valor como código de status). Os casos vistos e o estreitamento de
+cada um estão anotados no próprio código, e há uma chave para desligar
+(settings.PLANNER_SECTION_SIGNALS) se um run mostrar o Planner enganado por um sinal
+errado. Por fim, as seções do formato de arquivo XML entravam no plano porque o contrato
+apontava como bloco de stage 3 a cláusula-pai do serviço, que contém também outras
+soluções; o localizador passou a apontar a cláusula da própria solução RESTful HTTP, e o
+resumo do que fica fora de escopo passou a usar a mesma profundidade.
+
+Discutiu-se também mandar ao Planner o texto inteiro das seções: cabe (o bloco RESTful
+da ProvMnS tem ~32 mil tokens), mas é grande para uma decisão de seleção. Ficou-se com
+informação estrutural, copiada e não interpretada, que custa pouco: além dos títulos das
+tabelas, o nome das colunas de cada uma (lido da linha de cabeçalho nos dois formatos de
+tabela que a conversão do .docx produz) e o caminho de títulos acima da seção — uma
+cláusula que se chama só "POST" ou "URI" passa a dizer de que recurso é. Os metadados do
+RAG (`defines`) foram considerados e descartados: não deixariam lento, mas também são
+calculados por regra de texto e só ajudam em seções de tipo, que o título já identifica.
+Os sinais ficaram ligados, com a chave e o aviso.
+
+Ainda no Planner, ao medir 5 rodadas por MnS, apareceram duas instabilidades, e as duas
+eram de formato, não de julgamento. A primeira: duas seções de borda (o overview de
+recursos da PerfMnS; a cláusula URI de `{notificationTarget}` da ProvMnS) caíam entre duas
+regras que se contradiziam para elas — o LOW mandava incluir "overview table" e a regra de
+prosa mandava excluir "contexto/apoio"; e uma frase herdada do CC.5 ("do NOT exclude it
+for lacking a path") servia de brecha para o Planner incluir prosa por ser sobre callback.
+A regra de prosa passou a ser decidida pelo campo `tables:` da linha (tabela com conteúdo
+nunca é excluída como prosa) e a frase saiu. A segunda: com duas listas livres
+(escolhidas, excluídas), o modelo às vezes esquecia uma seção — não a escolhia nem a
+excluía — e, em 2 de 5 rodadas da PerfMnS, devolveu identificadores que não eram os
+`section_id` oferecidos, e o plano inteiro foi descartado. A resposta passou a ter um
+schema montado a cada chamada, com um campo obrigatório por seção oferecida
+(`s<section_id>`): o modelo não escreve identificador e não pode deixar seção sem
+decisão. Resultado: 5 de 5 planos idênticos nas duas MnS, toda seção com decisão e
+motivo, nenhuma resposta inválida. Os sinais por padrão ficaram desligados: medidos com e
+sem, a diferença foi de uma seção de borda por MnS, dentro da variação, sem ganho que
+compensasse o risco de falso positivo.

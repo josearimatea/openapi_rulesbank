@@ -49,6 +49,7 @@ The pipeline runs **per section** with two conditional edges:
 | Node | Responsibility |
 |---|---|
 | **Reader** | Loads/filters the main 3GPP doc and auxiliary docs, injects the target YAML's Annex A subsection (+ optional legacy YAML), and loads the OpenAPI reference |
+| **ContractBuilder** | Builds the service contract (scope, capabilities, the RESTful HTTP solution-set clause) every later stage reads; indexes the spec for RAG |
 | **Planner** | Reasons about document structure and defines the extraction strategy |
 | **Extractor** | Extracts raw OpenAPI rules from each section guided by the plan and Validator feedback |
 | **Reflector** | Per-rule CoT self-reflection (Fase 1) + per-section completeness analysis (Fase 2), grounded by RAG |
@@ -76,14 +77,26 @@ Loads all source documents and prepares them for downstream nodes.
 
 ---
 
+#### ContractBuilder
+**LLM:** yes (2 calls) | **RAG:** corpus (1 query)
+
+Runs once, between Reader and Planner, and builds the `service_contract` every later stage reads.
+
+1. Locator: from a light table of all sections, finds the ones holding the service's purpose, capabilities and key concepts, the other MnS of the document, and `stage3_clause` — the clause of the target service's **RESTful HTTP solution set itself**, not its parent (a parent can also hold other solution sets — YANG/Netconf, integration with other APIs — or file-format definitions, none of which is a source of the OpenAPI YAML).
+2. Extractor: reads the located sections in full and returns the `ServiceContract` (purpose, typed capabilities, keywords, out-of-scope signals). Located sections outside `stage3_clause` become out-of-scope signals, collapsed to blocks as deep as `stage3_clause`.
+3. Indexes the document into the per-run spec collection and creates the rules collection.
+
 #### Planner
 **LLM:** yes (1 call) | **RAG:** no
 
-Reasons over section titles and content previews to define what to extract.
+Reasons over the stage 3 sections (those under `stage3_clause`) to define what to extract.
 
-1. Build compact summary table (`section_id | title | first 200 chars`).
-2. Send table + first 3000 chars of OpenAPI overview to LLM.
-3. LLM returns `ExtractionPlan` with `priority` and `extraction_focus` per section (`high`/`medium`/`low`), using `with_structured_output(ExtractionPlan)`. Sections not selected go to `excluded_sections_planner`.
+1. Build a summary row per section: `section_id | title | path: … | first 500 chars | tables: … | signals: …`.
+   - `path:` the titles above the section (nearest three) and its own, so a clause titled only "POST" or "URI" shows the resource it belongs to.
+   - `tables:` every table in the section — its caption and its column names (`[columns: …]`, from the header row of either table layout the .docx conversion produces), marked `(empty: n/a)` when it lists nothing (`settings.PLANNER_TABLE_CAPTIONS`). Copied from the text, not interpreted. A section's decisive table is often past the first 500 characters.
+   - `signals:` what the whole section shows of each rule type — methods, paths, status codes, media types, data types, … — found by pattern matching with the vocabulary of the rule type definitions (`settings.PLANNER_SECTION_SIGNALS`). **Delicate:** pattern matching can produce false positives; the known cases and how each was narrowed are listed in `prompts/rule_type_definitions.py`. If a run shows the Planner misled by a wrong signal, turn it off.
+2. Send the rows + the rule type definitions + the start of the OpenAPI overview to the LLM.
+3. The LLM decides EVERY section offered. Its answer schema is built per call with one required decision field per section (`s<section_id>`: include or not, priority and `extraction_focus` when included, the reason when not — `planner_decisions_schema`), so no section can be left undecided and no id outside the offered set can come back. Prose-only clauses (no table with content, no method, path, parameter, status code, media type or data type) are excluded, never selected as "context". The decisions become the `ExtractionPlan` (document order); exclusions and their reasons are logged (`[planner] excluded …`) and go to `excluded_sections_planner`.
 
 | | |
 |---|---|
@@ -102,7 +115,7 @@ Steps per section:
 2. LLM extracts `RawRule` objects from section content only. OpenAPI chunks are reference context, not source. Enforces one rule per HTTP method.
 3. Each rule has: `section_id`, `section_title`, `rule_type`, `rule_text`, `openapi_mapping {openapi_object, openapi_field, openapi_value}`.
 
-`rule_type` values: `path_operation` | `schema_property` | `path_parameter` | `query_parameter` | `response` | `request_body` | `security_scheme`
+`rule_type` values: `path_operation` | `schema_property` | `path_parameter` | `query_parameter` | `response` | `request_body` | `security_scheme` | `callback` — what each one IS comes from the shared [rule type definitions](#rule-type-definitions-one-for-every-stage).
 
 On **section retry** (loop-back): the Extractor receives two distinct instructions from the Validator:
 - `validation_errors` filtered to **`correction`** type only — list of rules to re-extract with the Validator's instruction. `discard` errors require no Extractor action.
@@ -187,6 +200,19 @@ Output JSON: `metadata` (provenance, model, counts, section accounting), `summar
 
 ---
 
+## Rule type definitions (one for every stage)
+
+`prompts/rule_type_definitions.py` holds the one definition of each of the eight rule types. The same block is appended to the system prompt of every stage that decides or judges a rule type: Planner, Extractor phase 2 (analysis) and phase 3 (scope), Extractor, Reflector (per rule and per section) and Validator (section init, per rule, review). Before, each stage carried its own wording, and the wordings drifted apart (one said a resource on the consumer is always a callback, another that a fixed path is a path_operation).
+
+Each definition has two labelled parts, written in the code (not read from a file at run time):
+
+- **REFERENCE** — quoted literally from the OpenAPI Specification 3.0.1, with the object each quote comes from.
+- **3GPP CONVENTION** — how 3GPP specs and the published YAMLs express it. Observed, not in the reference; each one says where it was verified (`[Verified: …]`), so it can be re-checked when a new spec disagrees.
+
+The stage prompts keep only the pipeline's own contract (field formats) and procedures (e.g. the callback-anchor cascade); a stage's own wording of what a construct is was removed and replaced by a pointer to the definitions. The same vocabulary drives the Planner's `signals:` (see Planner), so the definition a stage reads and the signal the code finds cannot disagree.
+
+Callback, as an example: by the reference, a callback hangs off a parent operation of the API and its key is a runtime expression evaluated on that operation's request/response. So a service with no operation of its own carrying the delivery address has no callbacks, and a notification received on a concrete path is a path_operation of the API that describes that path — whoever hosts it.
+
 ## Feedback Loop Architecture
 
 Two distinct per-section feedback channels separate **analysis** (Reflector) from **decision** (Validator):
@@ -266,6 +292,10 @@ openapi_rulesbank/
 │   │   └── output.py              # RulesBank, RulesBankMetadata, RulesBankSummary, RuleOutput
 │   │
 │   ├── prompts/                   # Prompt templates (one file per node)
+│   │   ├── rule_type_definitions.py  # The one definition of each rule type (REFERENCE + 3GPP CONVENTION),
+│   │   │                              #   appended to every stage; also the Planner's section signals
+│   │   ├── contract_builder_prompts.py
+│   │   ├── section_analyzer_prompts.py  # Extractor phases 1–3 (imports, analysis, scope)
 │   │   ├── planner_prompts.py
 │   │   ├── extractor_prompts.py
 │   │   ├── reflector_prompts.py   # Fase 1 + Fase 2 prompts
