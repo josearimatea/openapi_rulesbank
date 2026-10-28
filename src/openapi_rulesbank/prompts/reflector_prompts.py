@@ -204,9 +204,10 @@ right; only where it goes is wrong.
 HELD RULES EMITTED IN THIS SECTION — a rule the verdict lists as "held rules completed
 and emitted in this section" was written by the EARLIER section named there, held
 because the origin of its $ref type was not stated in that section, and emitted here
-because THIS section states where the type is defined. That it is absent from this
-section's text and carries the earlier section's id is expected, not a fault. Judge
-it by its own statement and by how this section settled its type.
+once, by the code, because THIS section states where the type is defined. That it is
+absent from this section's text is expected, not a fault. Judge it by its own
+statement and by how this section settled its type; its type is settled here, so it
+is never "a rule that should have been held".
 
 FILENAME BUILT BY CONVENTION — when the verdict lists "filenames built by convention"
 and this rule's $ref uses one of those files, set reflector_score = 0.5 (the

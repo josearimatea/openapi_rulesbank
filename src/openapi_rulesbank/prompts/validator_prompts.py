@@ -474,26 +474,33 @@ DUPLICATES ACROSS SECTIONS — discard ONLY a true duplicate; when unsure, KEEP:
   the deterministic dedup can still catch later.
 
 A RULE THAT SHOULD HAVE BEEN HELD:
-  When the pre-analysis verdict lists "held $refs" and this rule's value refers to
-  one of those types — in any position: a body, a parameter, a property, an items
-  element, a map value, an allOf/oneOf/anyOf member — and the rule is NOT listed as
-  a held rule completed in this section, it was emitted when it should have been
-  held: its $ref form asserts where the type is defined, and nothing has stated
-  that. Set valid=False, error_type='correction', and an instruction naming the
-  type: "Its $ref points at <Type>, which is held in this section (origin not
-  stated yet): move this rule to deferred_rules, written the same way." Do not
-  discard it and do not change its $ref target yourself — the rule is right; only
-  where it goes is wrong.
+  Applies ONLY to a type listed under "held $refs" in THIS section's verdict. When
+  this rule's value refers to one of those types — in any position: a body, a
+  parameter, a property, an items element, a map value, an allOf/oneOf/anyOf
+  member — it was emitted when it should have been held: its $ref form asserts
+  where the type is defined, and nothing has stated that. Set valid=False,
+  error_type='correction', and an instruction naming the type: "Its $ref points at
+  <Type>, which is held in this section (origin not stated yet): move this rule to
+  deferred_rules, written the same way." Do not discard it and do not change its
+  $ref target yourself — the rule is right; only where it goes is wrong.
+  NEVER give this instruction for a type the verdict does not list as held — in
+  particular a type of a held rule completed in this section: that type is SETTLED
+  here, and sending its rule to deferred_rules makes it wait for a section that
+  will never come.
 
 HELD RULES EMITTED IN THIS SECTION:
   When the pre-analysis verdict lists "held rules completed and emitted in this
-  section" and this rule is one of them, it was written by the EARLIER section named
-  there and held because the origin of its $ref type was not stated in that section;
-  it is emitted here because THIS section states where the type is defined. It is
-  expected NOT to appear in this section's text and to carry the earlier section's
-  id. Do NOT discard it as "owned by another section" or as unsupported by this
-  section's text, and do not correct its $ref target — the code set it from this
-  section's settling of the type. Validate everything else about it as usual.
+  section" and this rule is one of them (same rule type, object and field), it was
+  written by the EARLIER section named there, held because the origin of its $ref
+  type was not stated in that section, and emitted here ONCE, by the code, because
+  THIS section states where the type is defined. It is expected NOT to appear in
+  this section's text. Do NOT discard it as "owned by another section" or as
+  unsupported by this section's text, and do not correct its $ref target — the
+  code set it from this section's settling of the type.
+  - Correct everywhere else → valid=True.
+  - Wrong in some other field → error_type='correction', and the instruction names
+    that field and the exact value to write ("Set <field> to <value>"). Never
+    instruct to move it to deferred_rules, to hold it, or to emit it again.
 
 FILENAME BUILT BY CONVENTION:
   When the verdict lists "filenames built by convention" and this rule's $ref uses
@@ -519,6 +526,15 @@ Reflector assessment (analysis only — you decide):
   Reasoning         : {reflection_reasoning}
   Split suggestion  : {split_suggestion}
   Discard suggestion: {discard_suggestion}
+
+Previous correction of THIS rule — the instruction it got on an earlier attempt:
+{previous_instruction}
+That instruction did not produce a correct rule, or the rule would not be back here.
+If the rule is still wrong, do NOT repeat it: that wording already failed. Write a
+more explicit instruction that replaces it — name the exact field and the exact
+value to write, and say what in the rule is still wrong after that attempt. If the
+earlier instruction itself was mistaken (it asked for something the rule must not
+do), say so and give the right one.
 
 Already-validated rules for this section:
 {already_validated_rules}
@@ -638,6 +654,9 @@ For each entry in reflector_missing_rules AND current_missing_rules:
     on purpose (where the type is defined is not settled here) and is emitted by the
     section that settles it. It must never survive as missing — also overrides the
     "do not remove" caution.
+  - If it is one of the held rules the verdict lists as completed and emitted in
+    this section → exclude: the code emitted it here, so it EXISTS. Asking for it
+    again only makes the Extractor write a copy. Also overrides the caution.
   - If its target is already being CORRECTED this iteration (see the corrections
     list) → exclude: that rule EXISTS and the correction covers it. A target is one
     thing — correction OR missing, never both. Never keep as missing a target that

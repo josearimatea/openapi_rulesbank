@@ -220,6 +220,7 @@ def _validate_semantically(
     declared_gaps: str = "",
     helper_context: str = "",
     contract_summary: str = "",
+    previous_instruction: str = "",
 ) -> tuple[dict | None, dict | None, list[str]]:
     """
     Semantic verdict for one rule.
@@ -266,6 +267,7 @@ def _validate_semantically(
         "declared_gaps":           declared_gaps or "None declared.",
         "helper_context":          helper_context or "None provided.",
         "contract_summary":        contract_summary or "No service contract available.",
+        "previous_instruction":    previous_instruction or "None — this rule was not under correction.",
     })
 
     new_missing = verdict.new_missing_rules or []
@@ -457,18 +459,59 @@ def validator_node(state: RuleBankState) -> dict:
         f"{len(validation_errors)} failed out of {len(reflected_rules)} rule(s)."
     )
 
+    # Corrections from the previous iteration. validation_errors holds only what was
+    # judged last time, so a rule sent back for correction that the Extractor did
+    # not return would drop out of the loop — never corrected, never force-included.
+    # Each one stays until the rule comes back (then this iteration's verdict
+    # replaces it: one entry per rule, never two) or a version of it is validated.
+    prior_corrections: list[dict] = [
+        e for e in (state.get("validation_errors", []) or [])
+        if e.get("error_type") != "discard"
+    ]
+
+    def _slot_key(r: dict) -> tuple:
+        return (r.get("section_id", ""), r.get("rule_type", ""), r.get("source_name", ""),
+                r.get("openapi_mapping", {}).get("openapi_object", ""))
+
+    def _prior_correction_for(rule: dict) -> dict | None:
+        """The earlier correction this rule answers: the same rule key, or — when a
+        correction changed the field itself — the only one on the same object."""
+        key = _discard_key({"rule": rule})
+        for e in prior_corrections:
+            if _discard_key(e) == key:
+                return e
+        same_slot = [e for e in prior_corrections
+                     if _slot_key(e.get("rule", {}) or {}) == _slot_key(rule)]
+        return same_slot[0] if len(same_slot) == 1 else None
+
+    # The corrections the Extractor answered: the rule came back this iteration.
+    answered: set[int] = set()
+    for rule in reflected_rules:
+        p = _prior_correction_for(rule)
+        if p is not None:
+            answered.add(id(p))
+
     def _with_prior_discards(errors: list[dict]) -> list[dict]:
         """Re-attach discards from earlier iterations, so they are never forgotten
         WHILE the section still loops back to the Extractor. Deduplicated by key.
         On the LAST iteration (no more retries — this result goes straight to the
         Builder) we do NOT carry them: the Builder force-includes leftover errors,
         and a discarded rule must not be resurrected there. So the accumulation only
-        serves the retry loop, never the final output."""
+        serves the retry loop, never the final output.
+
+        Unanswered corrections are re-attached on EVERY iteration, the last one
+        included: a rule still waiting for its correction is force-included at the
+        end (not validated), never lost."""
+        pending = [e for e in prior_corrections
+                   if id(e) not in answered and _discard_key(e) not in existing_keys]
+        if pending:
+            logger.info(f"Carrying {len(pending)} unanswered correction(s) forward: "
+                        f"{[_discard_key(e) for e in pending]}")
         if is_last_iteration:
-            return errors
+            return errors + pending
         present = {_discard_key(e) for e in errors if e.get("error_type") == "discard"}
         carried = [e for e in prior_discards if _discard_key(e) not in present]
-        return errors + carried
+        return errors + pending + carried
 
     if not structurally_valid:
         # Nothing to semantically validate — skip LLM stages
@@ -590,6 +633,10 @@ def validator_node(state: RuleBankState) -> dict:
                 declared_gaps=                  declared_gaps_str,
                 helper_context=                 helper_context_str,
                 contract_summary=               contract_summary_str,
+                # The instruction this rule already got and did not fix it — so a
+                # repeat failure gets a clearer instruction, not the same one.
+                previous_instruction=           (
+                    (_prior_correction_for(rule) or {}).get("instruction", "")),
             )
 
             # Accumulate new missing rules (deduplicated)

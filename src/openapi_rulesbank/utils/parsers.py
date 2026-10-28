@@ -120,16 +120,20 @@ def format_section_verdict(verdict: dict | None) -> str:
     carried = verdict.get("completed_held_rules", []) or []
     if carried:
         items = "; ".join(
-            f"{c.get('rule_type')} {c.get('source_name')!r} from section "
-            f"{c.get('from_section')} -> {c.get('type')} settled as {c.get('settled_as')}"
+            f"{c.get('rule_type')} {c.get('source_name')!r} "
+            f"(object={c.get('openapi_object', '?')} field={c.get('openapi_field', '?')}) "
+            f"written in section {c.get('from_section')} -> {c.get('type')} settled "
+            f"as {c.get('settled_as')}"
             for c in carried
         )
         lines.append(
             f"held rules completed and emitted in this section: {items}. Each was "
-            "written by the section named, held because the origin of its $ref type "
-            "was not stated there, and is emitted here because this section states "
-            "it. Judge it by that section's statement and this one's settling of the "
-            "type — do NOT reject it for not appearing in this section's text."
+            "written by the section named, held there because the origin of its $ref "
+            "type was not stated, and emitted ONCE here, by the code, because this "
+            "section states it; it now carries this section's id. Its type is "
+            "SETTLED here, so it is never held again. Judge it by the earlier "
+            "section's statement and this one's settling of the type — do NOT reject "
+            "it for not appearing in this section's text."
         )
 
     # Filenames built by the naming convention (no source gave them).

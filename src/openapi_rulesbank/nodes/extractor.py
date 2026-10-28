@@ -712,11 +712,18 @@ def _settled_file(entry: dict) -> str | None:
     return None
 
 
-def _complete_held_rule(rule: dict, type_name: str, file: str) -> dict:
-    """The held rule with its $ref to `type_name` pointed at the settled target."""
+def _complete_held_rule(rule: dict, type_name: str, file: str,
+                        settled_name: str = "") -> dict:
+    """The held rule with its $ref to `type_name` pointed at the settled target.
+
+    settled_name is the spelling under which the type was settled, when it differs
+    from the one the rule was written with (Error-Response vs ErrorResponse); the
+    completed $ref uses it.
+    """
+    name = settled_name or type_name
     r = copy.deepcopy(rule)
     m = r.setdefault("openapi_mapping", {})
-    target = f"{file}#/components/schemas/{type_name}"
+    target = f"{file}#/components/schemas/{name}"
     m["openapi_value"] = re.sub(
         rf"[A-Za-z0-9_.\-]*#/components/schemas/{re.escape(type_name)}(?![A-Za-z0-9_])",
         target, str(m.get("openapi_value", "")),
@@ -724,11 +731,68 @@ def _complete_held_rule(rule: dict, type_name: str, file: str) -> dict:
     refs = [dict(x) for x in (m.get("references") or [])]
     for x in refs:
         if x.get("schema_name") == type_name:
-            x["file"] = file
-    if not any(x.get("schema_name") == type_name for x in refs):
-        refs.append({"file": file, "schema_name": type_name})
+            x["file"], x["schema_name"] = file, name
+    if not any(x.get("schema_name") == name for x in refs):
+        refs.append({"file": file, "schema_name": name})
     m["references"] = refs
     return r
+
+
+def _name_key(name: str) -> str:
+    """A type name without separators or case: Error-Response == ErrorResponse."""
+    return re.sub(r"[\s_\-]", "", name or "").lower()
+
+
+def _settled_as(type_name: str, mem: dict) -> tuple[str, str] | None:
+    """(name, file) a held type resolves to now, or None while it is still open.
+
+    The entry under the exact name first; else a settled entry whose name differs
+    only in separators or case — the spec writes one type two ways, and a rule held
+    under one spelling must not wait forever for a type settled under the other.
+    """
+    file = _settled_file(mem.get(type_name, {}))
+    if file is not None:
+        return type_name, file
+    key = _name_key(type_name)
+    for other, entry in mem.items():
+        if other != type_name and _name_key(other) == key:
+            file = _settled_file(entry)
+            if file is not None:
+                return other, file
+    return None
+
+
+def _format_held_emitted(completed: list[dict]) -> str:
+    """The Extractor's block naming the held rules the code emitted in this section.
+
+    The code writes these rules; the Extractor is told so in every attempt, or it
+    writes them again (in rules, or held again in deferred_rules) and the section
+    ends with copies of one rule.
+    """
+    if not completed:
+        return ""
+    lines = [
+        ">>>>> HELD RULES ALREADY EMITTED BY THE CODE IN THIS SECTION — DO NOT WRITE THEM <<<<<",
+        "Each rule below was written by the EARLIER section named, held there until a",
+        "section stated where its $ref type is defined, and THIS section stated it. The",
+        "code has already emitted each one here, with its $ref completed. It EXISTS.",
+        "Do NOT produce any of them again — not in `rules`, not in `deferred_rules`, not",
+        "reworded, split or renamed. Its type is settled in this section, so it is never",
+        "held again. If one of them appears under RULES TO CORRECT, return only the",
+        "corrected rule, in `rules`, with exactly the value the instruction names.",
+    ]
+    for i, c in enumerate(completed, start=1):
+        lines.append(
+            f"  {i}. [{c.get('rule_type', '?')}] {c.get('source_name', '?')!r} "
+            f"object={c.get('openapi_object', '?')} field={c.get('openapi_field', '?')} "
+            f"(from section {c.get('from_section', '?')}; {c.get('type', '?')} "
+            f"settled as {c.get('settled_as', '?')})"
+        )
+    lines += [
+        ">>>>> END HELD RULES ALREADY EMITTED — none of the above may appear in your output <<<<<",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def extractor_node(state: RuleBankState) -> dict:
@@ -907,6 +971,66 @@ def extractor_node(state: RuleBankState) -> dict:
         contract_summary,
     )
 
+    # --- Held rules settled here (piece 4), before the extraction call ---
+    # A held rule whose type this section settles is completed and emitted by the
+    # code, ONCE: the section that settles the type takes it as its own rule (its
+    # id and title), so the Reflector and Validator judge it by this section's
+    # verdict, where the type is settled. Done before the call so the Extractor is
+    # told these rules exist and does not write them itself.
+    # The memory as it stands after this section's own findings.
+    mem_now = {k: dict(v or {}) for k, v in
+               {**(state.get("other_spec_ref_memory", {}) or {}), **new_refs}.items()}
+    annex_text = state.get("annex_text", "") or ""
+    held_emitted: list[dict] = []
+    completed_held: list[dict] = []
+    for t, entry in mem_now.items():
+        pend = [dict(p) for p in entry.get("pending_rules", [])]
+        if all(p.get("completed_in") for p in pend):
+            continue
+        settled = _settled_as(t, mem_now)
+        # A held type with a known spec but no filename yet gets the cascade
+        # (helper > annex > corpus > convention fallback) first.
+        if settled is None and entry.get("spec"):
+            found, _opts, src = resolve_external_filename(
+                t, entry["spec"], helper_context, annex_text,
+                exclude_spec=state.get("target_spec_number", "") or "")
+            if found:
+                entry["file"] = found
+                entry["note"] = (entry.get("note", "") + " | " if entry.get("note") else "") \
+                    + f"filename '{found}' resolved via {src}"
+                settled = (t, found)
+        if settled is None:
+            continue
+        name, file = settled
+        if name != t:
+            logger.info(f"[held {section_id}] {t!r} settled under the spelling {name!r}")
+        for p in pend:
+            if p.get("completed_in"):
+                continue  # emitted once, by the section that settled its type
+            rule = _complete_held_rule(p["rule"], t, file, name)
+            rule["section_id"], rule["section_title"] = section_id, section_title
+            held_emitted.append(rule)
+            p["completed_in"] = section_id
+            m = rule.get("openapi_mapping") or {}
+            completed_held.append({
+                "type": name, "rule_type": rule.get("rule_type", ""),
+                "source_name": rule.get("source_name", ""),
+                "openapi_object": m.get("openapi_object", ""),
+                "openapi_field": m.get("openapi_field", ""),
+                "from_section": p.get("section_id", ""),
+                "settled_as": "local" if file == "" else f"external ({file})",
+            })
+        entry["pending_rules"] = pend
+        new_refs[t] = entry
+    if completed_held:
+        logger.info(f"[held {section_id}] emitted here: {completed_held}")
+    # The ones emitted on an earlier attempt of this section stay known on every
+    # retry: they exist, and the Extractor and the judges must keep being told so.
+    if section_iteration_count > 0:
+        completed_held = ((state.get("section_analysis_by_id", {}) or {})
+                          .get(section_id, {}) or {}).get("completed_held_rules", []) \
+                         + completed_held
+
     logger.debug(
         f"Extracting [{section_id}] '{section_title}' "
         f"(priority={plan_section['priority']}, attempt={section_iteration_count + 1})."
@@ -938,25 +1062,52 @@ def extractor_node(state: RuleBankState) -> dict:
         "skip_rules":                 skip_rules,
         "helper_context":             helper_context,
         "contract_summary":           contract_summary,
-        "correction_task":            correction_task,
+        "correction_task":            _format_held_emitted(completed_held) + correction_task,
     })
 
     raw_rules = [rule.model_dump() for rule in result.rules]
 
-    # --- Held rules: keep them (piece 1) and emit the settled ones (piece 4) ---
-    # The memory as it stands after this section's own findings.
-    mem_now = {k: dict(v or {}) for k, v in
-               {**(state.get("other_spec_ref_memory", {}) or {}), **new_refs}.items()}
-    annex_text = state.get("annex_text", "") or ""
+    # What the Extractor returned, list by list, before any code acts on it: a
+    # held rule without a $ref has no type to wait for and is not stored below,
+    # so this line is the only trace it was ever produced.
+    returned = ([("rule", r) for r in raw_rules]
+                + [("deferred", h.model_dump()) for h in (result.deferred_rules or [])])
+    logger.info(
+        f"[extractor {section_id} try {state.get('section_iteration_count', 0)}] "
+        f"rules={len(result.rules)} deferred={len(result.deferred_rules or [])}"
+        + "".join(
+            f"\n  {where:8} {r.get('rule_type', ''):16} "
+            f"{str(r.get('source_name', ''))[:40]:40} "
+            f"$ref: {', '.join(_ref_targets(r)) or '—'}"
+            for where, r in returned)
+    )
 
     # Piece 1 — store each rule the Extractor held under the type it waits for.
+    # Only a rule with a $ref to a type still open is held. Without a $ref it waits
+    # for nothing, and with every type settled there is nothing to wait for: both go
+    # back to the normal flow, or they would vanish here.
     for held in (result.deferred_rules or []):
         r = held.model_dump()
         m = r.get("openapi_mapping") or {}
+        all_targets = _ref_targets(r)
+        if not all_targets:
+            raw_rules.append(r)
+            logger.info(f"[held {section_id}] {r.get('rule_type')} "
+                        f"{r.get('source_name')!r} has no $ref — returned to rules")
+            continue
+        targets = [t for t in all_targets if _settled_as(t, mem_now) is None]
+        if not targets:
+            for t in all_targets:
+                name, file = _settled_as(t, mem_now)
+                r = _complete_held_rule(r, t, file, name)
+            raw_rules.append(r)
+            logger.info(f"[held {section_id}] {r.get('rule_type')} "
+                        f"{r.get('source_name')!r}: {all_targets} already settled — "
+                        "completed and returned to rules")
+            continue
         key = (section_id, r.get("rule_type", ""),
                m.get("openapi_object", ""), m.get("openapi_field", ""))
-        targets = [t for t in _ref_targets(r) if _settled_file(mem_now.get(t, {})) is None]
-        for t in targets or _ref_targets(r)[:1]:
+        for t in targets:
             entry = mem_now.setdefault(t, {"spec": "", "file": "", "origin": "unknown"})
             pend = [dict(p) for p in entry.get("pending_rules", [])]
             if not any(p.get("key") == list(key) for p in pend):
@@ -967,40 +1118,25 @@ def extractor_node(state: RuleBankState) -> dict:
             logger.info(f"[held {section_id}] {r.get('rule_type')} "
                         f"{r.get('source_name')!r} waits for {t!r}")
 
-    # Piece 4 — a held rule whose type is now settled is completed and emitted
-    # here. A held type with a known spec but no filename yet gets the cascade
-    # (helper > annex > corpus > convention fallback) first.
-    completed_held = []
-    for t, entry in mem_now.items():
-        pend = [dict(p) for p in entry.get("pending_rules", [])]
-        if not pend:
+    # A rule the Extractor wrote that repeats a held rule the code emitted in this
+    # section (same type, object, field) is a copy, and only the code knows which
+    # one is its own — so the copy is dropped here, not left to the judges. The
+    # exception is the Extractor's answer to a correction of that very rule.
+    def _slot(r: dict) -> tuple:
+        m = r.get("openapi_mapping") or {}
+        return (r.get("rule_type", ""), m.get("openapi_object", ""), m.get("openapi_field", ""))
+    emitted_slots = {(c.get("rule_type", ""), c.get("openapi_object", ""),
+                      c.get("openapi_field", "")) for c in completed_held}
+    under_correction = {_slot(e.get("rule", {}) or {}) for e in validation_errors}
+    kept = []
+    for r in raw_rules:
+        if _slot(r) in emitted_slots and _slot(r) not in under_correction:
+            logger.info(f"[held {section_id}] dropped a copy of the held rule already "
+                        f"emitted here: {r.get('rule_type')} {r.get('source_name')!r}")
             continue
-        file = _settled_file(entry)
-        if file is None and entry.get("spec"):
-            found, _opts, src = resolve_external_filename(
-                t, entry["spec"], helper_context, annex_text,
-                exclude_spec=state.get("target_spec_number", "") or "")
-            if found:
-                entry["file"], file = found, found
-                entry["note"] = (entry.get("note", "") + " | " if entry.get("note") else "") \
-                    + f"filename '{found}' resolved via {src}"
-        if file is None:
-            continue
-        for p in pend:
-            if p.get("completed_in") and p["completed_in"] != section_id:
-                continue  # already emitted by another section
-            raw_rules.append(_complete_held_rule(p["rule"], t, file))
-            p["completed_in"] = section_id
-            completed_held.append({
-                "type": t, "rule_type": p["rule"].get("rule_type", ""),
-                "source_name": p["rule"].get("source_name", ""),
-                "from_section": p.get("section_id", ""),
-                "settled_as": "local" if file == "" else f"external ({file})",
-            })
-        entry["pending_rules"] = pend
-        new_refs[t] = entry
-    if completed_held:
-        logger.info(f"[held {section_id}] emitted here: {completed_held}")
+        kept.append(r)
+    # The held rules piece 4 completed before the call join this section's rules.
+    raw_rules = kept + held_emitted
 
     # Types whose filename was built by the naming convention, not read anywhere —
     # the Reflector scores their rules at the acceptance floor and says why.
