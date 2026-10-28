@@ -38,6 +38,11 @@ Constants:
 """
 
 from langchain_core.prompts import ChatPromptTemplate
+from openapi_rulesbank.prompts.rule_type_definitions import rule_type_definitions_for_template
+
+# The one definition of each rule type, the same in every stage (see
+# prompts/rule_type_definitions.py).
+_RULE_TYPE_DEFINITIONS = rule_type_definitions_for_template()
 from pydantic import BaseModel, Field
 
 
@@ -126,7 +131,7 @@ service's create operation is resolved, not absent.)
 """
 
 validator_section_init_prompt = ChatPromptTemplate.from_messages([
-    ("system", _SYSTEM_SECTION_INIT),
+    ("system", _SYSTEM_SECTION_INIT + "\n\n" + _RULE_TYPE_DEFINITIONS),
     ("human",  _USER_SECTION_INIT),
 ])
 
@@ -381,19 +386,15 @@ VALIDATION RULES BY RULE_TYPE:
                     openapi_object must be "paths.<path>.<method>.callbacks.<name>" —
                     openapi_field is the delivery method (normally "post"); openapi_value
                     is the runtime expression for the consumer address as the spec writes
-                    it. Callback vs path_operation is decided by the DESTINATION the spec
-                    gives for the notification, not by the fact that it is a notification:
-                      - destination is a runtime expression / placeholder the CONSUMER
-                        supplies (no fixed path — the address is only known at runtime)
-                        → callback.
-                      - destination is a fixed resource path this service itself exposes
-                        (the path appears in this service's own resource/endpoint table,
-                        with a concrete method) → normal path_operation on that path.
-                    Only when the destination is a consumer-supplied runtime address is a
-                    path_operation wrong: set valid=False, error_type='correction', and
-                    instruct the Extractor to emit a callback. When the notification is
-                    received on a fixed path this service hosts, the path_operation is
-                    VALID — do not convert it to a callback.
+                    it. Callback vs path_operation is decided by the callback and
+                    path_operation definitions in RULE TYPE DEFINITIONS — check BOTH
+                    parts of the callback one before accepting a callback, and never
+                    by the fact that it is a notification or by where the resource
+                    is hosted. When the section does not give the delivery URI, read
+                    it in the heading of the resource clause it belongs to and in the
+                    sibling clauses. A callback that fails the definition is not
+                    corrected into a path_operation that already exists — see
+                    ALREADY-VALIDATED RULES.
 
 RULES BUILT ON A DECLARED GAP — read what the gap actually says:
 
@@ -433,6 +434,11 @@ RULES BUILT ON A DECLARED GAP — read what the gap actually says:
 ALREADY-VALIDATED RULES:
   If the rule under review duplicates one already validated, set valid=False,
   error_type='discard', instruction='Duplicate of already-validated rule'.
+  The same holds when the only correction you would give turns this rule INTO one
+  already validated or present among this section's rules (e.g. "change rule_type
+  to path_operation" where that path_operation already exists): the corrected rule
+  would be a duplicate, so discard this one instead, naming the rule it would
+  duplicate. Never send back a correction whose result already exists.
 
 DUPLICATES ACROSS SECTIONS — discard ONLY a true duplicate; when unsure, KEEP:
   similar_rules_other_sections lists rules already accepted in OTHER sections that
@@ -597,7 +603,7 @@ Return your verdict on this rule and any new missing rules you identify.
 """
 
 validator_prompt = ChatPromptTemplate.from_messages([
-    ("system", _SYSTEM_RULE),
+    ("system", _SYSTEM_RULE + "\n\n" + _RULE_TYPE_DEFINITIONS),
     ("human",  _USER_RULE),
 ])
 
@@ -708,6 +714,6 @@ Produce the final missing_rules list for this section.
 """
 
 validator_reflector_review_prompt = ChatPromptTemplate.from_messages([
-    ("system", _SYSTEM_REFLECTOR_REVIEW),
+    ("system", _SYSTEM_REFLECTOR_REVIEW + "\n\n" + _RULE_TYPE_DEFINITIONS),
     ("human",  _USER_REFLECTOR_REVIEW),
 ])

@@ -30,6 +30,11 @@ any spec flows through the same path.
 """
 
 from langchain_core.prompts import ChatPromptTemplate
+from openapi_rulesbank.prompts.rule_type_definitions import rule_type_definitions_for_template
+
+# The one definition of each rule type, the same in every stage (see
+# prompts/rule_type_definitions.py).
+_RULE_TYPE_DEFINITIONS = rule_type_definitions_for_template()
 from pydantic import BaseModel, Field
 
 
@@ -664,9 +669,12 @@ B. KEEP WHAT THE FETCHED TEXT SAYS ABOUT HOW THINGS RELATE (cross_refs). Job A
 
 C. DECIDE THE CALLBACK ANCHOR (callback_anchor, callback_anchor_source).
 
-   FIRST, does this section describe a notification delivered to an address the
-   CONSUMER supplies — a runtime address the spec names as the consumer's, rather
-   than a fixed resource of this service? If not, leave both fields empty and skip
+   FIRST, is what this section describes a callback by the callback definition in
+   RULE TYPE DEFINITIONS? Decide by that definition only — not by being a
+   notification, and not by where the resource is hosted. When the section does
+   not give the delivery URI itself, read it where the spec gives it: the heading
+   of the resource clause this section belongs to, or the sibling clauses. If not
+   a callback, leave both fields empty and skip
    to D. If yes, the notification is a callback, and its rules hang off the
    operation through which the consumer supplied that address. Work the cascade
    below IN ORDER and STOP at the first step that answers. Do not weigh the steps
@@ -809,7 +817,7 @@ Produce the memory updates and the extractor guidance for this section.
 """
 
 section_analyzer_prompt = ChatPromptTemplate.from_messages([
-    ("system", _STEP2_SYSTEM),
+    ("system", _STEP2_SYSTEM + "\n\n" + _RULE_TYPE_DEFINITIONS),
     ("human",  _STEP2_USER),
 ])
 
@@ -879,6 +887,11 @@ You scope ONE section about to be extracted, in two steps, from its OWN content.
    send the Extractor to emit a rule the Validator only discards again.
    List each item on its own; NEVER merge concatenated items — a "4xx/5xx" cell is
    two candidates (4XX and 5XX), a "PUT/PATCH" is two, etc.
+   EACH CANDIDATE IS OF ONE RULE TYPE, AND MEETS ITS DEFINITION in RULE TYPE
+   DEFINITIONS. One statement of the text is one candidate of one type: the same
+   mapping is never listed twice as two types (e.g. a notification delivered by a
+   method to a URI is a path_operation OR a callback, decided by those
+   definitions — never both).
 
 2. SKIP — decide, on your own judgement, which candidates another section has
    ALREADY created, so this section does not duplicate them. This is YOUR call from
@@ -933,6 +946,6 @@ if nothing is provably owned elsewhere).
 """
 
 section_scope_prompt = ChatPromptTemplate.from_messages([
-    ("system", _STEP3_SYSTEM),
+    ("system", _STEP3_SYSTEM + "\n\n" + _RULE_TYPE_DEFINITIONS),
     ("human",  _STEP3_USER),
 ])

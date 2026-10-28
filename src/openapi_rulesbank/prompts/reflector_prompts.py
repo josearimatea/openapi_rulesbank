@@ -18,6 +18,11 @@ Constants:
 """
 
 from langchain_core.prompts import ChatPromptTemplate
+from openapi_rulesbank.prompts.rule_type_definitions import rule_type_definitions_for_template
+
+# The one definition of each rule type, the same in every stage (see
+# prompts/rule_type_definitions.py).
+_RULE_TYPE_DEFINITIONS = rule_type_definitions_for_template()
 from pydantic import BaseModel, Field
 
 
@@ -292,7 +297,7 @@ Apply Chain-of-Thought reasoning and return your assessment.
 """
 
 reflector_prompt = ChatPromptTemplate.from_messages([
-    ("system", _SYSTEM),
+    ("system", _SYSTEM + "\n\n" + _RULE_TYPE_DEFINITIONS),
     ("human",  _USER),
 ])
 
@@ -662,6 +667,6 @@ of the gaps above are worth a lookup, and what query would answer each?
 """
 
 reflector_section_prompt = ChatPromptTemplate.from_messages([
-    ("system", _SECTION_SYSTEM),
+    ("system", _SECTION_SYSTEM + "\n\n" + _RULE_TYPE_DEFINITIONS),
     ("human",  _SECTION_USER),
 ])

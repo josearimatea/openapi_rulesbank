@@ -19,6 +19,11 @@ Constants:
 """
 
 from langchain_core.prompts import ChatPromptTemplate
+from openapi_rulesbank.prompts.rule_type_definitions import rule_type_definitions_for_template
+
+# The one definition of each rule type, the same in every stage (see
+# prompts/rule_type_definitions.py).
+_RULE_TYPE_DEFINITIONS = rule_type_definitions_for_template()
 from pydantic import BaseModel, Field
 from openapi_rulesbank.schemas.rules import RawRule
 
@@ -131,12 +136,12 @@ context". Neither is a rule source; use them to get THIS section's rules right:
 
   - RESOURCE PATH — never build a path from an operation or notification name.
     A section that maps an operation/notification (e.g. a table row
-    "notifyThresholdCrossing  POST  /notificationSink") gives the real URI in its
-    own "Resource URI" column; when the row points elsewhere, the sibling stage 3
+    "<notificationName>  POST  /<resource>") gives the real URI in its own
+    "Resource URI" column; when the row points elsewhere, the sibling stage 3
     context holds the resource section that defines that URI. Use that URI as the
-    path. "paths./notifyThresholdCrossing" (a path named after the notification)
-    is always wrong — the path is "/notificationSink". (And when the URI is the
-    consumer's address, it is a callback, not a path — see below.)
+    path. "paths./<notificationName>" (a path named after the notification) is
+    always wrong — the path is "/<resource>". (And when the URI is the consumer's
+    address, it is a callback, not a path — see RULE TYPE DEFINITIONS.)
 
   - NAMES: THREE KINDS, THREE PLACES, NEVER CONVERTED INTO EACH OTHER.
     A NAME IS TAKEN FROM ITS DEFINING HEADING. The heading is the source — the
@@ -283,8 +288,8 @@ IS THE VALUE SPECIFIED IN THE SPEC?
     path_operation / path_parameter / query_parameter / response / request_body
     openapi_object — the path key. The clause gives a Resource URI, which is the
       base URL plus the resource; a path key holds the resource part alone, so
-      use that part (see rule 1 below). A URI that is a consumer-supplied runtime
-      address is not a path at all — see CALLBACK vs PATH. The anchor a callback
+      use that part (see rule 1 below). Whether a URI is a path at all is settled
+      by RULE TYPE DEFINITIONS (callback, path_operation). The anchor a callback
       needs, "paths.<path>.<method>", is not a value the OpenAPI reference can
       supply: it is settled by a clause of this document, or failing that by the
       callback-anchor convention below.
@@ -298,15 +303,11 @@ placeholder, do not fall back to a shape you know is wrong.
     clauses that you cannot, and where this section's notification goes to a
     consumer-supplied address it hands you the anchor already resolved, under
     "CALLBACK ANCHOR" in the section analysis. Use that string verbatim. When it
-    says the anchor is unresolved, report it — never invent one. A notification
-    delivered to a consumer address is NEVER a path of this service.
-  - BASE-URL VARIABLES. URI variables the spec defines by pointing at the common
-    URI structure belong to the base URL: keep them out of the path key and emit
-    no path_parameter for them.
-  - REQUEST BODY MEDIA TYPE. A clause naming only a data type is carried in the
-    media type the OpenAPI reference uses for request bodies.
-  - NAMED TYPES. An attribute whose type is a named type defined elsewhere is a
-    $ref to that schema — never an enum or an inline object repeated here.
+    says the anchor is unresolved, report it — never invent one.
+  - The "3GPP CONVENTION" parts of RULE TYPE DEFINITIONS are conventions of this
+    same kind (the base URL in servers, base-URL variables are no path
+    parameters, request body media type, named types as $ref, allOf for a base
+    type): apply them the same way.
 
   PRECEDENCE, highest first: what a clause of this document states; the auxiliary
   context or the user's instructions; these conventions. A convention is the
@@ -506,7 +507,7 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     one: report it in missing_context.
    openapi_object : the full anchor, "paths.<path>.<method>.callbacks.<notificationName>"
                     where <path>.<method> is the operation in which the consumer
-                    supplies its address (see NOTIFICATIONS ARE CALLBACKS below).
+                    supplies its address (see ANCHOR IT ON THE OPERATION below).
    openapi_field  : the HTTP method the producer uses to deliver it, lowercase
                     (normally "post")
    openapi_value  : the runtime expression naming the consumer address field, as
@@ -514,31 +515,12 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
                     "{{request.body#/notificationRecipientAddress}}" or
                     "{{request.body#/consumerReference}}"
 
-CALLBACK vs PATH — DECIDE BY WHO OWNS THE URI:
-
-  A `path` is an endpoint THIS service exposes and the consumer calls.
-  A `callback` is an endpoint the CONSUMER exposes and this service calls back.
-
-  Decide by asking who owns the URI — being a notification does NOT by itself make
-  it a callback. Spec tables map a notification to an HTTP method and a URI:
-    - if that URI is the address the CONSUMER supplied — a placeholder / runtime
-      expression standing for that address, not a resource of this service — emit a
-      `callback` rule, never a `path_operation`, and never invent a path named after
-      the notification.
-    - if that URI is a fixed resource path THIS service exposes (it appears in this
-      service's own resource table with a concrete method), it is a normal
-      `path_operation` on that path — emit it as a path_operation, NOT a callback.
-  (Illustrative only — the actual names differ per spec: a URI written as
-  "{{notificationTarget}}" or "{{consumerReference}}" is a consumer address, so
-  "paths./notifyXyz" or "paths./{{notificationTarget}}" would be wrong.)
-
-  This applies to EVERY section describing resources on the consumer side, not
-  only to notification tables. A section may present a "resources and methods
-  overview" table identical in shape to the producer's one while its heading or
-  text places those resources on the consumer (e.g. "... on the MnS consumer").
-  Resources hosted by the consumer are never paths of this service's YAML:
-  express what the producer sends there as a `callback`, and emit no
-  `path_operation` for them.
+CALLBACK OR PATH — whether a notification is a callback or a path_operation is
+  decided by the callback and path_operation definitions in RULE TYPE
+  DEFINITIONS, nothing else. Being a notification decides nothing, and neither
+  does where the resource is hosted. When the section itself does not give the
+  delivery URI, read it where the spec gives it: the heading of the resource
+  clause this section belongs to, or the sibling clauses.
 
   ANCHOR IT ON THE OPERATION WHERE THE CONSUMER SUPPLIES THAT ADDRESS. The
   section describing the delivery almost never names that operation — it is
@@ -776,6 +758,6 @@ conventions are only the default where it is silent. Empty when none was given:
 """
 
 extractor_prompt = ChatPromptTemplate.from_messages([
-    ("system", _SYSTEM),
+    ("system", _SYSTEM + "\n\n" + _RULE_TYPE_DEFINITIONS),
     ("human",  _USER),
 ])
