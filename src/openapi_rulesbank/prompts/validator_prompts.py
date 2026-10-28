@@ -481,7 +481,8 @@ DUPLICATES ACROSS SECTIONS — discard ONLY a true duplicate; when unsure, KEEP:
 
 A RULE THAT SHOULD HAVE BEEN HELD:
   Applies ONLY to a type listed under "held $refs" in THIS section's verdict. When
-  this rule's value refers to one of those types — in any position: a body, a
+  this rule's value — or, for a request_body, its `references` — refers to one of
+  those types — in any position: a body, a
   parameter, a property, an items element, a map value, an allOf/oneOf/anyOf
   member — it was emitted when it should have been held: its $ref form asserts
   where the type is defined, and nothing has stated that. Set valid=False,
@@ -508,6 +509,14 @@ HELD RULES EMITTED IN THIS SECTION:
     that field and the exact value to write ("Set <field> to <value>"). Never
     instruct to move it to deferred_rules, to hold it, or to emit it again.
 
+A REQUEST BODY WITHOUT ITS TYPE:
+  A request_body's value is the media type; the body's schema — the data type it
+  carries — is in its `references`. When `references` is empty and the type is
+  known (this section or a sibling clause names the data type of THIS body),
+  valid=False, error_type='correction', with the exact value:
+  "Add the body's type <Type> to references, file by REFERENCE CASES". When the
+  type is named nowhere you were given, it is a gap, not an error: say so.
+
 FILENAME BUILT BY CONVENTION:
   When the verdict lists "filenames built by convention" and this rule's $ref uses
   one of those files, the file was built by the naming convention because no source
@@ -525,6 +534,7 @@ Rule to validate:
   OpenAPI object : {openapi_object}
   OpenAPI field  : {openapi_field}
   OpenAPI value  : {openapi_value}
+  References     : {openapi_references}
 
 Reflector assessment (analysis only — you decide):
   Belongs-in-final score : {reflector_score}

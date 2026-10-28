@@ -143,6 +143,24 @@ context". Neither is a rule source; use them to get THIS section's rules right:
     always wrong — the path is "/<resource>". (And when the URI is the consumer's
     address, it is a callback, not a path — see RULE TYPE DEFINITIONS.)
 
+  - REQUEST BODY TYPE — a request_body is complete only with the data type its
+    body carries (the body's schema, RULE TYPE DEFINITIONS). Whenever you write a
+    request_body, do this:
+      1. Find the data type the spec says THIS body carries. Look in this section
+         first, then in the sibling stage 3 context. A spec often splits one body
+         over two clauses: one says that parameters travel in the request body
+         and which operation or notification sends them; another — usually the
+         clause of the HTTP method on the resource — names the data type of the
+         body. They describe the SAME body.
+      2. If that clause lists several types, take the one it says is for THIS
+         operation or notification (its row or sentence names it), not the first.
+      3. Write the type as its own defining clause writes it ("<number> Type
+         <Name>") — a table cell elsewhere may spell it differently — and put it
+         in the request_body's `references`, file by REFERENCE CASES.
+      4. Found nowhere you were given: keep the rule with its media type, leave
+         `references` empty, and report the missing type in missing_context.
+         Never invent a type and never borrow one meant for another operation.
+
   - NAMES: THREE KINDS, THREE PLACES, NEVER CONVERTED INTO EACH OTHER.
     A NAME IS TAKEN FROM ITS DEFINING HEADING. The heading is the source — the
     sibling clause list in the stage 3 context shows those headings even when the
@@ -277,7 +295,8 @@ IS THE VALUE SPECIFIED IN THE SPEC?
 
     request_body openapi_value — the media type. The clause names one (the patch
       formats, say) -> use it. It names only the body's DATA TYPE, as most do ->
-      the media type from the reference's request-body examples, and report.
+      the media type from the reference's request-body examples, and report. The
+      data type itself is the body's schema: it goes in `references`, never lost.
 
     schema_property openapi_value — the JSON Schema type. The clause gives the
       attribute's own type, so map it: a named type it defines or imports -> the
@@ -473,6 +492,11 @@ RULE TYPES — for each rule, assign exactly one rule_type and fill openapi_mapp
    openapi_value  : the media type: "application/json" |
                     "application/merge-patch+json" | "application/yang-data+json" |
                     etc. If several are named, create one rule per media type.
+                    The media type is only the KEY of the body's Media Type Object
+                    (RULE TYPE DEFINITIONS); the body's schema — the data type it
+                    carries — is not written in the value but in `references`, as
+                    the REFERENCES block below says. Where that type is read: see
+                    REQUEST BODY TYPE under "USING THE TWO SPEC CONTEXTS".
 
 7. security_scheme — one rule per security or authentication requirement
    rule_type      : "security_scheme"
@@ -561,7 +585,10 @@ CALLBACK OR PATH — whether a notification is a callback or a path_operation is
 REFERENCES — structure every schema reference so the YAML builder needs no parsing:
 
   Whenever a rule's openapi_value is, or contains, a reference to another schema
-  (a "$ref"), ALSO fill the mapping's `references` list. Every 3GPP $ref has the
+  (a "$ref"), ALSO fill the mapping's `references` list. One rule type points at a
+  schema WITHOUT a $ref in its value: a request_body, whose value is the media type
+  — its `references` holds the body's schema (the data type the body carries),
+  in the same {{file, schema_name}} form. Every 3GPP $ref has the
   shape `[file]#/components/schemas/<schema>`, so each entry is {{file, schema_name}}.
   Which of the two a type takes is decided by the REFERENCE CASES below — never by
   habit (a HELD rule in `deferred_rules` also leaves file empty: there it means "not
@@ -576,8 +603,8 @@ REFERENCES — structure every schema reference so the YAML builder needs no par
   Give ONE entry per referenced schema: one for a property/response/allOf that
   points to a single schema, several for a oneOf/anyOf/allOf over multiple schemas
   (list every referenced schema; ignore inline non-ref members like "type: integer").
-  Leave `references` empty ([]) when the value has no $ref (a plain type such as
-  "string"/"integer", an enum, an HTTP method, a media type).
+  Leave `references` empty ([]) when the rule points at no schema (a plain type
+  such as "string"/"integer", an enum, an HTTP method).
 
 RULES ABOUT WHAT NOT TO EXTRACT:
 
@@ -738,7 +765,8 @@ type is in:
 
      This applies wherever OpenAPI expects a schema — a $ref can stand in any of
      those places, so check every rule you write, not only the obvious ones. EVERY
-     rule whose value refers to one of the held types goes to `deferred_rules`,
+     rule whose value — or, for a request_body, whose `references` — refers to one
+     of the held types goes to `deferred_rules`,
      never to `rules`, whatever its position, for example: a response body or a
      request body; a parameter or a response header; a schema property; an array
      element (items); a map value (additionalProperties); a member of

@@ -56,6 +56,7 @@ from openapi_rulesbank.tools.rag_tools import index_validated_rule, search_simil
 from openapi_rulesbank.utils.diagnostic import _diagnostic
 from openapi_rulesbank.utils.parsers import (
     format_section_verdict, format_corrections, build_sibling_summary,
+    format_references as _format_references,
 )
 from openapi_rulesbank.utils.rules_check import check_mapping_for_type
 
@@ -252,6 +253,9 @@ def _validate_semantically(
         "openapi_object": mapping.get("openapi_object", ""),
         "openapi_field":  mapping.get("openapi_field", ""),
         "openapi_value":  mapping.get("openapi_value", ""),
+        # The schemas the rule points at; for a request_body the only place its
+        # body's type is written (its value is the media type).
+        "openapi_references": _format_references(mapping),
         "reflector_score": f"{rule.get('reflector_score', 0.0):.2f}",
         "reflection_flagged":    str(rule.get("reflection_flagged", False)),
         "reflection_reasoning":  rule.get("reflection_reasoning", ""),

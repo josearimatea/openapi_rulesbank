@@ -60,6 +60,7 @@ from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.utils.parsers import (
     format_section_verdict, discards_for_section, format_discards,
     corrections_for_section, format_corrections, build_sibling_summary,
+    format_references as _format_references,
 )
 # The Extractor builds the same view of the reference memory for its own prompts;
 # rendering it identically here keeps one format for both nodes.
@@ -261,6 +262,8 @@ def reflector_node(state: RuleBankState) -> dict:
             "openapi_object": mapping.get("openapi_object", ""),
             "openapi_field":  mapping.get("openapi_field", ""),
             "openapi_value":  mapping.get("openapi_value", ""),
+            # For a request_body the only place its body's type is written.
+            "openapi_references": _format_references(mapping),
             "sibling_rules":  _siblings_str(rule),
             # The sibling CLAUSES, by title — distinct from sibling_rules above,
             # which are this section's other rules. A canonical name is written in

@@ -56,22 +56,26 @@ path_operation
       Variables ... Variable substitutions will be made when a variable is named
       in {brackets}."
   3GPP CONVENTION (observed, not in the reference):
-    - A "Resource URI" joins the API root and the resource:
-      {MnSRoot}/<ServiceName>/{MnSVersion}/... then the resource. The published
-      YAMLs put the root, with its variables, under `servers` and only the
-      resource under `paths`. [Verified: TS 28.532 ProvMnS YAML — servers url
-      '{MnSRoot}/ProvMnS/{MnSVersion}/{URI-LDN-first-part}', path
-      '/{className}={id}'.]
+    - A spec's resource URI is the API root followed by the resource. The API root
+      is the part the spec defines as common to every resource of the API — a
+      root variable, the API or service name, its version, and any other
+      variable the spec defines by pointing at a common URI structure rather
+      than at this resource. It goes under `servers` (url and variables); only
+      the resource part, from its first "/", is the path key. [Verified: TS 28.532
+      ProvMnS YAML — URI {MnSRoot}/ProvMnS/{MnSVersion}/{URI-LDN-first-part}/
+      {className}={id}: servers url '{MnSRoot}/ProvMnS/{MnSVersion}/
+      {URI-LDN-first-part}', path '/{className}={id}'.]
     - The path key is the resource the spec gives, never a name built from an
       operation or a notification; the operation is the HTTP method on it.
       [Verified: TS 28.532 YAMLs — no path is named after an IS operation or
       notification.]
-    - A resource the spec places "on the MnS consumer" that has a CONCRETE path is
-      a path of the API that describes that resource; what a subscription
-      supplies is the server root, not the path. [Verified: TS 28.532 PerfMnS —
-      table 12.3.1.2.2.1-1 maps notifyThresholdCrossing to POST /notificationSink;
-      its YAML has paths: /notificationSink and a server root "located in the
-      consumer side".]""",
+    - Who hosts a resource does not decide whether it is a path. A resource the
+      spec places on the consumer side that has a CONCRETE path is a path of the
+      API that describes that resource; what a subscription or registration
+      supplies there is the server root, not the path. [Verified: TS 28.532
+      PerfMnS — table 12.3.1.2.2.1-1 maps notifyThresholdCrossing to POST
+      /notificationSink; its YAML has paths: /notificationSink and a server root
+      "located in the consumer side".]""",
 
 "path_parameter": """\
 path_parameter
@@ -93,10 +97,13 @@ path_parameter
       this operation. If a parameter is already defined at the Path Item, the new
       definition will override it but can never remove it."
   3GPP CONVENTION (observed, not in the reference):
-    - URI variables the spec defines by pointing at the common URI structure
-      (TS 32.158) belong to the server URL, so they are not path parameters.
-      [Verified: TS 28.532 ProvMnS YAML declares MnSRoot, MnSVersion and
-      URI-LDN-first-part as server variables.]""",
+    - A URI variable of the API root (see path_operation: defined as common to
+      every resource of the API, often by pointing at a common URI structure
+      specification) is a server variable, not a path parameter. Only a variable
+      inside the resource part of the URI is a path_parameter. [Verified: TS
+      28.532 ProvMnS YAML — MnSRoot, MnSVersion and URI-LDN-first-part, defined by
+      pointing at TS 32.158, are server variables; className and id are path
+      parameters.]""",
 
 "query_parameter": """\
 query_parameter
@@ -124,12 +131,29 @@ request_body
     - Request Body Object: "Describes a single request body."
     - Request Body Object, content: "REQUIRED. The content of the request body.
       The key is a media type or media type range and the value describes it."
+    - Media Type Object: "Each Media Type Object provides schema and examples
+      for the media type identified by its key."
+    - Media Type Object, schema: "The schema defining the type used for the
+      request body."
     - Media Types: "The media type definitions SHOULD be in compliance with
       RFC6838." Examples given: "text/plain; charset=utf-8", "application/json",
       "application/vnd.github+json".
   3GPP CONVENTION (observed, not in the reference):
     - A clause naming only a data type is carried in application/json.
-      [Verified: request bodies of the TS 28.532 YAMLs.]""",
+      [Verified: request bodies of the TS 28.532 YAMLs.]
+    - A body's schema is the data type the spec says the body carries, written
+      as a $ref to that type (never an inline copy). The spec may say it in a
+      different clause from the one that says a body exists: one clause states
+      that an operation's or notification's parameters travel "in the request
+      body", another — typically the clause of the HTTP method on the resource —
+      names the data type of that body, sometimes one type per operation or
+      notification it serves. Both describe the SAME body: one request_body,
+      whose schema is that type. [Verified: TS 28.532 — the notification clauses
+      (PerfMnS 12.3.1.2.2.2; ProvMnS 12.1.1.2.2-2.5) map parameters to "request
+      body" without naming the type; the POST clauses (12.3.1.2.3.2.1.3.1;
+      12.1.1.3.2.4.3.1) name it in a "Data structures supported by the POST
+      Request Body" table; every requestBody of the TS 28.532 YAMLs has
+      schema $ref to that type.]""",
 
 "response": """\
 response
@@ -151,6 +175,8 @@ response
     - Response Object, content: "A map containing descriptions of potential
       response payloads. The key is a media type or media type range and the
       value describes it."
+    - Media Type Object: "Each Media Type Object provides schema and examples
+      for the media type identified by its key."
     - Response Object, headers: "Maps a header name to its definition."
     - HTTP Status Codes: "The HTTP Status Codes are used to indicate the status
       of the executed operation. The available status codes are defined by
@@ -214,18 +240,21 @@ callback
       header-reference | query-reference | path-reference | body-reference );
       body-reference = "body" ["#" fragment], the fragment a JSON Pointer.
   3GPP CONVENTION (observed, not in the reference):
-    - The delivery address is carried by a subscription: an object the consumer
-      creates through this API's create operation, or a subscribe operation of
-      this API; the callback hangs off that operation. A service with no
-      operation of its own carrying the address has no callbacks. [Verified:
-      TS 28.532 — ProvMnS (address in the subscription created by PUT) and
-      FileDataReporting (POST /subscriptions) YAMLs have callbacks; PerfMnS and
-      Heartbeat, whose "Mapping of operations" clauses are empty, have none.]
-    - In the "Mapping of IS notifications to SS equivalents" tables, the
-      consumer's address is written as a placeholder in the "Resource URI"
-      column ({notificationTarget}), and a resource of the API as a concrete path
-      (/notificationSink). [Verified: TS 28.532 tables 12.1.1.2.1-1 and
-      12.6.1.2.1-1 ({notificationTarget} -> callbacks in the ProvMnS and
+    - The delivery address reaches the provider in the request of one of THIS
+      API's operations — usually a subscription: an object the consumer creates
+      through the API's create operation, or a dedicated subscribe operation. The
+      callback hangs off that operation. A service with no operation of its own
+      that carries the address has no callbacks: what it describes for delivery
+      are the receiver's paths. [Verified: TS 28.532 — ProvMnS (address in the
+      subscription created by PUT) and FileDataReporting (POST /subscriptions)
+      YAMLs have callbacks; PerfMnS and Heartbeat, whose operation-mapping
+      clauses are empty, have none.]
+    - Where a spec maps a notification to an HTTP method and a URI, the
+      consumer's runtime address is written as a URI placeholder (a variable in
+      braces standing for the address), while a resource of an API is written as
+      a concrete path. The placeholder is a clue for the test above, not a test
+      of its own. [Verified: TS 28.532 notification-mapping tables 12.1.1.2.1-1
+      and 12.6.1.2.1-1 ({notificationTarget} -> callbacks in the ProvMnS and
       FileDataReporting YAMLs); 12.3.1.2.2.1-1 and 12.4.1.2.1-1
       (/notificationSink -> no callbacks in the PerfMnS and HeartbeatNtf YAMLs).]
     - The published YAMLs write the key as '{request.body#/<field>}', without the

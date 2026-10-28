@@ -199,7 +199,8 @@ For each rule, reason through the following questions:
      agree.
 
 A RULE THAT SHOULD HAVE BEEN HELD — when the verdict lists "held $refs" and this
-rule's value refers to one of those types (in any position) without being listed as
+rule's value — or, for a request_body, its `references` — refers to one of those
+types (in any position) without being listed as
 a held rule completed here, it was emitted when it should have been held. Set
 reflection_flagged = True and say so in the reasoning ("should be held: its $ref
 type <Type> has no stated origin yet"), so the Validator sends it back to be held.
@@ -213,6 +214,11 @@ once, by the code, because THIS section states where the type is defined. That i
 absent from this section's text is expected, not a fault. Judge it by its own
 statement and by how this section settled its type; its type is settled here, so it
 is never "a rule that should have been held".
+
+A REQUEST BODY WITHOUT ITS TYPE — a request_body's value is the media type and the
+body's schema is in its `references`. When `references` is empty and the type is
+known (this section or a sibling clause names the data type of THIS body), set
+reflection_flagged = True and name the type to add.
 
 FILENAME BUILT BY CONVENTION — when the verdict lists "filenames built by convention"
 and this rule's $ref uses one of those files, set reflector_score = 0.5 (the
@@ -241,6 +247,7 @@ Rule to assess:
   OpenAPI object : {openapi_object}
   OpenAPI field  : {openapi_field}
   OpenAPI value  : {openapi_value}
+  References     : {openapi_references}
 
 Pre-analysis verdict for THIS section (decided before extraction):
 {section_verdict}

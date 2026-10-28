@@ -35,6 +35,9 @@ PREFIXES = [
     # The notification mapping and the consumer-side resource description: where
     # the spurious callback came from (R.6), and what the Planner picked.
     "12.3.1.2.2.1 Introduction",
+    # Maps the notification's parameters "in the request body" without naming the
+    # body's type: must NOT emit the request_body (the POST clause does).
+    "12.3.1.2.2.2 Notification notifyThresholdCrossing",
     "12.3.1.2.3.2.1.1 Description",
     "12.3.1.2.3.2.1.2 URI",
     "12.3.1.2.3.2.1.3.1 POST",
@@ -92,7 +95,8 @@ def main():
         m = r["openapi_mapping"]
         ok = "OK" if r.get("validation_passed", True) else "XX"
         print(f"  {ok} [{r.get('section_id')}] {r['rule_type']:15} "
-              f"{m['openapi_field'][:32]:32} {str(m['openapi_value'])[:60]}")
+              f"{m['openapi_field'][:32]:32} {str(m['openapi_value'])[:60]}"
+              + (f"  references={m.get('references')}" if r['rule_type'] == 'request_body' else ""))
         if not r.get("validation_passed", True):
             print(f"       note: {(r.get('validation_notes') or '')[:160]}")
 

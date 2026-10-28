@@ -255,6 +255,14 @@ def corrections_for_section(validation_errors: list[dict], section_id: str) -> l
     return out
 
 
+def format_references(mapping: dict) -> str:
+    """Render a rule's `references` for a prompt: "file#schema" per entry, or none."""
+    refs = (mapping or {}).get("references") or []
+    return ", ".join(
+        f"{r.get('file') or '(this document)'}#{r.get('schema_name', '')}" for r in refs
+    ) or "none"
+
+
 def format_corrections(corrections: list[dict]) -> str:
     """Render correction errors for a prompt: rule_type, field, and the fix asked."""
     if not corrections:
