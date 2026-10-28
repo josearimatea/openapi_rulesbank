@@ -8,6 +8,9 @@ was dropped by the Builder's dedup). Its log was lost, so this reruns the five
 sections involved through the REAL graph — Extractor -> Reflector -> Validator ->
 Builder, retries included — and prints what each one concluded:
 
+  242  Mapping of notifications       — POST /notificationSink: path, not callback
+  248  Resource Description           — "a resource on a MnS consumer" (no rule)
+  249  Resource URI                   — "provided by the notification subscription"
   251  POST /notificationSink         — 4XX/5XX written as "Error-Response"
   253  General (data types tables)    — should record NotificationHeader + fields
   255  Type NotifyThresholdCrossing   — should find the allOf base; holds PerfMetric*
@@ -29,6 +32,11 @@ from openapi_rulesbank.nodes.reader import reader_node
 DOC = "data/inputs/3gpp/md/28532-i20.md"
 TARGET = "PerfMnS"
 PREFIXES = [
+    # The notification mapping and the consumer-side resource description: where
+    # the spurious callback came from (R.6), and what the Planner picked.
+    "12.3.1.2.2.1 Introduction",
+    "12.3.1.2.3.2.1.1 Description",
+    "12.3.1.2.3.2.1.2 URI",
     "12.3.1.2.3.2.1.3.1 POST",
     "12.3.1.2.4.1 General",
     "12.3.1.2.4.2.1 Type NotifyThresholdCrossing",
