@@ -8,15 +8,22 @@ section titles and previews from the 3GPP document and decides which sections
 are worth extracting OpenAPI rules from, and what to focus on in each one.
 
 Classes:
-    SectionPlan     — plan for a single section (Pydantic, used as structured output)
-    ExtractionPlan  — full extraction plan output by the LLM (Pydantic)
+    SectionDecision — the LLM's decision on one section (include or not, and why)
+    SectionPlan     — plan for a single selected section
+    ExtractionPlan  — the extraction plan handed to the rest of the pipeline
+
+Functions:
+    planner_decisions_schema — the LLM's answer schema: one required
+                               SectionDecision per section offered
 
 Constants:
     planner_prompt  — ChatPromptTemplate used to invoke the LLM
 """
 
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
+
+from openapi_rulesbank.prompts.rule_type_definitions import rule_type_definitions_for_template
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +61,46 @@ class SectionPlan(BaseModel):
     )
 
 
+class SectionDecision(BaseModel):
+    """The Planner's decision on one section it was given."""
+
+    include: bool = Field(description="True to extract rules from this section.")
+    priority: str = Field(
+        description="When included: 'high', 'medium' or 'low' (see INCLUDE). "
+                    "When excluded: empty."
+    )
+    extraction_focus: str = Field(
+        description="When included: what kind of rules to look for in this section. "
+                    "When excluded: empty."
+    )
+    notes: str = Field(description="Any observation that may help the Extractor, or empty.")
+    reason: str = Field(
+        description="When excluded: one sentence naming the EXCLUDE rule that applies, "
+                    "read from the row. When included: empty."
+    )
+
+
+def planner_decisions_schema(sections: list[dict]) -> type[BaseModel]:
+    """The Planner's answer schema for these sections: one REQUIRED decision field
+    per section offered, named s<section_id>, in the order of the rows.
+
+    With two free lists (selected, excluded) the LLM wrote each from memory and,
+    over a few dozen rows, now and then left one out of both — a section dropped
+    with no decision (28/out/2026). A required field per row makes that answer
+    invalid: under a strict schema it cannot be produced at all, otherwise it fails
+    validation instead of passing as a silent exclusion.
+    """
+    fields: dict = {
+        "document_summary": (str, Field(
+            description="One or two sentences describing what this 3GPP document "
+                        "covers and its relevance to OpenAPI rule extraction.")),
+    }
+    for s in sections:
+        fields[f"s{s['section_id']}"] = (SectionDecision, Field(
+            description=f"Decision for row [{s['section_id']}] {s['title'][:80]}"))
+    return create_model("PlannerDecisions", **fields)
+
+
 class ExtractionPlan(BaseModel):
     """Full extraction plan produced by the Planner Node."""
 
@@ -86,28 +133,31 @@ You are an expert in 3GPP technical specifications and OpenAPI design.
 Your task is to analyze a list of sections from a 3GPP document and produce
 an extraction plan that will guide the next stage of a rule extraction pipeline.
 
-The pipeline extracts exactly these eight types of OpenAPI rules from each section:
+The pipeline extracts exactly eight types of OpenAPI rules: path_operation,
+path_parameter, query_parameter, request_body, response, schema_property,
+security_scheme, callback. What each one IS is defined below — the same
+definitions every later stage uses:
 
-  path_operation  — an HTTP method (GET, POST, PUT, DELETE, PATCH, etc.) on a resource path
-  path_parameter  — a path variable in a URI template (e.g. the "id" in /resources/{{id}},
-                  the "className" in /{{className}}={{id}}, the "version" in /api/{{version}})
-  query_parameter — a named query string parameter for an HTTP operation
-  request_body    — the media type and schema of an HTTP request body
-  response        — an HTTP response code (including the "default" error response) and
-                  its body schema for an operation
-  schema_property — a field, attribute, or schema-level constraint in a data model
-                  (becomes components/schemas in OpenAPI), including enumerations,
-                  required fields, and composition keywords (oneOf/anyOf/allOf)
-  security_scheme — an authentication or security requirement
-  callback        — a notification the producer sends to a consumer-supplied address
-                  (becomes a "callbacks" entry inside the operation that registers it,
-                  never a path of this service). A section defining or listing
-                  notifications carries these — do NOT exclude it for lacking a path.
+""" + rule_type_definitions_for_template() + """
 
-For each section, ask: "Could this section contain at least one of these eight rule types?"
-If yes, include it. If no, exclude it.
+For each section, ask: "Could this section contain at least one rule of these
+eight types, as defined above?" If yes, include it. If no, exclude it and say
+why. A section that only describes something, without giving what a definition
+above requires, contains none.
 
-Judge every section by the CONTENT shown in its preview, NOT by its title.
+Your answer has one decision field per row, named s<section_id> (row [251] ->
+field "s251"), in the order of the rows: fill every one of them.
+
+Judge every section by its CONTENT, NOT by its title. Each row gives "path:" — the
+titles above the section, so a clause titled only "POST" or "URI" shows the
+resource it belongs to — the start of the content (the preview) and, when
+present, two more things read by code over the WHOLE section: "tables:" — every
+table it holds, with its caption and its column names, marked "(empty: n/a)" when
+the table lists nothing; and "signals:" — what the whole text shows of each
+rule type (methods, paths, status codes, media types, data types...), found with
+the vocabulary of the definitions above, or "none". A section's decisive table is
+often past the preview: read the tables and signals before judging it. Signals
+are hints, not decisions — judge each section by the definitions.
 3GPP clauses are hierarchical: a parent clause (e.g. "Resources", "Data type
 definitions", "RESTful HTTP-based solution set") often only GROUPS its children,
 so its preview carries no prose of its own — it is empty or shows just markdown
@@ -125,9 +175,20 @@ INCLUDE — assign priority based on directness:
             request/response structures, or operation-to-HTTP mappings
   MEDIUM — sections that define data types, structured types, enumerations,
             or attribute definitions (these become schema_property rules)
-  LOW    — sections that provide mapping context or overview
+  LOW    — sections whose own table gives rules or facts later sections build on:
+            an overview table of resources and methods, or a table listing the
+            data types used and the specification each one is defined in
 
 EXCLUDE — sections with no contribution to any of the eight rule types:
+  - Prose-only clauses: decided by the row's "tables:" field, not by the title. A
+    clause whose row lists NO table — or only tables marked "(empty: n/a)" — and
+    whose preview shows no HTTP method, path, parameter, status code, media type
+    or data type is prose only: exclude it, and do NOT select it as "context" or
+    "support" for a sibling (context reaches the later stages through retrieval;
+    selecting such a clause only spends extraction attempts that produce no
+    rule). A clause whose row lists a table with content is NEVER excluded on
+    this ground — not even when it summarises what a sibling details (an
+    overview table) or its title is just "URI" or "Description".
   - Administrative: foreword, scope, references, abbreviations, void sections
   - State machines: triggering events, pre/post conditions, from/to state tables
   - Stage 2 definitions: 3GPP documents are structured in stages.
@@ -159,14 +220,15 @@ the contract to make the finer content calls:
     clearly also defines rules for THIS service.
   - extraction_focus should reference the relevant capabilities by name when applicable.
 
-Document sections to analyze (section_id | title | content preview):
+Document sections to analyze (section_id | title | path: … | content preview |
+tables: … | signals: …):
 {sections_summary}
 
 Auxiliary context (from supporting 3GPP documents, if any):
 {helper_context}
 
-Produce an ExtractionPlan with all relevant sections in document order (ascending
-clause number). Still assign each a priority, but do not let it change the order.
+Decide every section above, one decision field per row. The code keeps the
+included ones in document order; a priority never changes that order.
 """
 
 

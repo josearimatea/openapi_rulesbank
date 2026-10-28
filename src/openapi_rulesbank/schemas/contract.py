@@ -136,8 +136,9 @@ class ServiceContract(BaseModel):
     stage3_clause: str = Field(
         default="",
         description=(
-            "Clause-number prefix of the target service's stage 3 block, as found "
-            "by the ContractBuilder's locator (e.g. '12.3'). The machine-readable "
+            "Clause number of the target service's RESTful HTTP solution set (the "
+            "solution-set clause itself, not its parent), as found by the "
+            "ContractBuilder's locator. The machine-readable "
             "counterpart of stage_scope: the Planner uses it to keep only stage 3 "
             "sections before reasoning. Empty when the document has no stage 3 block."
         )

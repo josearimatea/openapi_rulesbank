@@ -189,6 +189,22 @@ MAX_ITERATIONS = 3                  # Maximum Extractor → Validator loops befo
 CONTRACT_LOCATOR_PREVIEW_CHARS = 600
 CONTRACT_FALLBACK_SECTIONS     = 5
 
+# Planner — what each section row carries besides its first 500 characters, read
+# by code over the WHOLE section (nodes/planner.py, prompts/rule_type_definitions.py).
+# PLANNER_TABLE_CAPTIONS: the caption of every table, "(empty: n/a)" when a table
+#   lists nothing. Low risk: captions are copied, not interpreted.
+# PLANNER_SECTION_SIGNALS: what the text shows of each rule type (methods, paths,
+#   status codes, media types, data types, ...), found by pattern matching with
+#   the vocabulary of the rule type definitions.
+#   DELICATE: pattern matching can read a word or number in another sense — a
+#   JSON Pointer in an example as a path, a value as a status code, an ordinary
+#   word as a data type. The patterns are narrowed to cut that, but a new spec can
+#   still produce false positives that mislead the Planner. If a run shows the
+#   Planner choosing or dropping sections because of a wrong signal, turn this off
+#   (the rows then carry only the preview and the captions) and record the case.
+PLANNER_TABLE_CAPTIONS  = True
+PLANNER_SECTION_SIGNALS = False  # off by default: no measured gain (28/out, 5 runs x 2 MnS)
+
 # Section parsing — title validity filter
 # When True, parse_sections() discards sections whose title contains no real words
 # (i.e., titles made up entirely of symbols like table borders: "+---+---+").

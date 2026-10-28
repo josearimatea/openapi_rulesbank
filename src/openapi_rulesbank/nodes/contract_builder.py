@@ -178,17 +178,21 @@ def contract_builder_node(state: RuleBankState) -> dict:
     # comes from the LLM; membership is a clause-number prefix test, no fixed
     # numbering. We do not label WHAT they are (could be stage 1 or 2) — only that
     # they are out of scope. To keep the contract small, collapse the sections to
-    # their top-level clause (first two number parts, e.g. "11.1.1.2" -> "11.1")
-    # and emit one signal per distinct block instead of one per subsection.
+    # a block as deep as the stage 3 clause itself (e.g. with a stage 3 clause of
+    # three parts, "12.3.2.4" -> "12.3.2") and emit one signal per distinct block
+    # instead of one per subsection. A fixed depth would name the stage 3 clause's
+    # own parent — and so the stage 3 block — as out of scope whenever it has
+    # sibling solution sets.
     out_of_scope_sections: list[str] = []
     if locator.stage3_clause:
         prefix = locator.stage3_clause + "."
+        depth = len(locator.stage3_clause.split("."))
         blocks: list[str] = []
         for s in selected_sections:
             clause = s["title"].strip().split(" ", 1)[0]
             in_stage3 = clause == locator.stage3_clause or clause.startswith(prefix)
             if not in_stage3:
-                blocks.append(".".join(clause.split(".")[:2]))  # top-level block
+                blocks.append(".".join(clause.split(".")[:depth]))
         out_of_scope_sections = [
             f"{b}.x (out of scope)" for b in dict.fromkeys(blocks)  # unique, ordered
         ]

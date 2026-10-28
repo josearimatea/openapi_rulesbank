@@ -75,12 +75,15 @@ class SectionLocator(BaseModel):
     stage3_clause: str = Field(
         default="",
         description=(
-            "The clause-number prefix of the TARGET service's stage 3 block — the "
-            "'solution set' that maps the abstract operations to a concrete protocol "
-            "(RESTful HTTP: paths, methods, schemas, status codes). Identify it by "
-            "titles containing 'solution set', 'RESTful HTTP', or 'Mapping to HTTP...'. "
-            "Return only the clause prefix, e.g. '12.1'. This is the block OpenAPI "
-            "rules must be extracted from. Empty string if the document has no stage 3."
+            "The clause number of the TARGET service's RESTful HTTP solution set — the "
+            "clause that maps the abstract operations to RESTful HTTP (paths, "
+            "methods, schemas, status codes). Identify it by its title ('RESTful "
+            "HTTP-based solution set', or a title with 'solution set' / 'Mapping to "
+            "HTTP'). Return that clause ITSELF, not its parent: a service's parent "
+            "clause can also hold other solution sets (YANG/Netconf, integration "
+            "with other APIs) or file-format definitions, and none of those is a "
+            "source of the OpenAPI YAML. This is the block OpenAPI rules must be "
+            "extracted from. Empty string if the document has no stage 3."
         )
     )
 
@@ -134,9 +137,10 @@ ALSO IDENTIFY THE TARGET'S STAGE 3 BLOCK:
     - Stage 3: the "solution set" that maps stage 2 onto a concrete protocol
       (RESTful HTTP): resource paths, HTTP methods, schemas, response codes.
       Titles contain "solution set", "RESTful HTTP", or "Mapping to HTTP...".
-  OpenAPI rules can only come from stage 3. In `stage3_clause`, return the
-  clause-number prefix of the TARGET service's stage 3 block (e.g. "12.1"), or
-  "" if the document has no stage 3.
+  OpenAPI rules can only come from stage 3. In `stage3_clause`, return the clause
+  number of the TARGET service's RESTful HTTP solution set itself — not the
+  service's parent clause, which may also hold other solution sets or
+  file-format definitions — or "" if the document has no stage 3.
 """
 
 _LOCATOR_USER = """\
