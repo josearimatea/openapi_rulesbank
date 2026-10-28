@@ -113,6 +113,44 @@ REGRESSÃO DO PerfMnS (run completo 20/out + sonda 24/out, causas medidas)
   também no PerfMnS antes de seguir (regra registrada na memória do projeto).
   Plano de correção: docs/plano_correcao_regras_guardadas.md.
 
+  ADENDO 27/out/2026 — ESTADO MEDIDO NAS SONDAS (não num run completo):
+    Sonda PerfMnS (251/253/255/261/263): 16 regras, TODAS validadas, nenhuma
+    cópia, US$ 0,15 — log data/outputs/diagnostic/held_rules_perfmns_once_20261027.log.
+    Sonda ProvMnS: 11/11 filenames, 15 $ref externos, internos só tipos locais,
+    US$ 0,11 — log data/outputs/diagnostic/imported_origin_once_20261027.log.
+  R.1 RESOLVIDO (d27fc9f, alinhamento ao RAG reindexado): a 253 grava os 5 campos do
+      NotificationHeader; a 255 sai com o allOf e sem os herdados.
+  R.2 RESOLVIDO: regra em deferred_rules sem $ref volta para rules, e com todos os
+      tipos já resolvidos é completada e volta para rules — as duas com log. A 251
+      sai com POST, corpo e 204.
+  R.4 RESOLVIDO NA CAUSA (não no _dedupe_rules). As cópias vinham do retry da seção
+      que resolve o tipo: (1) a peça 4 reemitia a regra guardada a cada tentativa;
+      (2) a regra completada mantinha o id da seção de origem, e Reflector/Validator
+      a julgavam pelo veredito DAQUELA seção, onde o tipo ainda está guardado — daí
+      o "mover para deferred_rules" errado, que o Extractor cumpria criando mais
+      cópias. Agora: emitida UMA vez, com id/título da seção que resolve; o Extractor
+      recebe em toda tentativa o bloco "HELD RULES ALREADY EMITTED — DO NOT WRITE
+      THEM"; o código descarta, com log, a cópia que ele escrever (exceto a resposta
+      a uma correção dessa regra); o Validator só manda "mover" para tipo guardado
+      NESTA seção. Sonda: hysteresis e observedPerfMetricDirection saem uma vez, OK.
+  R.5 RESOLVIDO para grafias que diferem só em hífen/sublinhado/espaço/caixa: o tipo
+      guardado casa com o resolvido e o $ref usa a grafia resolvida. Sonda: 4XX/5XX
+      saem da 253 com TS28623_ComDefs.yaml#/components/schemas/ErrorResponse, OK.
+      Não cobre nome com segmento faltando.
+  R.3 NÃO REPRODUZIDO nesta sonda (a 261 reconheceu PerfMetricValue como local), mas
+      apareceu na de 25/out — instável, CONTINUA ABERTO.
+  Etapa 0 FEITA: log "[extractor <seção> try <n>]" com o que veio em rules e em
+      deferred_rules, por regra (tipo, nome, alvo do $ref).
+  NOVO, sem caso medido ainda: correções pendentes passam de uma tentativa para a
+      outra (uma entrada por regra; a nova substitui a antiga; o Validator recebe a
+      instrução que falhou e deve escrever outra mais explícita); a que ficar sem
+      resposta entra no force-include em vez de sumir. Log "Carrying N unanswered
+      correction(s)". Confirmar no run completo.
+  Também confirmado nas sondas: a PENDÊNCIA do adendo de 20/out acima ("o adiamento
+  só guarda a regra e nada a emite depois") está fechada — peças 4/5 em 306bf6c,
+  emissão única neste conserto.
+  A CONFIRMAR NO RUN COMPLETO (etapa 7): R.1–R.5, §3.23/§3.26, N.2, N.4, §3.27.
+
 Natureza distinta de todo o resto. As seções numeradas abaixo registram
 SINTOMAS medidos no banco gerado ("contei 30 $ref errados", "notifyMOIChanges
 saiu 2x"). Estes 6 são defeitos de CÓDIGO-FONTE: o contrato de um rule_type é
