@@ -169,6 +169,26 @@ REGRESSÃO DO PerfMnS (run completo 20/out + sonda 24/out, causas medidas)
       definição de callback. Material em
       data/outputs/diagnostic/provmns_callbacks_20261028/LEIA-ME.md.
 
+  ADENDO 29/out/2026 — run completo PerfMnS (28/out 23:15), retidas, juízes:
+  RESOLVIDO  campo herdado retido: properties.notificationType (XX no run de 20:06)
+      não é mais escrito. Causa: o caso 3 das REFERENCE CASES mandava "toda regra" de
+      tipo retido para deferred_rules, sem dizer que vem depois da pergunta "a regra
+      pertence à seção?". Extractor agora decide em ordem Q1 (pertence?) -> Q2 (o que
+      escreve?) -> Q3 (rules ou deferred_rules?).
+  NOVO       revisão final das retidas nunca resolvidas: julgadas por Reflector e
+      Validator; correção até a última tentativa; descarte registrado em
+      metadata.held_rules_discarded. Não rodou no PerfMnS (nada sobrou) — A CONFIRMAR
+      NO PROVMNS.
+  RESOLVIDO  faltante fantasma (242 com 3 tentativas sem efeito): os juízes viam as
+      outras regras resumidas (rule_text cortado, sem openapi_object) e cobravam como
+      faltante a regra já validada. Toda lista de regras vai inteira. Sonda 242: 1/3 ->
+      0/5 — log data/outputs/diagnostic/missing_rules_perfmns_fullrule_20261029.log.
+  Resultado: 17 regras, 17 OK, US$ 0,24 — log
+      data/outputs/diagnostic/full_perfmns_heldreview_20261028.log. Diferenças
+      restantes contra o YAML: 4XX/5XX vs default; a regra required (spec x YAML).
+  A FAZER: run completo PerfMnS com os juízes vendo regras inteiras (esta mudança afeta
+      todos os julgamentos, medida só na sonda); run completo ProvMnS.
+
 Natureza distinta de todo o resto. As seções numeradas abaixo registram
 SINTOMAS medidos no banco gerado ("contei 30 $ref errados", "notifyMOIChanges
 saiu 2x"). Estes 6 são defeitos de CÓDIGO-FONTE: o contrato de um rule_type é

@@ -190,6 +190,7 @@ Called once per section. Writes (or overwrites) the rules bank JSON file with **
 3. Validate output against `schemas.output.RulesBank` (Pydantic) and write to `data/outputs/rules_bank/rules_bank_<doc>_<scope>_<timestamp>.json` (`scope` = `full` or `partial`).
 4. Advance `current_section_idx` by 1, reset `section_iteration_count`, clear `validation_errors`, `section_reflection`, and `validator_section_reflection` for the next section.
 5. On the **last** section, save the diagnostic report to `data/outputs/diagnostic/` if `DIAGNOSTIC_MODE=True`.
+6. **Final review of held rules.** A rule whose `$ref` type has no stated origin is held (`deferred_rules`) and emitted by the section that settles the type. When the plan ends and some held rules were never settled, the Builder appends one plan entry per section that held them, flagged `held_review`, and the graph goes on as for any section. The Extractor hands the held rules over without an extraction call; the Reflector and Validator judge them once, with the holding section's verdict and a note that they are not held again (the missing-rule checks are skipped — only those rules are under review). A correction goes back to the Extractor until the last attempt, and a rule still wrong then is force-included as not validated. A discard leaves the bank and is recorded in `metadata.held_rules_discarded` with the Validator's reason. A held rule the review never reached is still emitted as not validated, so none disappears.
 
 Output JSON: `metadata` (provenance, model, counts, section accounting), `summary` (rules_by_type, rules_by_section, error counts), `rules` (list of full `RuleOutput` dicts including `validation_passed`).
 
@@ -225,6 +226,8 @@ Two distinct per-section feedback channels separate **analysis** (Reflector) fro
 | `validation_errors` (`discard` / `split`) | Validator (Stage 2) | (handled via missing_rules) | Routed through `validator_section_reflection` |
 
 The Reflector reasons; the Validator decides. The Extractor only acts on what the Validator says.
+
+Every list of rules a judge compares against — the section's other rules, the ones already validated, the discarded and the ones under correction — is rendered whole by one formatter (`utils/parsers.format_rule`): type, source name, full `rule_text`, object, field, value and references, and the full reason or instruction. Summaries cut to a few words, or without the object, made a judge take an existing path operation for a missing one.
 
 ---
 

@@ -605,3 +605,46 @@ decisão. Resultado: 5 de 5 planos idênticos nas duas MnS, toda seção com dec
 motivo, nenhuma resposta inválida. Os sinais por padrão ficaram desligados: medidos com e
 sem, a diferença foi de uma seção de borda por MnS, dentro da variação, sem ganho que
 compensasse o risco de falso positivo.
+
+**Regras retidas, campo herdado e o que os juízes enxergam (28–29/out).** O run completo
+da PerfMnS de 28/out 20:06 deu 18 regras, uma XX: `properties.notificationType` de
+NotifyThresholdCrossing, retida na 255 e nunca resolvida. O campo é herdado — vem do
+NotificationHeader pelo `allOf`, e no YAML oficial NotifyThresholdCrossing não tem essa
+propriedade nem `NotificationType` aparece em lugar nenhum. A Fase 2 tinha marcado o campo
+como herdado; o Extractor o pôs em `deferred_rules` mesmo assim. A causa era uma ordem de
+decisão que nenhum texto dava: o caso 3 das REFERENCE CASES mandava "toda regra" com tipo
+retido para `deferred_rules`, "inclusive propriedade de schema", e as regras de herança
+mandavam não emitir o campo; para um campo herdado de tipo retido as duas valiam, e o
+modelo escolheu reter. Mudar só a Fase 2 não bastaria: o código acrescenta à lista de
+retidos todo tipo sem origem declarada, o que está certo (a lista é de tipos, não de
+regras). O conserto foi pela regra: o Extractor passou a responder três perguntas em
+ordem — a regra pertence a esta seção? (campo herdado, regra de outra seção ou pulada não
+é escrita em lugar nenhum); o que ela escreve?; vai para `rules` ou `deferred_rules`? —, e
+`deferred_rules` passou a ser descrito como lugar só de regra que deve existir e espera a
+origem do tipo. Descartar no código a retida de campo herdado foi considerado e
+recusado: a retida é o rastreio do que faltou e não pode sumir sem julgamento.
+
+Para isso, as retidas que nenhuma seção resolve ganharam uma revisão final: o Builder,
+no fim do plano, acrescenta uma entrada por seção que as reteve; o Extractor as entrega
+sem chamada de extração; Reflector e Validator as julgam uma vez, com o veredito da seção
+de origem e a nota de que não são retidas de novo. Correção volta ao Extractor até a
+última tentativa (e a última versão fica, não validada, se continuar errada); descarte
+sai do banco e fica em `metadata.held_rules_discarded`, com o motivo. A busca de "regras
+faltando" fica desligada nessa revisão: o lote tem só as retidas, e compará-lo com a
+seção inteira faria cobrar regras que já estão no banco.
+
+Run completo da PerfMnS de 28/out 23:15: 17 regras, 17 OK, US$ 0,24 (antes 18, uma XX,
+US$ 0,27). O `notificationType` não foi escrito; as quatro retidas legítimas da 255 e
+as de ErrorResponse da 251 foram resolvidas pelas seções (261, 263, 253), e a revisão
+final não precisou rodar — só foi exercitada numa simulação sem LLM.
+
+Nesse run a 242 usou as 3 tentativas por uma regra "faltante" que nunca apareceu. Uma
+sonda só da 242 (tests/investigation/perfmns/test_missing_rules_perfmns.py) mostrou o
+texto: era a própria regra validada — o Reflector disse que ela "identifica o método POST
+mas não o path". As listas de regras com que os juízes comparam iam resumidas: na
+checagem de faltantes do Reflector, tipo, nome e `rule_text` cortado em 80 caracteres,
+sem o mapping; no Validator, sem o `openapi_object`, que é onde está o path. Quando o
+path caía depois do corte, o juiz via um POST sem path. Toda lista de regras que um juiz
+lê passou a ir inteira (utils/parsers.format_rule), assim como os motivos de descarte e
+as instruções de correção, que também eram cortados. Sonda da 242: antes 1 em 3 com a
+faltante fantasma, depois 5 em 5 de primeira.
