@@ -52,7 +52,7 @@ from openapi_rulesbank.config.settings import (
     SPEC_SIBLING_RETRIEVE_CHUNKS,
     RULES_EXTRACTOR_RETRIEVE_CHUNKS,
 )
-from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.graph.state import RuleBankState, in_held_review
 from openapi_rulesbank.prompts.extractor_prompts import SectionRules, extractor_prompt
 from openapi_rulesbank.prompts.section_analyzer_prompts import (
     SectionImports,
@@ -66,7 +66,7 @@ from openapi_rulesbank.schemas.contract import format_contract_summary
 # The sibling summary is shared: the triage resolves an anchor from it, and the
 # Reflector and Validator need the same clause titles to check a name against its
 # defining heading rather than against its shape.
-from openapi_rulesbank.utils.parsers import build_sibling_summary
+from openapi_rulesbank.utils.parsers import build_sibling_summary, format_section_verdict
 from openapi_rulesbank.tools.rag_tools import (
     search_openapi_reference,
     search_target_spec,
@@ -526,7 +526,8 @@ def _format_analysis_guidance(analysis: SectionAnalysis | None) -> str:
         names = ", ".join(analysis.defer_external_refs)
         lines.append(
             f"HOLD THESE $refs — where these types are defined is not settled yet: "
-            f"[{names}]. A rule whose $ref points at one of them goes in "
+            f"[{names}]. A rule that belongs to this section (Q1 — never an inherited "
+            f"field) and whose $ref points at one of them goes in "
             f"`deferred_rules`, NOT in `rules`. Write it completely, exactly as you "
             f"would otherwise, with the $ref written as "
             f"\"$ref: '#/components/schemas/<Type>'\" and the type in `references` "
@@ -795,6 +796,112 @@ def _format_held_emitted(completed: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# Marks a held rule taken by the final review, so it is not emitted again as never
+# settled (Builder, piece 5).
+HELD_REVIEW = "final-review"
+
+
+def _review_held_rules(
+    state: RuleBankState,
+    plan_section: dict,
+    section: dict,
+    correction_task: str,
+    chain,
+    helper_context: str,
+    contract_summary: str,
+) -> dict:
+    """The final review of the rules a section held and no section settled.
+
+    First attempt: no extraction call. The held rules go to the judges as written —
+    each $ref completed when the type got settled after all — and are marked as
+    taken by the review. The verdict gets "held_review" and no held types, so the
+    judges review them once, never send them back to be held, and discard one only
+    when it must not exist.
+    Later attempts: the Extractor rewrites the rules the Validator asked to correct,
+    with the section's text and the stored verdict. Nothing is held any more —
+    whatever it writes goes to the judges.
+    """
+    section_id    = plan_section["section_id"]
+    section_title = plan_section["title"]
+    iteration     = state.get("section_iteration_count", 0) or 0
+    mem = {k: dict(v or {}) for k, v in (state.get("other_spec_ref_memory", {}) or {}).items()}
+    verdict = dict((state.get("section_analysis_by_id", {}) or {}).get(section_id) or {})
+
+    if iteration == 0:
+        rules: list[dict] = []
+        seen: set[tuple] = set()
+        updates: dict = {}
+        for t, entry in mem.items():
+            pend = [dict(p) for p in entry.get("pending_rules", [])]
+            taken = False
+            for p in pend:
+                if p.get("completed_in") or p.get("section_id") != section_id:
+                    continue
+                p["completed_in"], taken = HELD_REVIEW, True
+                key = tuple(p.get("key") or [])
+                if key in seen:
+                    continue  # held under two types: one rule, reviewed once
+                seen.add(key)
+                r = copy.deepcopy(p["rule"])
+                for target in _ref_targets(r):
+                    settled = _settled_as(target, mem)
+                    if settled is not None:
+                        r = _complete_held_rule(r, target, settled[1], settled[0])
+                rules.append(r)
+            if taken:
+                entry["pending_rules"] = pend
+                updates[t] = entry
+        logger.info(
+            f"[held review {section_id}] {len(rules)} held rule(s) never settled, "
+            "sent to the Reflector and Validator:"
+            + "".join(f"\n  {r.get('rule_type', ''):16} {str(r.get('source_name', ''))[:40]:40} "
+                      f"$ref: {', '.join(_ref_targets(r)) or '—'}" for r in rules)
+        )
+        verdict.update({
+            "held_review": sorted({t for r in rules for t in _ref_targets(r)}),
+            "defer_external_refs": [],
+        })
+        return {
+            "raw_rules":               rules,
+            "section_iteration_count": 1,
+            "other_spec_ref_memory":   updates,
+            "section_analysis_by_id":  {section_id: verdict},
+            "missing_context":         [],
+        }
+
+    result: SectionRules = chain.invoke({
+        "section_id":                 section_id,
+        "section_title":              section_title,
+        "extraction_focus":           plan_section.get("extraction_focus", ""),
+        "section_analysis":           format_section_verdict(verdict),
+        "section_content":            section["content"],
+        "openapi_reference_overview": search_openapi_reference(
+            f"{section_title} — {plan_section.get('extraction_focus', '')}"),
+        "cross_ref_context":          _format_cross_refs(state.get("cross_ref_facts", {}) or {}),
+        "ref_memory":                 _format_ref_memory(mem),
+        "held_types":                 "none — this is the final review, nothing is held",
+        "stage2_context":             "Not retrieved for the final review of held rules.",
+        "stage3_context":             "Not retrieved for the final review of held rules.",
+        "candidate_rules":            "None — return only what the CORRECTION TASK asks.",
+        "skip_rules":                 "None.",
+        "helper_context":             helper_context,
+        "contract_summary":           contract_summary,
+        "correction_task":            correction_task,
+    })
+    rules = [r.model_dump() for r in result.rules] \
+        + [r.model_dump() for r in (result.deferred_rules or [])]
+    logger.info(
+        f"[held review {section_id} try {iteration}] {len(rules)} rule(s) rewritten"
+        + (f" ({len(result.deferred_rules)} written as held, judged as rules)"
+           if result.deferred_rules else "")
+    )
+    return {
+        "raw_rules":               rules,
+        "section_iteration_count": iteration + 1,
+        "missing_context":         list(result.missing_context or []),
+    }
+
+
 def extractor_node(state: RuleBankState) -> dict:
     """
     Processes the current section (current_section_idx) from the extraction plan.
@@ -879,6 +986,10 @@ def extractor_node(state: RuleBankState) -> dict:
             "raw_rules":               [],
             "section_iteration_count": section_iteration_count + 1,
         }
+
+    if in_held_review(state):
+        return _review_held_rules(state, plan_section, section, correction_task, chain,
+                                  helper_context, contract_summary)
 
     section_title = plan_section["title"]
     focus         = plan_section["extraction_focus"]

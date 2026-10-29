@@ -306,5 +306,6 @@ def build_initial_state(
         "section_iteration_count":      0,   # reset by Builder after each section
         "other_spec_ref_memory":        {},  # Extractor pre-analyzer: type->spec refs, merged across sections
         "section_analysis_by_id":       {},  # Extractor pre-analyzer: per-section verdict, read by Reflector/Validator
+        "held_review_discards":         [],  # Validator: held rules discarded in the final review, with the reason
         "messages":                     [],  # LLM message history across all nodes
     }

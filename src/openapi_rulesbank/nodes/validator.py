@@ -45,7 +45,7 @@ from pydantic import ValidationError as PydanticValidationError
 from openapi_rulesbank.config import get_logger
 from openapi_rulesbank.config.llm_config import llm
 from openapi_rulesbank.config.settings import DIAGNOSTIC_MODE, MAX_ITERATIONS
-from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.graph.state import RuleBankState, in_held_review
 from openapi_rulesbank.prompts.validator_prompts import (
     SectionAnalysisResult, ValidationVerdict, ReflectorReviewResult,
     validator_section_init_prompt, validator_prompt, validator_reflector_review_prompt,
@@ -56,7 +56,7 @@ from openapi_rulesbank.tools.rag_tools import index_validated_rule, search_simil
 from openapi_rulesbank.utils.diagnostic import _diagnostic
 from openapi_rulesbank.utils.parsers import (
     format_section_verdict, format_corrections, build_sibling_summary,
-    format_references as _format_references,
+    format_references as _format_references, format_rule, format_rules,
 )
 from openapi_rulesbank.utils.rules_check import check_mapping_for_type
 
@@ -75,17 +75,9 @@ def _build_sections_index(parsed_sections: list[dict]) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 def _format_rules_compact(rules: list[dict]) -> str:
-    if not rules:
-        return "(none)"
-    lines = []
-    for r in rules:
-        mapping = r.get("openapi_mapping", {})
-        lines.append(
-            f"  [{r.get('rule_type', '')}] source={r.get('source_name', '')} "
-            f"field={mapping.get('openapi_field', '')} "
-            f"value={mapping.get('openapi_value', '')}"
-        )
-    return "\n".join(lines)
+    # Each rule whole — object included: without it a path operation reads as a
+    # bare "POST" and is taken for missing (see format_rule).
+    return format_rules(rules, empty="(none)")
 
 
 def _format_already_validated(
@@ -117,15 +109,11 @@ def _format_reflector_missing(section_id: str, section_reflection: list[dict]) -
 def _format_failed_rules(errors: list[dict]) -> str:
     if not errors:
         return "(none)"
-    lines = []
-    for e in errors:
-        rule = e.get("rule", {})
-        mapping = rule.get("openapi_mapping", {})
-        lines.append(
-            f"  [{e.get('error_type', '')}] [{rule.get('rule_type', '')}] "
-            f"field={mapping.get('openapi_field', '')} — {e.get('instruction', '')[:80]}"
-        )
-    return "\n".join(lines)
+    return "\n".join(
+        f"{format_rule(e.get('rule', {}))}\n"
+        f"    {e.get('error_type', '').upper()}: {e.get('instruction', '')}"
+        for e in errors
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +405,10 @@ def validator_node(state: RuleBankState) -> dict:
     # back to the Extractor. On that last pass we stop accumulating discards (see
     # _with_prior_discards) so they are not force-included into the final output.
     is_last_iteration = (state.get("section_iteration_count", 0) or 0) >= MAX_ITERATIONS
+    # The final review of held rules judges only those rules: the missing-rule
+    # stages are skipped, as on the last attempt, and its discards are recorded.
+    held_review = in_held_review(state)
+    skip_missing = is_last_iteration or held_review
 
     def _discard_key(e: dict) -> tuple:
         r = e.get("rule", {})
@@ -676,9 +668,9 @@ def validator_node(state: RuleBankState) -> dict:
         # Stage 3 — Reflector review. Skipped on the last attempt for the same
         # reason as Stage 1: its output is the missing list for the next retry,
         # which will not happen.
-        if is_last_iteration:
+        if skip_missing:
             final_missing = []
-            logger.debug("  Stage 3 skipped — last attempt (missing not acted on).")
+            logger.debug("  Stage 3 skipped — last attempt or final held review.")
         else:
             # Corrections decided for this section in this iteration — a target
             # under correction EXISTS, so it must not survive as a missing rule.
@@ -734,12 +726,29 @@ def validator_node(state: RuleBankState) -> dict:
             ),
         )
 
-    return {
+    result = {
         "validated_rules":              validated_rules,
         "validation_errors":            _with_prior_discards(validation_errors),
         "validator_section_reflection": new_section_reflection,
         "validated_rules_by_section":   validated_rules_by_section,
     }
+    # A held rule the final review discards leaves the bank; its trace stays.
+    if held_review:
+        discards = [
+            {"section_id": _discard_key(e)[0], "rule_type": _discard_key(e)[1],
+             "source_name": _discard_key(e)[2],
+             "openapi_object": (e.get("rule", {}).get("openapi_mapping", {}) or {})
+                               .get("openapi_object", ""),
+             "openapi_field": _discard_key(e)[3],
+             "reason": e.get("instruction", "")}
+            for e in validation_errors if e.get("error_type") == "discard"
+        ]
+        for d in discards:
+            logger.info(f"[held review {d['section_id']}] discarded {d['rule_type']} "
+                        f"{d['source_name']!r} {d['openapi_field']!r}: {d['reason']}")
+        if discards:
+            result["held_review_discards"] = discards
+    return result
 
 
 def _build_validated_by_section(
@@ -752,7 +761,7 @@ def _build_validated_by_section(
         compact = {
             "rule_type":       vr.get("rule_type", ""),
             "source_name":     vr.get("source_name", ""),
-            "rule_text":       vr.get("rule_text", "")[:120],
+            "rule_text":       vr.get("rule_text", ""),
             "openapi_mapping": vr.get("openapi_mapping", {}),
         }
         result.setdefault(sid, []).append(compact)

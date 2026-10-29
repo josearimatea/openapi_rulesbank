@@ -119,6 +119,14 @@ class RulesBankMetadata(BaseModel):
         ),
         default_factory=list,
     )
+    held_rules_discarded: list[dict] = Field(
+        description=(
+            "Held rules (their $ref type never settled) that the final review "
+            "discarded: section, rule type, source name, object, field and the "
+            "Validator's reason. They are not in `rules`; this is their trace."
+        ),
+        default_factory=list,
+    )
 
 
 class RulesBankSummary(BaseModel):

@@ -114,6 +114,24 @@ def format_section_verdict(verdict: dict | None) -> str:
             "should have been held: its $ref form asserts an origin nothing states."
         )
 
+    # The final review of the rules this section held and no section settled. They
+    # are judged once here; holding them again would only send them back to wait.
+    review = verdict.get("held_review")
+    if review:
+        lines.append(
+            f"FINAL REVIEW OF HELD RULES (types never settled: {review}). The rules "
+            "judged now were written by this section and held because where their "
+            "$ref type is defined was not stated — and no section of the document "
+            "stated it. This is their review, and they are not held again: never "
+            "instruct to move one to deferred_rules. Judge each as any rule of this "
+            "section. If it must not exist — an inherited field the allOf base "
+            "already provides, a rule another section owns, a duplicate of a rule "
+            "already validated — discard it and say why. Otherwise correct what is "
+            "wrong in it. Where its $ref type is defined is still unstated: do not "
+            "invent an origin, and do not fail the rule for that alone — the $ref "
+            "stands as written unless a source you were given states the type's origin."
+        )
+
     # Held rules emitted HERE: written in an earlier section, emitted now because
     # this section settled where their type is defined. They are not in this
     # section's text, and that is expected.
@@ -222,19 +240,39 @@ def discards_for_section(validation_errors: list[dict], section_id: str) -> list
     return out
 
 
+def format_rule(rule: dict) -> str:
+    """One rule as a judge must see it whenever it compares against it: whole.
+
+    Every list of rules a judge reads — the section's other rules, the ones already
+    validated, the discarded and the corrected — goes through here. A summary cut
+    to a few words, or one without the object, hides where the rule points: a judge
+    shown "POST" without its path took an existing path operation for a missing one.
+    """
+    m = rule.get("openapi_mapping", {}) or {}
+    return (
+        f"  [{rule.get('rule_type', '?')}] source_name={rule.get('source_name', '')!r}\n"
+        f"    rule_text : {rule.get('rule_text', '')}\n"
+        f"    object    : {m.get('openapi_object', '')}\n"
+        f"    field     : {m.get('openapi_field', '')}\n"
+        f"    value     : {m.get('openapi_value', '')}\n"
+        f"    references: {format_references(m)}"
+    )
+
+
+def format_rules(rules: list[dict], empty: str = "None") -> str:
+    """Several rules, each whole (format_rule); `empty` when there are none."""
+    return "\n".join(format_rule(r) for r in (rules or [])) or empty
+
+
 def format_discards(discards: list[dict]) -> str:
-    """Render discard errors for a prompt: rule_type, field, and the reason."""
+    """Render discard errors for a prompt: the whole rule and the whole reason."""
     if not discards:
         return "None"
-    lines = []
-    for e in discards:
-        rule = e.get("rule", {})
-        m = rule.get("openapi_mapping", {})
-        lines.append(
-            f"  [{rule.get('rule_type', '?')}] {m.get('openapi_object', '')} "
-            f"{m.get('openapi_field', '')} — {e.get('instruction', 'discarded')[:80]}"
-        )
-    return "\n".join(lines)
+    return "\n".join(
+        f"{format_rule(e.get('rule', {}))}\n"
+        f"    DISCARDED : {e.get('instruction', 'discarded')}"
+        for e in discards
+    )
 
 
 def corrections_for_section(validation_errors: list[dict], section_id: str) -> list[dict]:
@@ -264,18 +302,14 @@ def format_references(mapping: dict) -> str:
 
 
 def format_corrections(corrections: list[dict]) -> str:
-    """Render correction errors for a prompt: rule_type, field, and the fix asked."""
+    """Render correction errors for a prompt: the whole rule and the whole fix asked."""
     if not corrections:
         return "None"
-    lines = []
-    for e in corrections:
-        rule = e.get("rule", {})
-        m = rule.get("openapi_mapping", {})
-        lines.append(
-            f"  [{rule.get('rule_type', '?')}] {m.get('openapi_object', '')} "
-            f"{m.get('openapi_field', '')} — being corrected: {e.get('instruction', '')[:70]}"
-        )
-    return "\n".join(lines)
+    return "\n".join(
+        f"{format_rule(e.get('rule', {}))}\n"
+        f"    BEING CORRECTED: {e.get('instruction', '')}"
+        for e in corrections
+    )
 
 
 def is_content_empty(content: str) -> bool:

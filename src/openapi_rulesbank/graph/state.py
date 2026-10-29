@@ -232,6 +232,11 @@ class RuleBankState(TypedDict):
     # map accumulates in state, the prompt context stays flat.
     section_analysis_by_id: Annotated[dict, _merge_ref_memory]
 
+    # Held rules the final review discarded (see in_held_review), one entry per
+    # rule with the Validator's reason. Kept so a held rule that ends up out of the
+    # bank still leaves a trace of what it was and why it was dropped.
+    held_review_discards: Annotated[list[dict], operator.add]
+
     # -------------------------------------------------------------------------
     # BUILDER OUTPUT — produced by the Builder Node
     # -------------------------------------------------------------------------
@@ -263,3 +268,17 @@ class RuleBankState(TypedDict):
     # The add_messages annotation tells LangGraph to append new messages
     # instead of overwriting the list on each node update.
     messages: Annotated[list, add_messages]
+
+
+def in_held_review(state: dict) -> bool:
+    """True when the plan entry being processed is a final review of held rules.
+
+    Rules held because the origin of their $ref type was not stated, and that no
+    section settled, get one last pass at the end of the plan: the Builder appends
+    one entry per section that held them, flagged "held_review". There the
+    Extractor hands over the held rules instead of extracting the section again,
+    and the judges skip the missing-rule checks — only the held rules are judged.
+    """
+    plan = (state.get("extraction_plan", {}) or {}).get("sections_to_extract", []) or []
+    idx = state.get("current_section_idx", 0) or 0
+    return idx < len(plan) and bool(plan[idx].get("held_review"))

@@ -45,7 +45,7 @@ from openapi_rulesbank.config.llm_config import llm
 from openapi_rulesbank.config.settings import (
     CONTEXT_RETRIEVE_CHUNKS, MAX_CONTEXT_QUERIES, MAX_ITERATIONS,
 )
-from openapi_rulesbank.graph.state import RuleBankState
+from openapi_rulesbank.graph.state import RuleBankState, in_held_review
 from openapi_rulesbank.prompts.reflector_prompts import (
     ReflectionResult, SectionReflection,
     reflector_prompt, reflector_section_prompt,
@@ -60,7 +60,7 @@ from openapi_rulesbank.schemas.contract import format_contract_summary
 from openapi_rulesbank.utils.parsers import (
     format_section_verdict, discards_for_section, format_discards,
     corrections_for_section, format_corrections, build_sibling_summary,
-    format_references as _format_references,
+    format_references as _format_references, format_rule, format_rules,
 )
 # The Extractor builds the same view of the reference memory for its own prompts;
 # rendering it identically here keeps one format for both nodes.
@@ -214,12 +214,8 @@ def reflector_node(state: RuleBankState) -> dict:
 
     def _siblings_str(current: dict) -> str:
         sid = current.get("section_id", "")
-        def line(r):
-            return (f"  [{r.get('rule_type', '?')}] "
-                    f"{r.get('openapi_mapping', {}).get('openapi_field', '')}: "
-                    f"{r.get('rule_text', '')[:70]}")
-        extracted = [line(r) for r in rules_by_section.get(sid, []) if r is not current]
-        validated = [f"{line(r)}  (already validated)"
+        extracted = [format_rule(r) for r in rules_by_section.get(sid, []) if r is not current]
+        validated = [f"{format_rule(r)}\n    (already validated)"
                      for r in validated_by_section.get(sid, [])]
         lines = extracted + validated
         return "\n".join(lines) or "None — this is the only rule from this section."
@@ -325,6 +321,11 @@ def reflector_node(state: RuleBankState) -> dict:
             "acted on before the Builder)."
         )
         return {"reflected_rules": reflected_rules, "section_reflection": []}
+    # The final review of held rules judges only those rules; the section's other
+    # rules were settled when it was extracted, so nothing here can be missing.
+    if in_held_review(state):
+        logger.info("Reflector Fase 2 skipped — final review of held rules.")
+        return {"reflected_rules": reflected_rules, "section_reflection": []}
 
     already_validated_by_section: dict[str, list[dict]] = (
         state.get("validated_rules_by_section", {}) or {}
@@ -340,9 +341,7 @@ def reflector_node(state: RuleBankState) -> dict:
     # Build compact summaries of rules reflected in this iteration, per section
     sections_in_this_iteration: dict[str, list[str]] = {}
     for r in reflected_rules:
-        sid   = r.get("section_id", "")
-        entry = f"[{r['rule_type']}] {r.get('source_name', '')}: {r.get('rule_text', '')[:80]}"
-        sections_in_this_iteration.setdefault(sid, []).append(entry)
+        sections_in_this_iteration.setdefault(r.get("section_id", ""), []).append(format_rule(r))
 
     section_chain = reflector_section_prompt | llm.with_structured_output(SectionReflection)
 
@@ -361,10 +360,7 @@ def reflector_node(state: RuleBankState) -> dict:
         section_content = section.get("content", "Section content not available.")
 
         already_validated = already_validated_by_section.get(section_id, [])
-        already_validated_str = "\n".join(
-            f"  [{r.get('rule_type', '?')}] {r.get('source_name', '')}: {r.get('rule_text', '')[:80]}"
-            for r in already_validated
-        ) or "None"
+        already_validated_str = format_rules(already_validated)
 
         previous_missing = previous_missing_by_section.get(section_id, [])
         previous_missing_str = "\n".join(

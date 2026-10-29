@@ -48,9 +48,12 @@ class SectionRules(BaseModel):
     deferred_rules: list[RawRule] = Field(
         default_factory=list,
         description=(
-            "Rules this section DOES state but whose $ref points at a type that is "
-            "HELD (origin not stated yet, or external with no filename — see the "
-            "Section analysis and the reference memory). Write each completely, with "
+            "Rules that MUST be in the final YAML — this section states them and they "
+            "belong to it — and wait only for where their $ref type is defined: the "
+            "type is HELD (origin not stated yet, or external with no filename — see "
+            "the Section analysis and the reference memory). Never a place for a rule "
+            "that must not exist (an inherited field, another section's rule, a "
+            "skipped one): such a rule is written nowhere. Write each completely, with "
             "the $ref as \"$ref: '#/components/schemas/<Type>'\" and the type in "
             "`references` (file empty); the code completes the target when a "
             "section states where the type is defined. Empty when nothing is held."
@@ -740,6 +743,32 @@ these specific rules; they belong elsewhere):
   or in `deferred_rules` when its $ref points at a HELD type (REFERENCE CASES below).
   Holding a rule is producing it, not skipping it.
 
+HOW EACH RULE IS PRODUCED — three questions, in this order, for every rule. A later
+question is never asked for a rule an earlier one rejected:
+
+  Q1. DOES THIS RULE BELONG TO THIS SECTION? Only when ALL of these hold:
+      - the section content states it, and it is in the service's scope;
+      - a schema_property only where the pre-analysis marks a schema home;
+      - it is NOT an inherited field (the pre-analysis inherited list): the base's
+        single allOf $ref already provides that field, so the allOf rule is its
+        rule;
+      - it is NOT in "Rules to SKIP", NOT a held rule the code already emitted
+        here, NOT listed as already validated or discarded.
+      If any of these fails, write the rule NOWHERE — not in `rules`, not in
+      `deferred_rules`. `deferred_rules` never holds a rule that must not exist.
+
+  Q2. WHAT DOES IT WRITE? Its rule type and mapping, by RULE TYPE DEFINITIONS and
+      "WHERE EVERY FIELD'S VALUE COMES FROM".
+
+  Q3. WHERE DOES IT GO? Look at every schema it points at — the $ref in its value,
+      or a request_body's `references`:
+      - no schema, or every schema settled (REFERENCE CASES 1 or 2) -> `rules`;
+      - any schema not settled (REFERENCE CASES 3)                   -> `deferred_rules`.
+
+  A held type never brings back a rule Q1 rejected: a type built on a base may list
+  a base field whose data type is held — Q1 rejects that field as inherited, so it
+  is written nowhere, whatever its data type.
+
 REFERENCE CASES — every $ref to a named type, in any rule type. Where the type is
 defined decides the form: INTERNAL for a type of this document, EXTERNAL (with the
 YAML file) for a type of another spec, HELD when that is not settled yet. The
@@ -765,8 +794,8 @@ type is in:
 
      This applies wherever OpenAPI expects a schema — a $ref can stand in any of
      those places, so check every rule you write, not only the obvious ones. EVERY
-     rule whose value — or, for a request_body, whose `references` — refers to one
-     of the held types goes to `deferred_rules`,
+     rule that passed Q1 and whose value — or, for a request_body, whose
+     `references` — refers to one of the held types goes to `deferred_rules`,
      never to `rules`, whatever its position, for example: a response body or a
      request body; a parameter or a response header; a schema property; an array
      element (items); a map value (additionalProperties); a member of

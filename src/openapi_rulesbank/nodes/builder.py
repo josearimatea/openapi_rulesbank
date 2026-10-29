@@ -240,9 +240,35 @@ def builder_node(state: RuleBankState) -> dict:
             if force_count:
                 logger.info(f"Force-included {force_count} semantic rule(s).")
 
+    # Final review of held rules: when the plan is done and some held rules were
+    # never settled, one entry per section that held them is appended to the plan,
+    # flagged "held_review". The graph goes on to the Extractor as for any section;
+    # the rules are judged, corrected or discarded there (see in_held_review).
+    plan_update: dict = {}
+    if (current_section_idx + 1) >= len(plan_sections) \
+            and not any(s.get("held_review") for s in plan_sections):
+        holding: dict[str, str] = {}
+        for entry in (state.get("other_spec_ref_memory", {}) or {}).values():
+            for held in (entry or {}).get("pending_rules", []) or []:
+                if not held.get("completed_in"):
+                    holding.setdefault(held.get("section_id", ""), held.get("section_title", ""))
+        by_id = {s["section_id"]: s for s in plan_sections}
+        review = [
+            {**by_id.get(sid, {"section_id": sid, "title": title, "priority": "low",
+                               "extraction_focus": ""}),
+             "held_review": True}
+            for sid, title in holding.items() if sid
+        ]
+        if review:
+            plan_sections = plan_sections + review
+            plan_update = {**state.get("extraction_plan", {}), "sections_to_extract": plan_sections}
+            logger.info(f"Held rules never settled in section(s) {sorted(holding)} — "
+                        "queued for a final review.")
+
     # Held rules never settled (piece 5): a rule held because the origin of its
     # $ref type was not stated, and that no later section settled, is emitted at the
-    # end of the run — marked as not validated — so it does not vanish.
+    # end of the run — marked as not validated — so it does not vanish. The final
+    # review takes them first, so this only catches one it never reached.
     if (current_section_idx + 1) >= len(plan_sections):
         orphan_count = 0
         for type_name, entry in (state.get("other_spec_ref_memory", {}) or {}).items():
@@ -294,7 +320,9 @@ def builder_node(state: RuleBankState) -> dict:
 
     sections_total       = len(parsed_sections) + len(excluded_by_reader)
     sections_for_planner = len(parsed_sections)
-    planner_accounted    = len(plan_sections) + len(excluded_by_planner)
+    # Final-review entries re-visit planned sections; they are not planned ones.
+    planned_sections     = [s for s in plan_sections if not s.get("held_review")]
+    planner_accounted    = len(planned_sections) + len(excluded_by_planner)
 
     if planner_accounted == sections_for_planner:
         run_scope = "full"
@@ -329,12 +357,13 @@ def builder_node(state: RuleBankState) -> dict:
             usage=                     usage_tracker.as_dict(),
             sections_total=            sections_total,
             sections_for_planner=      sections_for_planner,
-            sections_planned=          len(plan_sections),
+            sections_planned=          len(planned_sections),
             sections_with_rules=       len(sections_with_rules),
             excluded_by_reader_count=  len(excluded_by_reader),
             excluded_by_planner_count= len(excluded_by_planner),
             excluded_by_reader=        excluded_by_reader_clauses,
             excluded_by_planner=       excluded_by_planner_clauses,
+            held_rules_discarded=      state.get("held_review_discards", []) or [],
         ),
         summary=RulesBankSummary(
             rules_validated_count= len([r for r in rule_outputs if r.validation_passed]),
@@ -433,4 +462,6 @@ def builder_node(state: RuleBankState) -> dict:
     }
     if force_included:
         result["validated_rules"] = force_included
+    if plan_update:
+        result["extraction_plan"] = plan_update
     return result
