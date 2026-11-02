@@ -645,11 +645,6 @@ def resolve_external_filename(
     return "", [], "unresolved"
 
 
-def _get_vector_store():
-    """The OpenAPI reference collection, through the shared factory."""
-    return _spec_factory().get_vector_store(OPENAPI_COLLECTION_NAME)
-
-
 # ---------------------------------------------------------------------------
 # Public functions
 # ---------------------------------------------------------------------------
@@ -740,8 +735,8 @@ def search_openapi_reference(query: str, k: int = OPENAPI_REFERENCE_RETRIEVE_CHU
         )
         return ""
 
-    vector_store = _get_vector_store()
-    docs = vector_store.similarity_search(query, k=k)
+    docs = retrieve(query, factory=_spec_factory(),
+                    collection_name=OPENAPI_COLLECTION_NAME, k=k).docs
 
     if not docs:
         return ""
